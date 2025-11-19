@@ -19,6 +19,7 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 
 <img width="2921" height="1781" alt="image" src="https://github.com/user-attachments/assets/37ec91c4-160d-4bad-95ec-842c8aefc9e4" />
 
+<img width="2222" height="1685" alt="image" src="https://github.com/user-attachments/assets/4fe0773d-010b-4b7c-8708-c11262e386de" />
 
 ---
 
@@ -696,6 +697,7 @@ builder.destroyAllVolumes();
 ```
 
 You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
+
 
 
 
