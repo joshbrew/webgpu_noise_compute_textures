@@ -1,0 +1,806 @@
+<div>
+  <style>
+    :root {
+      background-color: black;
+      --sidebar-w: 260px;
+      --gap: 16px;
+      --accent: #3fa9ff;
+      --accent-soft: rgba(63, 169, 255, 0.2);
+      --panel-bg: #050505;
+      --panel-bg2: #111;
+    }
+
+    aside#sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: var(--sidebar-w);
+      overflow: auto;
+      padding: 10px 12px 14px 12px;
+      scrollbar-gutter: stable both-edges;
+      background: radial-gradient(
+        circle at top,
+        #181818 0,
+        #050505 40%,
+        #000 100%
+      );
+      color: #fff;
+      z-index: 1000;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      font-size: 14px;
+      box-sizing: border-box;
+      border-right: 1px solid #181818;
+    }
+
+    .sidebar-header {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: 10px;
+      padding: 6px 4px 8px 4px;
+      border-bottom: 1px solid #202020;
+    }
+
+    .sidebar-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #f5f5f5;
+    }
+
+    .sidebar-subtitle {
+      font-size: 11px;
+      color: #aaaaaa;
+    }
+
+    .sidebar-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 4px 0 10px 0;
+    }
+
+    .nav-pill {
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid #2b2b2b;
+      background: rgba(20, 20, 20, 0.95);
+      color: #d0d0d0;
+      font-size: 11px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease,
+        color 0.15s ease;
+    }
+
+    .nav-pill:hover {
+      border-color: var(--accent);
+      background: rgba(21, 80, 130, 0.9);
+      color: #ffffff;
+    }
+
+    #view-stack,
+    #mosaic-box {
+      margin-left: calc(var(--sidebar-w) + var(--gap));
+      max-width: calc(100vw - var(--sidebar-w) - var(--gap) * 2);
+      padding: 12px;
+      box-sizing: border-box;
+    }
+
+    #view-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #view-stack canvas {
+      display: block;
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid #202020;
+      background: #000;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    }
+
+    .preview-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      font-size: 13px;
+      color: #ccc;
+      padding: 2px 4px 4px 4px;
+    }
+
+    #preview-meta {
+      font-weight: 600;
+      color: #f5f5f5;
+    }
+
+    #preview-stats {
+      font-variant-numeric: tabular-nums;
+      opacity: 0.85;
+    }
+
+    #mosaic-box {
+      background: radial-gradient(
+        circle at top,
+        #161616 0,
+        #050505 40%,
+        #000 100%
+      );
+      color: #fff;
+      border: 1px solid #252525;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+      margin-top: 12px;
+    }
+
+    #mosaic-box h2 {
+      margin: 0;
+      font-size: 0.95rem;
+      padding: 10px 10px 0 10px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #f0f0f0;
+    }
+
+    #mosaic-box .mosaic-caption {
+      margin: 4px 10px 8px 10px;
+      font-size: 11px;
+      color: #aaaaaa;
+    }
+
+    #mosaic {
+      display: grid;
+      gap: 1px;
+      grid-template-columns: repeat(3, 1fr);
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    #mosaic canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 4px;
+      border: 1px solid #181818;
+      background: #000;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+    }
+
+    aside#sidebar .param-group {
+      background: radial-gradient(
+        circle at top left,
+        #171717 0,
+        var(--panel-bg) 35%,
+        #020202 100%
+      );
+      color: #fff;
+      border: 1px solid #262626;
+      border-radius: 8px;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5);
+      padding: 10px 9px 10px 9px;
+      margin: 0 0 10px 0;
+      box-sizing: border-box;
+    }
+
+    aside#sidebar .param-group:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-soft), 0 6px 18px rgba(0, 0, 0, 0.7);
+    }
+
+    aside#sidebar .param-group h2 {
+      margin: 0 0 7px 0;
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #e0e0e0;
+      border-bottom: 1px solid #262626;
+      padding-bottom: 5px;
+    }
+
+    .noise-modes-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .noise-modes-row > label.grow {
+      margin: 0;
+    }
+
+    aside#sidebar .param-group > label:not(.grow) {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 5px 0;
+      font-size: 0.9rem;
+    }
+
+    aside#sidebar .param-group input[type="number"] {
+      width: 6em;
+      padding: 2px 4px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #0d0d0d;
+      color: #fff;
+      font-size: 0.9rem;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+    }
+
+    aside#sidebar .param-group input[type="number"]:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-soft);
+    }
+
+    aside#sidebar .param-group label.grow {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      margin: 4px 0 8px 0;
+      font-size: 0.9rem;
+    }
+
+    aside#sidebar details {
+      width: 100%;
+    }
+
+    aside#sidebar details summary {
+      cursor: pointer;
+      font-weight: 600;
+      list-style: none;
+      padding: 4px 0;
+      font-size: 0.86rem;
+      color: #e4e4e4;
+    }
+
+    aside#sidebar details > div {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 6px;
+      padding-left: 8px;
+      border-left: 2px solid #2b2b2b;
+      max-height: 240px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    aside#sidebar details label {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 6px;
+      margin: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      font-size: 0.8rem;
+      color: #d5d5d5;
+    }
+
+    #render-btn {
+      display: inline-block;
+      margin: 4px 0 12px 0;
+      padding: 8px 12px;
+      font-size: 0.92rem;
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      background: linear-gradient(135deg, #2575fc, #21c0ff);
+      cursor: pointer;
+      color: #000;
+      width: 100%;
+      box-sizing: border-box;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    #render-btn:hover {
+      filter: brightness(1.05);
+      box-shadow: 0 6px 18px rgba(37, 117, 252, 0.5);
+    }
+
+    #apply-res {
+      margin-top: 8px;
+      padding: 6px 10px;
+      font-size: 0.85rem;
+      border-radius: 999px;
+      border: 1px solid #666;
+      background: #e0e0e0;
+      cursor: pointer;
+      color: #000;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    #apply-res:hover {
+      background: #d0d0d0;
+    }
+
+    #noise-overrides-btn {
+      align-self: center;
+      padding: 4px 8px;
+      font-size: 0.78rem;
+      border-radius: 999px;
+      border: 1px solid #3e3e3e;
+      background: #181818;
+      color: #eee;
+      cursor: pointer;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    #noise-overrides-btn:hover {
+      border-color: var(--accent);
+      background: #252525;
+      color: #ffffff;
+    }
+
+    aside#sidebar select {
+      padding: 2px 4px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #101010;
+      color: #fff;
+      font-size: 0.88rem;
+    }
+
+    aside#sidebar input[type="range"] {
+      width: 100%;
+      appearance: none;
+      height: 4px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #333, #666);
+      outline: none;
+    }
+
+    aside#sidebar input[type="range"]::-webkit-slider-thumb {
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 1px solid #111;
+      box-shadow: 0 0 0 3px var(--accent-soft);
+      cursor: pointer;
+    }
+
+    aside#sidebar input[type="range"]::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 1px solid #111;
+      box-shadow: 0 0 0 3px var(--accent-soft);
+      cursor: pointer;
+    }
+
+    .grow {
+      flex: 1;
+    }
+
+    @media (max-width: 960px) {
+      #view-stack,
+      #mosaic-box {
+        margin-left: 0;
+        margin-top: calc(340px + 16px);
+      }
+
+      aside#sidebar {
+        width: 100%;
+        max-height: 340px;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+      }
+    }
+  </style>
+
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">WebGPU Noise Lab</div>
+      <div class="sidebar-subtitle">
+        Stack fields, slice 3D volumes, inspect tiling
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#res-section" class="nav-pill">Resolution</a>
+      <a href="#noise-params" class="nav-pill">Noise</a>
+      <a href="#overrides-group" class="nav-pill">Overrides</a>
+      <a href="#toroidal-section" class="nav-pill">Z slice</a>
+    </nav>
+    <div id="res-section" class="param-group">
+      <h2>Resolution</h2>
+      <label
+        >Canvas width:
+        <input type="number" id="res-width" value="800" min="1" />
+      </label>
+      <label
+        >Canvas height:
+        <input type="number" id="res-height" value="800" min="1" />
+      </label>
+      <button id="apply-res" type="button">Apply resolution</button>
+    </div>
+    <div id="noise-params" class="param-group">
+      <h2>Noise settings</h2>
+
+      <div class="noise-modes-row">
+        <label class="grow">
+          Noise modes (additive):
+          <details class="grow">
+            <summary>Select noise types ▾</summary>
+            <div>
+              <label
+                ><input
+                  type="checkbox"
+                  name="noise-type"
+                  data-bit="0"
+                  checked
+                />
+                Perlin</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="1" />
+                Billow</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="2" />
+                AntiBillow</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="3" />
+                Ridge</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="4" />
+                AntiRidge</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="5" />
+                RidgedMultifractal</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="6" />
+                RidgedMultifractal2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="7" />
+                RidgedMultifractal3</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="8" />
+                RidgedMultifractal4</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="9" />
+                AntiRidgedMultifractal</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="10" />
+                AntiRidgedMultifractal2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="11" />
+                AntiRidgedMultifractal3</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="12" />
+                AntiRidgedMultifractal4</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="13" />
+                FBM</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="14" />
+                FBM2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="15" />
+                FBM3</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="16" />
+                CellularBM1</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="17" />
+                CellularBM2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="18" />
+                CellularBM3</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="19" />
+                VoronoiBM1</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="20" />
+                VoronoiBM2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="21" />
+                VoronoiBM3</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="22" />
+                CellularPattern</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="23" />
+                WorleyPattern</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="24" />
+                AntiCellularPattern</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="25" />
+                AntiWorleyPattern</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="26" />
+                LanczosBillow</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="27" />
+                LanczosAntiBillow</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="28" />
+                VoronoiTileNoise</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="29" />
+                VoronoiCircleNoise</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="30" />
+                VoronoiCircle2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="31" />
+                VoronoiFlatShade</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="32" />
+                VoronoiRipple3D</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="33" />
+                VoronoiRipple3D2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="34" />
+                VoronoiCircularRipple</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="35" />
+                FVoronoiRipple3D</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="36" />
+                FVoronoiCircularRipple</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="37" />
+                RippleNoise</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="38" />
+                FractalRipples</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="39" />
+                HexWorms</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="40" />
+                PerlinWorms</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="41" /> White
+                Noise</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="42" /> Blue
+                Noise</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="43" />
+                Simplex</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="44" />
+                Curl2D</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="45" />
+                CurlFBM2D</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="46" />
+                DomainWarpFBM1</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="47" />
+                DomainWarpFBM2</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="48" />
+                GaborAnisotropic</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="49" />
+                TerraceNoise</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="50" />
+                FoamNoise</label
+              >
+              <label
+                ><input type="checkbox" name="noise-type" data-bit="51" />
+                Turbulence</label
+              >
+            </div>
+          </details>
+        </label>
+      </div>
+
+      <label
+        >Seed:
+        <input
+          type="number"
+          step="1"
+          id="noise-seed"
+          value="1234567890"
+          min="1"
+        />
+      </label>
+      <label
+        >Zoom:
+        <input type="number" step="0.1" id="noise-zoom" value="1.0" min="0.1" />
+      </label>
+      <label
+        >Frequency:
+        <input type="number" step="0.01" id="noise-freq" value="1.0" />
+      </label>
+      <label
+        >Octaves:
+        <input type="number" step="1" id="noise-octaves" value="8" min="1" />
+      </label>
+      <label
+        >Lacunarity:
+        <input
+          type="number"
+          step="0.1"
+          id="noise-lacunarity"
+          value="2.0"
+          min="0.1"
+        />
+      </label>
+      <label
+        >Gain:
+        <input
+          type="number"
+          step="0.01"
+          id="noise-gain"
+          value="0.5"
+          min="0.1"
+        />
+      </label>
+      <label
+        >X shift:
+        <input type="number" step="0.01" id="noise-xShift" value="0" />
+      </label>
+      <label
+        >Y shift:
+        <input type="number" step="0.01" id="noise-yShift" value="0" />
+      </label>
+      <label
+        >Z shift:
+        <input type="number" step="0.01" id="noise-zShift" value="0" />
+      </label>
+      <label
+        >Threshold:
+        <input type="number" step="0.01" id="noise-threshold" value="0.1" />
+      </label>
+    </div>
+
+    <button id="render-btn" type="button">Render</button>
+
+    <div id="overrides-group" class="param-group">
+      <h2>Per mode overrides</h2>
+      <label
+        >Mode:
+        <select id="override-mode" style="width: 100%"></select>
+      </label>
+      <label
+        >Zoom:
+        <input type="number" id="ov-zoom" step="0.01" placeholder="" />
+      </label>
+      <label
+        >Frequency:
+        <input type="number" id="ov-freq" step="0.01" placeholder="" />
+      </label>
+      <label
+        >Gain:
+        <input type="number" id="ov-gain" step="0.01" placeholder="" />
+      </label>
+      <label
+        >Octaves:
+        <input type="number" id="ov-octaves" step="1" placeholder="" />
+      </label>
+      <label
+        >Warp amp:
+        <input type="number" id="ov-warp" step="0.01" placeholder="" />
+      </label>
+      <label
+        >Threshold:
+        <input type="number" id="ov-threshold" step="0.01" placeholder="" />
+      </label>
+      <label
+        >Gabor radius:
+        <input type="number" id="ov-gabor" step="0.01" placeholder="" />
+      </label>
+      <label
+        >X shift:
+        <input type="number" id="ov-xShift" step="0.01" placeholder="" />
+      </label>
+      <label
+        >Y shift:
+        <input type="number" id="ov-yShift" step="0.01" placeholder="" />
+      </label>
+      <label
+        >Z shift:
+        <input type="number" id="ov-zShift" step="0.01" placeholder="" />
+      </label>
+      <button id="ov-clear" type="button">Clear overrides for mode</button>
+    </div>
+    <hr/>
+    <div id="toroidal-section" class="param-group">
+      <h2>Toroidal slice</h2>
+      <label
+        >Z slice (0 to 127):
+        <input type="range" id="z-slice" min="0" max="127" value="64" />
+      </label>
+      <label
+        >Slice index:
+        <input type="number" id="z-slice-num" min="0" max="127" value="64" />
+      </label>
+    </div>
+  </aside>
+
+  <div id="view-stack">
+    <div class="preview-header">
+      <div id="preview-meta">Height field preview</div>
+      <div id="preview-stats"></div>
+    </div>
+    <canvas id="noise-canvas"></canvas>
+  </div>
+
+  <div id="mosaic-box" class="param-group">
+    <h2>3D toroidal volume tiles (3×3)</h2>
+    <p class="mosaic-caption">
+      A single toroidal Z slice from a Perlin4D + Worley4D volume, repeated in X
+      and Y. Use the Z slice control to see different slices of the volume.
+    </p>
+    <div id="mosaic"></div>
+  </div>
+</div>

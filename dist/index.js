@@ -1,0 +1,5325 @@
+(()=>{var G=`<div>\r
+  <style>\r
+    :root {\r
+      background-color: black;\r
+      --sidebar-w: 260px;\r
+      --gap: 16px;\r
+      --accent: #3fa9ff;\r
+      --accent-soft: rgba(63, 169, 255, 0.2);\r
+      --panel-bg: #050505;\r
+      --panel-bg2: #111;\r
+    }\r
+\r
+    aside#sidebar {\r
+      position: fixed;\r
+      top: 0;\r
+      left: 0;\r
+      bottom: 0;\r
+      width: var(--sidebar-w);\r
+      overflow: auto;\r
+      padding: 10px 12px 14px 12px;\r
+      scrollbar-gutter: stable both-edges;\r
+      background: radial-gradient(\r
+        circle at top,\r
+        #181818 0,\r
+        #050505 40%,\r
+        #000 100%\r
+      );\r
+      color: #fff;\r
+      z-index: 1000;\r
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",\r
+        sans-serif;\r
+      font-size: 14px;\r
+      box-sizing: border-box;\r
+      border-right: 1px solid #181818;\r
+    }\r
+\r
+    .sidebar-header {\r
+      display: flex;\r
+      flex-direction: column;\r
+      gap: 2px;\r
+      margin-bottom: 10px;\r
+      padding: 6px 4px 8px 4px;\r
+      border-bottom: 1px solid #202020;\r
+    }\r
+\r
+    .sidebar-title {\r
+      font-size: 14px;\r
+      font-weight: 600;\r
+      letter-spacing: 0.06em;\r
+      text-transform: uppercase;\r
+      color: #f5f5f5;\r
+    }\r
+\r
+    .sidebar-subtitle {\r
+      font-size: 11px;\r
+      color: #aaaaaa;\r
+    }\r
+\r
+    .sidebar-nav {\r
+      display: flex;\r
+      flex-wrap: wrap;\r
+      gap: 6px;\r
+      margin: 4px 0 10px 0;\r
+    }\r
+\r
+    .nav-pill {\r
+      padding: 4px 8px;\r
+      border-radius: 999px;\r
+      border: 1px solid #2b2b2b;\r
+      background: rgba(20, 20, 20, 0.95);\r
+      color: #d0d0d0;\r
+      font-size: 11px;\r
+      text-decoration: none;\r
+      cursor: pointer;\r
+      transition: background 0.15s ease, border-color 0.15s ease,\r
+        color 0.15s ease;\r
+    }\r
+\r
+    .nav-pill:hover {\r
+      border-color: var(--accent);\r
+      background: rgba(21, 80, 130, 0.9);\r
+      color: #ffffff;\r
+    }\r
+\r
+    #view-stack,\r
+    #mosaic-box {\r
+      margin-left: calc(var(--sidebar-w) + var(--gap));\r
+      max-width: calc(100vw - var(--sidebar-w) - var(--gap) * 2);\r
+      padding: 12px;\r
+      box-sizing: border-box;\r
+    }\r
+\r
+    #view-stack {\r
+      display: flex;\r
+      flex-direction: column;\r
+      gap: 8px;\r
+    }\r
+\r
+    #view-stack canvas {\r
+      display: block;\r
+      width: 100%;\r
+      border-radius: 8px;\r
+      border: 1px solid #202020;\r
+      background: #000;\r
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);\r
+    }\r
+\r
+    .preview-header {\r
+      display: flex;\r
+      align-items: baseline;\r
+      justify-content: space-between;\r
+      gap: 8px;\r
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",\r
+        sans-serif;\r
+      font-size: 13px;\r
+      color: #ccc;\r
+      padding: 2px 4px 4px 4px;\r
+    }\r
+\r
+    #preview-meta {\r
+      font-weight: 600;\r
+      color: #f5f5f5;\r
+    }\r
+\r
+    #preview-stats {\r
+      font-variant-numeric: tabular-nums;\r
+      opacity: 0.85;\r
+    }\r
+\r
+    #mosaic-box {\r
+      background: radial-gradient(\r
+        circle at top,\r
+        #161616 0,\r
+        #050505 40%,\r
+        #000 100%\r
+      );\r
+      color: #fff;\r
+      border: 1px solid #252525;\r
+      border-radius: 10px;\r
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);\r
+      margin-top: 12px;\r
+    }\r
+\r
+    #mosaic-box h2 {\r
+      margin: 0;\r
+      font-size: 0.95rem;\r
+      padding: 10px 10px 0 10px;\r
+      letter-spacing: 0.05em;\r
+      text-transform: uppercase;\r
+      color: #f0f0f0;\r
+    }\r
+\r
+    #mosaic-box .mosaic-caption {\r
+      margin: 4px 10px 8px 10px;\r
+      font-size: 11px;\r
+      color: #aaaaaa;\r
+    }\r
+\r
+    #mosaic {\r
+      display: grid;\r
+      gap: 1px;\r
+      grid-template-columns: repeat(3, 1fr);\r
+      padding: 10px;\r
+      box-sizing: border-box;\r
+    }\r
+\r
+    #mosaic canvas {\r
+      display: block;\r
+      width: 100%;\r
+      aspect-ratio: 1 / 1;\r
+      border-radius: 4px;\r
+      border: 1px solid #181818;\r
+      background: #000;\r
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);\r
+    }\r
+\r
+    aside#sidebar .param-group {\r
+      background: radial-gradient(\r
+        circle at top left,\r
+        #171717 0,\r
+        var(--panel-bg) 35%,\r
+        #020202 100%\r
+      );\r
+      color: #fff;\r
+      border: 1px solid #262626;\r
+      border-radius: 8px;\r
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5);\r
+      padding: 10px 9px 10px 9px;\r
+      margin: 0 0 10px 0;\r
+      box-sizing: border-box;\r
+    }\r
+\r
+    aside#sidebar .param-group:hover {\r
+      border-color: var(--accent);\r
+      box-shadow: 0 0 0 1px var(--accent-soft), 0 6px 18px rgba(0, 0, 0, 0.7);\r
+    }\r
+\r
+    aside#sidebar .param-group h2 {\r
+      margin: 0 0 7px 0;\r
+      font-size: 0.75rem;\r
+      letter-spacing: 0.12em;\r
+      text-transform: uppercase;\r
+      color: #e0e0e0;\r
+      border-bottom: 1px solid #262626;\r
+      padding-bottom: 5px;\r
+    }\r
+\r
+    .noise-modes-row {\r
+      display: flex;\r
+      align-items: flex-start;\r
+      gap: 8px;\r
+      margin-bottom: 4px;\r
+    }\r
+\r
+    .noise-modes-row > label.grow {\r
+      margin: 0;\r
+    }\r
+\r
+    aside#sidebar .param-group > label:not(.grow) {\r
+      display: flex;\r
+      align-items: center;\r
+      justify-content: space-between;\r
+      gap: 8px;\r
+      margin: 5px 0;\r
+      font-size: 0.9rem;\r
+    }\r
+\r
+    aside#sidebar .param-group input[type="number"] {\r
+      width: 6em;\r
+      padding: 2px 4px;\r
+      border-radius: 4px;\r
+      border: 1px solid #444;\r
+      background: #0d0d0d;\r
+      color: #fff;\r
+      font-size: 0.9rem;\r
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);\r
+    }\r
+\r
+    aside#sidebar .param-group input[type="number"]:focus-visible {\r
+      outline: none;\r
+      border-color: var(--accent);\r
+      box-shadow: 0 0 0 1px var(--accent-soft);\r
+    }\r
+\r
+    aside#sidebar .param-group label.grow {\r
+      display: flex;\r
+      flex-direction: column;\r
+      align-items: flex-start;\r
+      gap: 6px;\r
+      margin: 4px 0 8px 0;\r
+      font-size: 0.9rem;\r
+    }\r
+\r
+    aside#sidebar details {\r
+      width: 100%;\r
+    }\r
+\r
+    aside#sidebar details summary {\r
+      cursor: pointer;\r
+      font-weight: 600;\r
+      list-style: none;\r
+      padding: 4px 0;\r
+      font-size: 0.86rem;\r
+      color: #e4e4e4;\r
+    }\r
+\r
+    aside#sidebar details > div {\r
+      display: flex;\r
+      flex-direction: column;\r
+      gap: 4px;\r
+      margin-top: 6px;\r
+      padding-left: 8px;\r
+      border-left: 2px solid #2b2b2b;\r
+      max-height: 240px;\r
+      overflow-y: auto;\r
+      overflow-x: hidden;\r
+      width: 100%;\r
+      box-sizing: border-box;\r
+    }\r
+\r
+    aside#sidebar details label {\r
+      display: flex;\r
+      align-items: center;\r
+      justify-content: flex-start;\r
+      gap: 6px;\r
+      margin: 0;\r
+      white-space: normal;\r
+      overflow-wrap: anywhere;\r
+      font-size: 0.8rem;\r
+      color: #d5d5d5;\r
+    }\r
+\r
+    #render-btn {\r
+      display: inline-block;\r
+      margin: 4px 0 12px 0;\r
+      padding: 8px 12px;\r
+      font-size: 0.92rem;\r
+      border: 1px solid var(--accent);\r
+      border-radius: 999px;\r
+      background: linear-gradient(135deg, #2575fc, #21c0ff);\r
+      cursor: pointer;\r
+      color: #000;\r
+      width: 100%;\r
+      box-sizing: border-box;\r
+      font-weight: 600;\r
+      letter-spacing: 0.06em;\r
+      text-transform: uppercase;\r
+    }\r
+\r
+    #render-btn:hover {\r
+      filter: brightness(1.05);\r
+      box-shadow: 0 6px 18px rgba(37, 117, 252, 0.5);\r
+    }\r
+\r
+    #apply-res {\r
+      margin-top: 8px;\r
+      padding: 6px 10px;\r
+      font-size: 0.85rem;\r
+      border-radius: 999px;\r
+      border: 1px solid #666;\r
+      background: #e0e0e0;\r
+      cursor: pointer;\r
+      color: #000;\r
+      text-transform: uppercase;\r
+      letter-spacing: 0.08em;\r
+    }\r
+\r
+    #apply-res:hover {\r
+      background: #d0d0d0;\r
+    }\r
+\r
+    #noise-overrides-btn {\r
+      align-self: center;\r
+      padding: 4px 8px;\r
+      font-size: 0.78rem;\r
+      border-radius: 999px;\r
+      border: 1px solid #3e3e3e;\r
+      background: #181818;\r
+      color: #eee;\r
+      cursor: pointer;\r
+      white-space: nowrap;\r
+      text-transform: uppercase;\r
+      letter-spacing: 0.08em;\r
+    }\r
+\r
+    #noise-overrides-btn:hover {\r
+      border-color: var(--accent);\r
+      background: #252525;\r
+      color: #ffffff;\r
+    }\r
+\r
+    aside#sidebar select {\r
+      padding: 2px 4px;\r
+      border-radius: 4px;\r
+      border: 1px solid #444;\r
+      background: #101010;\r
+      color: #fff;\r
+      font-size: 0.88rem;\r
+    }\r
+\r
+    aside#sidebar input[type="range"] {\r
+      width: 100%;\r
+      appearance: none;\r
+      height: 4px;\r
+      border-radius: 999px;\r
+      background: linear-gradient(90deg, #333, #666);\r
+      outline: none;\r
+    }\r
+\r
+    aside#sidebar input[type="range"]::-webkit-slider-thumb {\r
+      appearance: none;\r
+      width: 12px;\r
+      height: 12px;\r
+      border-radius: 50%;\r
+      background: #ffffff;\r
+      border: 1px solid #111;\r
+      box-shadow: 0 0 0 3px var(--accent-soft);\r
+      cursor: pointer;\r
+    }\r
+\r
+    aside#sidebar input[type="range"]::-moz-range-thumb {\r
+      width: 12px;\r
+      height: 12px;\r
+      border-radius: 50%;\r
+      background: #ffffff;\r
+      border: 1px solid #111;\r
+      box-shadow: 0 0 0 3px var(--accent-soft);\r
+      cursor: pointer;\r
+    }\r
+\r
+    .grow {\r
+      flex: 1;\r
+    }\r
+\r
+    @media (max-width: 960px) {\r
+      #view-stack,\r
+      #mosaic-box {\r
+        margin-left: 0;\r
+        margin-top: calc(340px + 16px);\r
+      }\r
+\r
+      aside#sidebar {\r
+        width: 100%;\r
+        max-height: 340px;\r
+        position: fixed;\r
+        top: 0;\r
+        left: 0;\r
+        right: 0;\r
+      }\r
+    }\r
+  </style>\r
+\r
+  <aside id="sidebar">\r
+    <div class="sidebar-header">\r
+      <div class="sidebar-title">WebGPU Noise Lab</div>\r
+      <div class="sidebar-subtitle">\r
+        Stack fields, slice 3D volumes, inspect tiling\r
+      </div>\r
+    </div>\r
+\r
+    <nav class="sidebar-nav">\r
+      <a href="#res-section" class="nav-pill">Resolution</a>\r
+      <a href="#noise-params" class="nav-pill">Noise</a>\r
+      <a href="#overrides-group" class="nav-pill">Overrides</a>\r
+      <a href="#toroidal-section" class="nav-pill">Z slice</a>\r
+    </nav>\r
+    <div id="res-section" class="param-group">\r
+      <h2>Resolution</h2>\r
+      <label\r
+        >Canvas width:\r
+        <input type="number" id="res-width" value="800" min="1" />\r
+      </label>\r
+      <label\r
+        >Canvas height:\r
+        <input type="number" id="res-height" value="800" min="1" />\r
+      </label>\r
+      <button id="apply-res" type="button">Apply resolution</button>\r
+    </div>\r
+    <div id="noise-params" class="param-group">\r
+      <h2>Noise settings</h2>\r
+\r
+      <div class="noise-modes-row">\r
+        <label class="grow">\r
+          Noise modes (additive):\r
+          <details class="grow">\r
+            <summary>Select noise types \u25BE</summary>\r
+            <div>\r
+              <label\r
+                ><input\r
+                  type="checkbox"\r
+                  name="noise-type"\r
+                  data-bit="0"\r
+                  checked\r
+                />\r
+                Perlin</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="1" />\r
+                Billow</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="2" />\r
+                AntiBillow</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="3" />\r
+                Ridge</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="4" />\r
+                AntiRidge</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="5" />\r
+                RidgedMultifractal</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="6" />\r
+                RidgedMultifractal2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="7" />\r
+                RidgedMultifractal3</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="8" />\r
+                RidgedMultifractal4</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="9" />\r
+                AntiRidgedMultifractal</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="10" />\r
+                AntiRidgedMultifractal2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="11" />\r
+                AntiRidgedMultifractal3</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="12" />\r
+                AntiRidgedMultifractal4</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="13" />\r
+                FBM</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="14" />\r
+                FBM2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="15" />\r
+                FBM3</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="16" />\r
+                CellularBM1</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="17" />\r
+                CellularBM2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="18" />\r
+                CellularBM3</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="19" />\r
+                VoronoiBM1</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="20" />\r
+                VoronoiBM2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="21" />\r
+                VoronoiBM3</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="22" />\r
+                CellularPattern</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="23" />\r
+                WorleyPattern</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="24" />\r
+                AntiCellularPattern</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="25" />\r
+                AntiWorleyPattern</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="26" />\r
+                LanczosBillow</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="27" />\r
+                LanczosAntiBillow</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="28" />\r
+                VoronoiTileNoise</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="29" />\r
+                VoronoiCircleNoise</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="30" />\r
+                VoronoiCircle2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="31" />\r
+                VoronoiFlatShade</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="32" />\r
+                VoronoiRipple3D</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="33" />\r
+                VoronoiRipple3D2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="34" />\r
+                VoronoiCircularRipple</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="35" />\r
+                FVoronoiRipple3D</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="36" />\r
+                FVoronoiCircularRipple</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="37" />\r
+                RippleNoise</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="38" />\r
+                FractalRipples</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="39" />\r
+                HexWorms</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="40" />\r
+                PerlinWorms</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="41" /> White\r
+                Noise</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="42" /> Blue\r
+                Noise</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="43" />\r
+                Simplex</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="44" />\r
+                Curl2D</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="45" />\r
+                CurlFBM2D</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="46" />\r
+                DomainWarpFBM1</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="47" />\r
+                DomainWarpFBM2</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="48" />\r
+                GaborAnisotropic</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="49" />\r
+                TerraceNoise</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="50" />\r
+                FoamNoise</label\r
+              >\r
+              <label\r
+                ><input type="checkbox" name="noise-type" data-bit="51" />\r
+                Turbulence</label\r
+              >\r
+            </div>\r
+          </details>\r
+        </label>\r
+      </div>\r
+\r
+      <label\r
+        >Seed:\r
+        <input\r
+          type="number"\r
+          step="1"\r
+          id="noise-seed"\r
+          value="1234567890"\r
+          min="1"\r
+        />\r
+      </label>\r
+      <label\r
+        >Zoom:\r
+        <input type="number" step="0.1" id="noise-zoom" value="1.0" min="0.1" />\r
+      </label>\r
+      <label\r
+        >Frequency:\r
+        <input type="number" step="0.01" id="noise-freq" value="1.0" />\r
+      </label>\r
+      <label\r
+        >Octaves:\r
+        <input type="number" step="1" id="noise-octaves" value="8" min="1" />\r
+      </label>\r
+      <label\r
+        >Lacunarity:\r
+        <input\r
+          type="number"\r
+          step="0.1"\r
+          id="noise-lacunarity"\r
+          value="2.0"\r
+          min="0.1"\r
+        />\r
+      </label>\r
+      <label\r
+        >Gain:\r
+        <input\r
+          type="number"\r
+          step="0.01"\r
+          id="noise-gain"\r
+          value="0.5"\r
+          min="0.1"\r
+        />\r
+      </label>\r
+      <label\r
+        >X shift:\r
+        <input type="number" step="0.01" id="noise-xShift" value="0" />\r
+      </label>\r
+      <label\r
+        >Y shift:\r
+        <input type="number" step="0.01" id="noise-yShift" value="0" />\r
+      </label>\r
+      <label\r
+        >Z shift:\r
+        <input type="number" step="0.01" id="noise-zShift" value="0" />\r
+      </label>\r
+      <label\r
+        >Threshold:\r
+        <input type="number" step="0.01" id="noise-threshold" value="0.1" />\r
+      </label>\r
+    </div>\r
+\r
+    <button id="render-btn" type="button">Render</button>\r
+\r
+    <div id="overrides-group" class="param-group">\r
+      <h2>Per mode overrides</h2>\r
+      <label\r
+        >Mode:\r
+        <select id="override-mode" style="width: 100%"></select>\r
+      </label>\r
+      <label\r
+        >Zoom:\r
+        <input type="number" id="ov-zoom" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Frequency:\r
+        <input type="number" id="ov-freq" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Gain:\r
+        <input type="number" id="ov-gain" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Octaves:\r
+        <input type="number" id="ov-octaves" step="1" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Warp amp:\r
+        <input type="number" id="ov-warp" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Threshold:\r
+        <input type="number" id="ov-threshold" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Gabor radius:\r
+        <input type="number" id="ov-gabor" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >X shift:\r
+        <input type="number" id="ov-xShift" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Y shift:\r
+        <input type="number" id="ov-yShift" step="0.01" placeholder="" />\r
+      </label>\r
+      <label\r
+        >Z shift:\r
+        <input type="number" id="ov-zShift" step="0.01" placeholder="" />\r
+      </label>\r
+      <button id="ov-clear" type="button">Clear overrides for mode</button>\r
+    </div>\r
+    <hr/>\r
+    <div id="toroidal-section" class="param-group">\r
+      <h2>Toroidal slice</h2>\r
+      <label\r
+        >Z slice (0 to 127):\r
+        <input type="range" id="z-slice" min="0" max="127" value="64" />\r
+      </label>\r
+      <label\r
+        >Slice index:\r
+        <input type="number" id="z-slice-num" min="0" max="127" value="64" />\r
+      </label>\r
+    </div>\r
+  </aside>\r
+\r
+  <div id="view-stack">\r
+    <div class="preview-header">\r
+      <div id="preview-meta">Height field preview</div>\r
+      <div id="preview-stats"></div>\r
+    </div>\r
+    <canvas id="noise-canvas"></canvas>\r
+  </div>\r
+\r
+  <div id="mosaic-box" class="param-group">\r
+    <h2>3D toroidal volume tiles (3\xD73)</h2>\r
+    <p class="mosaic-caption">\r
+      A single toroidal Z slice from a Perlin4D + Worley4D volume, repeated in X\r
+      and Y. Use the Z slice control to see different slices of the volume.\r
+    </p>\r
+    <div id="mosaic"></div>\r
+  </div>\r
+</div>\r
+`;var L=`const PI : f32 = 3.141592653589793;\r
+const TWO_PI : f32 = 6.283185307179586;\r
+\r
+const ANGLE_INCREMENT : f32 = PI / 4.0;\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 options UBO \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+struct NoiseComputeOptions {\r
+  getGradient : u32,\r
+  useCustomPos : u32,\r
+  outputChannel : u32,\r
+  ioFlags : u32,\r
+  baseRadius : f32,\r
+  heightScale : f32,\r
+  _pad1 : f32,\r
+  _pad2 : f32,\r
+};\r
+@group(0) @binding(0) var<uniform> options : NoiseComputeOptions;\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 params UBO (layout kept) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+struct NoiseParams {\r
+  seed : u32,\r
+  zoom : f32,\r
+  freq : f32,\r
+  octaves : u32,\r
+  lacunarity : f32,\r
+  gain : f32,\r
+  xShift : f32,\r
+  yShift : f32,\r
+  zShift : f32,\r
+  turbulence : u32,\r
+  seedAngle : f32,\r
+  exp1 : f32,\r
+  exp2 : f32,\r
+  threshold : f32,\r
+  rippleFreq : f32,\r
+  time : f32,\r
+  warpAmp : f32,\r
+  gaborRadius : f32,\r
+  terraceStep : f32,\r
+  toroidal : u32,\r
+  voroMode : u32,\r
+  edgeK:     f32\r
+};\r
+@group(0) @binding(1) var<uniform> params : NoiseParams;\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 permutation table \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+struct PermTable { values : array<u32, 512>, };\r
+const PERM_SIZE : u32 = 512u;\r
+const PERM_MASK : u32 = PERM_SIZE - 1u;\r
+const INV_255 : f32 = 1.0 / 255.0;\r
+const INV_2_OVER_255 : f32 = 2.0 / 255.0;\r
+\r
+@group(0) @binding(2) var<storage, read> permTable : PermTable;\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 IO resources \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@group(0) @binding(3) var inputTex : texture_2d_array<f32>;\r
+@group(0) @binding(4) var outputTex : texture_storage_2d_array<rgba16float, write>;\r
+@group(0) @binding(5) var<storage, read> posBuf : array<vec4<f32>>;\r
+\r
+struct Frame {\r
+  fullWidth : u32,\r
+  fullHeight : u32,\r
+  tileWidth : u32,\r
+  tileHeight : u32,\r
+\r
+  originX : i32,\r
+  originY : i32,\r
+  originZ : i32,\r
+  fullDepth : u32,\r
+\r
+  tileDepth : u32,\r
+  layerIndex : i32,\r
+  layers : u32,\r
+  _pad : u32,\r
+\r
+  originXf : f32,\r
+  originYf : f32,\r
+  originZf : f32,\r
+  _pad1    : f32,\r
+};\r
+@group(0) @binding(6) var<uniform> frame : Frame;\r
+\r
+@group(0) @binding(7) var inputTex3D : texture_3d<f32>;\r
+@group(0) @binding(8) var outputTex3D : texture_storage_3d<rgba16float, write>;\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 small utilities \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn clampZ(z: i32)->i32 {\r
+  let depth = i32(max(u32(frame.fullDepth), 1u));\r
+  return clamp(z, 0, depth - 1);\r
+}\r
+fn layerToZ(layerIndex:i32, layers:u32)->f32 {\r
+  if (layers <= 1u) { return 0.0; }\r
+  let li = max(layerIndex, 0);\r
+  return f32(li) / f32(layers - 1u);\r
+}\r
+fn readFrom3D()->bool { return (options.ioFlags & 0x1u) != 0u; }\r
+fn writeTo3D()->bool { return (options.ioFlags & 0x2u) != 0u; }\r
+\r
+fn loadPrevRGBA(fx:i32, fy:i32, fz:i32)->vec4<f32> {\r
+  if (readFrom3D()) { return textureLoad(inputTex3D, vec3<i32>(fx, fy, clampZ(fz)), 0); }\r
+  return textureLoad(inputTex, vec2<i32>(fx, fy), frame.layerIndex, 0);\r
+}\r
+fn storeRGBA(fx:i32, fy:i32, fz:i32, col:vec4<f32>) {\r
+  if (writeTo3D()) { textureStore(outputTex3D, vec3<i32>(fx, fy, clampZ(fz)), col); }\r
+  else { textureStore(outputTex, vec2<i32>(fx, fy), frame.layerIndex, col); }\r
+}\r
+\r
+const STEREO_SCALE : f32 = 1.8;          // fixed packing scale for Clifford torus\r
+const INV_SQRT2    : f32 = 0.7071067811865476; // 1/\u221A2\r
+\r
+// add next to your other constants\r
+const U_SCALE : f32 = 3.0;\r
+const V_SCALE : f32 = 3.0;\r
+const T_SCALE : f32 = 2.0;\r
+\r
+\r
+// pack like the HTML (x=cosU*uS, y=sinU*uS, z=cosV*vS+cosT*tS, w=sinV*vS+sinT*tS)\r
+fn packPeriodicUV(u: f32, v: f32, theta: f32) -> vec4<f32> {\r
+  let aU = u * TWO_PI;\r
+  let aV = v * TWO_PI;\r
+  let aT = (theta - floor(theta)) * TWO_PI;\r
+\r
+  let x = cos(aU) * U_SCALE;\r
+  let y = sin(aU) * U_SCALE;\r
+  let z = cos(aV) * V_SCALE + cos(aT) * T_SCALE;\r
+  let w = sin(aV) * V_SCALE + sin(aT) * T_SCALE;\r
+  return vec4<f32>(x, y, z, w);\r
+}\r
+\r
+fn thetaFromDepth(fz: i32) -> f32 {\r
+  let uses3D = writeTo3D() || readFrom3D();\r
+  if (uses3D) {\r
+    if (frame.fullDepth <= 1u) { return 0.0; }\r
+    // center-of-slice mapping: 0.5/N .. (N-0.5)/N\r
+    return (f32(clampZ(fz)) + 0.5) / f32(frame.fullDepth);\r
+  }\r
+  return layerToZ(frame.layerIndex, frame.layers);\r
+}\r
+\r
+fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
+\r
+  // \u2500\u2500 original paths (unchanged) when not in toroidal mode \u2500\u2500\r
+  if (options.useCustomPos == 1u) {\r
+    let use3D = writeTo3D() || readFrom3D();\r
+    let slice_i = select(frame.layerIndex, clampZ(fz), use3D);\r
+    let slice = u32(max(slice_i, 0));\r
+    let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);\r
+    let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
+    let idx = slice * frame.fullWidth * frame.fullHeight + u32(cy) * frame.fullWidth + u32(cx);\r
+    return posBuf[idx].xyz;\r
+  }\r
+\r
+  let invW = 1.0 / max(f32(frame.fullWidth), 1.0);\r
+  let invH = 1.0 / max(f32(frame.fullHeight), 1.0);\r
+\r
+  var ox = frame.originXf;\r
+  var oy = frame.originYf;\r
+  if (ox == 0.0 && oy == 0.0) {\r
+    ox = f32(frame.originX);\r
+    oy = f32(frame.originY);\r
+  }\r
+\r
+  if (params.toroidal == 1u) {\r
+    // center-of-texel UVs (matches the HTML path)\r
+    let U = (ox + f32(fx) + 0.5) * invW;  // [0,1)\r
+    let V = (oy + f32(fy) + 0.5) * invH;  // [0,1)\r
+    let theta = thetaFromDepth(fz);       // derive \u03B8 from depth\r
+\r
+    // return (U,V,\u03B8) \u2014 z carries \u03B8, used by packPeriodicUV in generatePerlin4D\r
+    return vec3<f32>(U, V, theta);\r
+    //this is for 4d noise functions with toroidal implementations\r
+  }\r
+\r
+\r
+  let x = (ox + f32(fx)) * invW;\r
+  let y = (oy + f32(fy)) * invH;\r
+\r
+  var z : f32;\r
+  let uses3D = writeTo3D() || readFrom3D();\r
+  if (uses3D) {\r
+    if (frame.fullDepth <= 1u) { z = 0.0; }\r
+    else { z = f32(clampZ(fz)) / f32(frame.fullDepth - 1u); }\r
+  } else {\r
+    z = layerToZ(frame.layerIndex, frame.layers);\r
+  }\r
+  return vec3<f32>(x, y, z);\r
+}\r
+\r
+\r
+\r
+fn writeChannel(fx:i32, fy:i32, fz:i32, v0:f32, channel:u32, overwrite:u32) {\r
+  let needsAccum = (overwrite == 0u);\r
+  let writesAll = (channel == 0u);\r
+  let skipRead = (!needsAccum) && (writesAll || channel == 5u);\r
+  var inCol = vec4<f32>(0.0);\r
+  if (!skipRead) { inCol = loadPrevRGBA(fx, fy, fz); }\r
+  var outCol = inCol;\r
+\r
+  if (channel == 0u)      { let h = select(v0 + inCol.x, v0, overwrite == 1u); outCol = vec4<f32>(h, h, h, h); }\r
+  else if (channel == 1u) { let h = select(v0 + inCol.x, v0, overwrite == 1u); outCol.x = h; }\r
+  else if (channel == 2u) { let h = select(v0 + inCol.y, v0, overwrite == 1u); outCol.y = h; }\r
+  else if (channel == 3u) { let h = select(v0 + inCol.z, v0, overwrite == 1u); outCol.z = h; }\r
+  else if (channel == 4u) { let h = select(v0 + inCol.w, v0, overwrite == 1u); outCol.w = h; }\r
+  else if (channel == 5u) { let p = fetchPos(fx, fy, fz); let h = select(v0 + inCol.w, v0, overwrite == 1u); outCol = vec4<f32>(p.x, p.y, p.z, h); }\r
+  else if (channel == 6u) { let p = fetchPos(fx, fy, fz); let h = select(v0 + inCol.w, v0, overwrite == 1u); outCol = vec4<f32>(p.x, p.y, h, inCol.w); }\r
+\r
+  storeRGBA(fx, fy, fz, outCol);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 math / noise bits \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+/* gradient tables */\r
+const GRAD2 : array<vec2<f32>, 8> = array<vec2<f32>, 8>(\r
+  vec2<f32>( 1.0,  1.0), vec2<f32>(-1.0,  1.0),\r
+  vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0, -1.0),\r
+  vec2<f32>( 1.0,  0.0), vec2<f32>(-1.0,  0.0),\r
+  vec2<f32>( 0.0,  1.0), vec2<f32>( 0.0, -1.0)\r
+);\r
+\r
+const GRAD3 : array<vec3<f32>, 12> = array<vec3<f32>, 12>(\r
+  vec3<f32>( 1.0,  1.0,  0.0), vec3<f32>(-1.0,  1.0,  0.0),\r
+  vec3<f32>( 1.0, -1.0,  0.0), vec3<f32>(-1.0, -1.0,  0.0),\r
+  vec3<f32>( 1.0,  0.0,  1.0), vec3<f32>(-1.0,  0.0,  1.0),\r
+  vec3<f32>( 1.0,  0.0, -1.0), vec3<f32>(-1.0,  0.0, -1.0),\r
+  vec3<f32>( 0.0,  1.0,  1.0), vec3<f32>( 0.0, -1.0,  1.0),\r
+  vec3<f32>( 0.0,  1.0, -1.0), vec3<f32>( 0.0, -1.0, -1.0)\r
+);\r
+const GRAD4 : array<vec4<f32>, 32> = array<vec4<f32>, 32>(\r
+  vec4<f32>( 0.0,  1.0,  1.0,  1.0), vec4<f32>( 0.0,  1.0,  1.0, -1.0),\r
+  vec4<f32>( 0.0,  1.0, -1.0,  1.0), vec4<f32>( 0.0,  1.0, -1.0, -1.0),\r
+  vec4<f32>( 0.0, -1.0,  1.0,  1.0), vec4<f32>( 0.0, -1.0,  1.0, -1.0),\r
+  vec4<f32>( 0.0, -1.0, -1.0,  1.0), vec4<f32>( 0.0, -1.0, -1.0, -1.0),\r
+\r
+  vec4<f32>( 1.0,  0.0,  1.0,  1.0), vec4<f32>( 1.0,  0.0,  1.0, -1.0),\r
+  vec4<f32>( 1.0,  0.0, -1.0,  1.0), vec4<f32>( 1.0,  0.0, -1.0, -1.0),\r
+  vec4<f32>(-1.0,  0.0,  1.0,  1.0), vec4<f32>(-1.0,  0.0,  1.0, -1.0),\r
+  vec4<f32>(-1.0,  0.0, -1.0,  1.0), vec4<f32>(-1.0,  0.0, -1.0, -1.0),\r
+\r
+  vec4<f32>( 1.0,  1.0,  0.0,  1.0), vec4<f32>( 1.0,  1.0,  0.0, -1.0),\r
+  vec4<f32>( 1.0, -1.0,  0.0,  1.0), vec4<f32>( 1.0, -1.0,  0.0, -1.0),\r
+  vec4<f32>(-1.0,  1.0,  0.0,  1.0), vec4<f32>(-1.0,  1.0,  0.0, -1.0),\r
+  vec4<f32>(-1.0, -1.0,  0.0,  1.0), vec4<f32>(-1.0, -1.0,  0.0, -1.0),\r
+\r
+  vec4<f32>( 1.0,  1.0,  1.0,  0.0), vec4<f32>( 1.0,  1.0, -1.0,  0.0),\r
+  vec4<f32>( 1.0, -1.0,  1.0,  0.0), vec4<f32>( 1.0, -1.0, -1.0,  0.0),\r
+  vec4<f32>(-1.0,  1.0,  1.0,  0.0), vec4<f32>(-1.0,  1.0, -1.0,  0.0),\r
+  vec4<f32>(-1.0, -1.0,  1.0,  0.0), vec4<f32>(-1.0, -1.0, -1.0,  0.0)\r
+);\r
+\r
+/* Gradient accessors */\r
+fn gradient(idx:u32)->vec3<f32> {\r
+  return GRAD3[idx % 12u];\r
+}\r
+fn gradient2(idx:u32)->vec2<f32> {\r
+  return GRAD2[idx % 8u];\r
+}\r
+fn gradient4(idx: u32) -> vec4<f32> {\r
+  return GRAD4[idx % 32u];\r
+}\r
+\r
+\r
+fn fade(t:f32)->f32 { return t*t*t*(t*(t*6.0 - 15.0) + 10.0); }\r
+fn lerp(a:f32, b:f32, t:f32)->f32 { return a + t * (b - a); }\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 perm/hash helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn perm(idx: u32) -> u32 {\r
+  return permTable.values[idx & PERM_MASK];\r
+}\r
+\r
+fn rot3(p: vec3<f32>) -> vec3<f32> {\r
+  let x = 0.00 * p.x + -0.80 * p.y + -0.60 * p.z;\r
+  let y = 0.80 * p.x +  0.36 * p.y + -0.48 * p.z;\r
+  let z = 0.60 * p.x + -0.48 * p.y +  0.64 * p.z;\r
+  return vec3<f32>(x, y, z);\r
+}\r
+\r
+fn hash2(ix : i32, iy : i32) -> u32 {\r
+  return perm((u32(ix) & PERM_MASK) + perm(u32(iy) & PERM_MASK)) & PERM_MASK;\r
+}\r
+fn rand2(ix : i32, iy : i32) -> f32 {\r
+  let idx = hash2(ix, iy);\r
+  return f32(perm(idx)) * INV_2_OVER_255 - 1.0;\r
+}\r
+fn rand2u(ix : i32, iy : i32) -> f32 {\r
+  let idx = hash2(ix, iy);\r
+  return f32(perm(idx)) * INV_255;\r
+}\r
+\r
+// 3D helpers\r
+fn hash3(ix : i32, iy : i32, iz : i32) -> u32 {\r
+  return perm((u32(ix) & PERM_MASK)\r
+            + perm((u32(iy) & PERM_MASK) + perm(u32(iz) & PERM_MASK)))\r
+         & PERM_MASK;\r
+}\r
+fn rand3(ix : i32, iy : i32, iz : i32) -> f32 {\r
+  let idx = hash3(ix, iy, iz);\r
+  return f32(perm(idx)) * INV_2_OVER_255 - 1.0;\r
+}\r
+fn rand3u(ix : i32, iy : i32, iz : i32) -> f32 {\r
+  let idx = hash3(ix, iy, iz);\r
+  return f32(perm(idx)) * INV_255;\r
+}\r
+\r
+// 4D helpers\r
+fn hash4(ix : i32, iy : i32, iz : i32, iw : i32) -> u32 {\r
+  let a = perm(u32(ix) & PERM_MASK);\r
+  let b = perm((u32(iy) & PERM_MASK) + a);\r
+  let c = perm((u32(iz) & PERM_MASK) + b);\r
+  return perm((u32(iw) & PERM_MASK) + c) & PERM_MASK;\r
+}\r
+fn rand4(ix : i32, iy : i32, iz : i32, iw : i32) -> f32 {\r
+  let idx = hash4(ix, iy, iz, iw);\r
+  return f32(perm(idx)) * INV_2_OVER_255 - 1.0;\r
+}\r
+fn rand4u(ix : i32, iy : i32, iz : i32, iw : i32) -> f32 {\r
+  let idx = hash4(ix, iy, iz, iw);\r
+  return f32(perm(idx)) * INV_255;\r
+}\r
+\r
+/* ---------- classic 2D Perlin ---------- */\r
+fn noise2D(p : vec2<f32>) -> f32 {\r
+  let ix = i32(floor(p.x));\r
+  let iy = i32(floor(p.y));\r
+  let X: u32 = u32(ix) & PERM_MASK;\r
+  let Y: u32 = u32(iy) & PERM_MASK;\r
+\r
+  let xf = p.x - floor(p.x);\r
+  let yf = p.y - floor(p.y);\r
+\r
+  let u = fade(xf);\r
+  let v = fade(yf);\r
+\r
+  let A  = perm(X) + Y;\r
+  let B  = perm((X + 1u) & PERM_MASK) + Y;\r
+\r
+  let gAA = gradient2(perm(A & PERM_MASK));\r
+  let gBA = gradient2(perm(B & PERM_MASK));\r
+  let gAB = gradient2(perm((A + 1u) & PERM_MASK));\r
+  let gBB = gradient2(perm((B + 1u) & PERM_MASK));\r
+\r
+  let x1 = lerp(dot(gAA, vec2<f32>(xf,       yf      )),\r
+                dot(gBA, vec2<f32>(xf - 1.0, yf      )), u);\r
+  let x2 = lerp(dot(gAB, vec2<f32>(xf,       yf - 1.0)),\r
+                dot(gBB, vec2<f32>(xf - 1.0, yf - 1.0)), u);\r
+  return lerp(x1, x2, v);\r
+}\r
+\r
+//matches 3d z=0 slice, less multiplying\r
+fn noise2D_from_3D(p: vec3<f32>) -> f32 {\r
+  let ix = i32(floor(p.x));\r
+  let iy = i32(floor(p.y));\r
+  let X: u32 = u32(ix) & PERM_MASK;\r
+  let Y: u32 = u32(iy) & PERM_MASK;\r
+\r
+  let xf = p.x - floor(p.x);\r
+  let yf = p.y - floor(p.y);\r
+  let u = fade(xf);\r
+  let v = fade(yf);\r
+\r
+  // 3D hashing path with Z = 0\r
+  let A  = perm(X) + Y;\r
+  let AA = perm(A & PERM_MASK);                 // + Z(=0)\r
+  let AB = perm((A + 1u) & PERM_MASK);          // + Z(=0)\r
+  let B  = perm((X + 1u) & PERM_MASK) + Y;\r
+  let BA = perm(B & PERM_MASK);                 // + Z(=0)\r
+  let BB = perm((B + 1u) & PERM_MASK);          // + Z(=0)\r
+\r
+  let gAA = gradient(perm(AA & PERM_MASK));\r
+  let gBA = gradient(perm(BA & PERM_MASK));\r
+  let gAB = gradient(perm(AB & PERM_MASK));\r
+  let gBB = gradient(perm(BB & PERM_MASK));\r
+\r
+  let n00 = dot(gAA, vec3<f32>(xf,       yf,       0.0));\r
+  let n10 = dot(gBA, vec3<f32>(xf - 1.0, yf,       0.0));\r
+  let n01 = dot(gAB, vec3<f32>(xf,       yf - 1.0, 0.0));\r
+  let n11 = dot(gBB, vec3<f32>(xf - 1.0, yf - 1.0, 0.0));\r
+\r
+  let nx0 = lerp(n00, n10, u);\r
+  let nx1 = lerp(n01, n11, u);\r
+  return lerp(nx0, nx1, v);\r
+}\r
+\r
+/* ---------- classic 3D Perlin ---------- */\r
+fn noise3D(p: vec3<f32>) -> f32 {\r
+  if (p.z == 0.0) { return noise2D_from_3D(p); }\r
+\r
+  let ix = i32(floor(p.x));\r
+  let iy = i32(floor(p.y));\r
+  let iz = i32(floor(p.z));\r
+  let X: u32 = u32(ix) & PERM_MASK;\r
+  let Y: u32 = u32(iy) & PERM_MASK;\r
+  let Z: u32 = u32(iz) & PERM_MASK;\r
+\r
+  let xf = p.x - floor(p.x);\r
+  let yf = p.y - floor(p.y);\r
+  let zf = p.z - floor(p.z);\r
+\r
+  let u = fade(xf);\r
+  let v = fade(yf);\r
+  let w = fade(zf);\r
+\r
+  let A  = perm(X) + Y;\r
+  let AA = perm(A & PERM_MASK) + Z;\r
+  let AB = perm((A + 1u) & PERM_MASK) + Z;\r
+  let B  = perm((X + 1u) & PERM_MASK) + Y;\r
+  let BA = perm(B & PERM_MASK) + Z;\r
+  let BB = perm((B + 1u) & PERM_MASK) + Z;\r
+\r
+  let gAA  = gradient(perm(AA & PERM_MASK));\r
+  let gBA  = gradient(perm(BA & PERM_MASK));\r
+  let gAB  = gradient(perm(AB & PERM_MASK));\r
+  let gBB  = gradient(perm(BB & PERM_MASK));\r
+  let gAA1 = gradient(perm((AA + 1u) & PERM_MASK));\r
+  let gBA1 = gradient(perm((BA + 1u) & PERM_MASK));\r
+  let gAB1 = gradient(perm((AB + 1u) & PERM_MASK));\r
+  let gBB1 = gradient(perm((BB + 1u) & PERM_MASK));\r
+\r
+  let x1 = lerp(dot(gAA,  vec3<f32>(xf,       yf,       zf      )),\r
+                dot(gBA,  vec3<f32>(xf - 1.0, yf,       zf      )), u);\r
+  let x2 = lerp(dot(gAB,  vec3<f32>(xf,       yf - 1.0, zf      )),\r
+                dot(gBB,  vec3<f32>(xf - 1.0, yf - 1.0, zf      )), u);\r
+  let y1 = lerp(x1, x2, v);\r
+\r
+  let x3 = lerp(dot(gAA1, vec3<f32>(xf,       yf,       zf - 1.0)),\r
+                dot(gBA1, vec3<f32>(xf - 1.0, yf,       zf - 1.0)), u);\r
+  let x4 = lerp(dot(gAB1, vec3<f32>(xf,       yf - 1.0, zf - 1.0)),\r
+                dot(gBB1, vec3<f32>(xf - 1.0, yf - 1.0, zf - 1.0)), u);\r
+  let y2 = lerp(x3, x4, v);\r
+\r
+  return lerp(y1, y2, w);\r
+}\r
+\r
+\r
+/* ---------- 4D Perlin (hypercube corners, gradient-based) ---------- */\r
+fn noise4D(p: vec4<f32>) -> f32 {\r
+  // integer cell coords\r
+  let ix = i32(floor(p.x));\r
+  let iy = i32(floor(p.y));\r
+  let iz = i32(floor(p.z));\r
+  let iw = i32(floor(p.w));\r
+\r
+  let X: u32 = u32(ix) & PERM_MASK;\r
+  let Y: u32 = u32(iy) & PERM_MASK;\r
+  let Z: u32 = u32(iz) & PERM_MASK;\r
+  let W: u32 = u32(iw) & PERM_MASK;\r
+\r
+  // fractional part\r
+  let xf = p.x - floor(p.x);\r
+  let yf = p.y - floor(p.y);\r
+  let zf = p.z - floor(p.z);\r
+  let wf = p.w - floor(p.w);\r
+\r
+  let u = fade(xf);\r
+  let v = fade(yf);\r
+  let t = fade(zf);\r
+  let s = fade(wf);\r
+\r
+  // helper to get corner gradient and dot product\r
+  // corner offsets are dx,dy,dz,dw in {0,1}\r
+  // for fractional component, use (xf - dx) etc; for dw=1 use (wf - 1.0)\r
+  // compute hash for corner using hash4(ix+dx, iy+dy, iz+dz, iw+dw)\r
+  let d0000 = dot(gradient4(perm(hash4(ix + 0, iy + 0, iz + 0, iw + 0))), vec4<f32>(xf,       yf,       zf,       wf      ));\r
+  let d1000 = dot(gradient4(perm(hash4(ix + 1, iy + 0, iz + 0, iw + 0))), vec4<f32>(xf - 1.0, yf,       zf,       wf      ));\r
+  let d0100 = dot(gradient4(perm(hash4(ix + 0, iy + 1, iz + 0, iw + 0))), vec4<f32>(xf,       yf - 1.0, zf,       wf      ));\r
+  let d1100 = dot(gradient4(perm(hash4(ix + 1, iy + 1, iz + 0, iw + 0))), vec4<f32>(xf - 1.0, yf - 1.0, zf,       wf      ));\r
+\r
+  let d0010 = dot(gradient4(perm(hash4(ix + 0, iy + 0, iz + 1, iw + 0))), vec4<f32>(xf,       yf,       zf - 1.0, wf      ));\r
+  let d1010 = dot(gradient4(perm(hash4(ix + 1, iy + 0, iz + 1, iw + 0))), vec4<f32>(xf - 1.0, yf,       zf - 1.0, wf      ));\r
+  let d0110 = dot(gradient4(perm(hash4(ix + 0, iy + 1, iz + 1, iw + 0))), vec4<f32>(xf,       yf - 1.0, zf - 1.0, wf      ));\r
+  let d1110 = dot(gradient4(perm(hash4(ix + 1, iy + 1, iz + 1, iw + 0))), vec4<f32>(xf - 1.0, yf - 1.0, zf - 1.0, wf      ));\r
+\r
+  let d0001 = dot(gradient4(perm(hash4(ix + 0, iy + 0, iz + 0, iw + 1))), vec4<f32>(xf,       yf,       zf,       wf - 1.0));\r
+  let d1001 = dot(gradient4(perm(hash4(ix + 1, iy + 0, iz + 0, iw + 1))), vec4<f32>(xf - 1.0, yf,       zf,       wf - 1.0));\r
+  let d0101 = dot(gradient4(perm(hash4(ix + 0, iy + 1, iz + 0, iw + 1))), vec4<f32>(xf,       yf - 1.0, zf,       wf - 1.0));\r
+  let d1101 = dot(gradient4(perm(hash4(ix + 1, iy + 1, iz + 0, iw + 1))), vec4<f32>(xf - 1.0, yf - 1.0, zf,       wf - 1.0));\r
+\r
+  let d0011 = dot(gradient4(perm(hash4(ix + 0, iy + 0, iz + 1, iw + 1))), vec4<f32>(xf,       yf,       zf - 1.0, wf - 1.0));\r
+  let d1011 = dot(gradient4(perm(hash4(ix + 1, iy + 0, iz + 1, iw + 1))), vec4<f32>(xf - 1.0, yf,       zf - 1.0, wf - 1.0));\r
+  let d0111 = dot(gradient4(perm(hash4(ix + 0, iy + 1, iz + 1, iw + 1))), vec4<f32>(xf,       yf - 1.0, zf - 1.0, wf - 1.0));\r
+  let d1111 = dot(gradient4(perm(hash4(ix + 1, iy + 1, iz + 1, iw + 1))), vec4<f32>(xf - 1.0, yf - 1.0, zf - 1.0, wf - 1.0));\r
+\r
+  // interpolate along x -> y -> z for w=0 layer\r
+  let x00 = lerp(d0000, d1000, u);\r
+  let x10 = lerp(d0100, d1100, u);\r
+  let y0  = lerp(x00, x10, v);\r
+\r
+  let x01 = lerp(d0010, d1010, u);\r
+  let x11 = lerp(d0110, d1110, u);\r
+  let y1  = lerp(x01, x11, v);\r
+\r
+  let zLayer0 = lerp(y0, y1, t);\r
+\r
+  // interpolate for w=1 layer\r
+  let x00w = lerp(d0001, d1001, u);\r
+  let x10w = lerp(d0101, d1101, u);\r
+  let y0w  = lerp(x00w, x10w, v);\r
+\r
+  let x01w = lerp(d0011, d1011, u);\r
+  let x11w = lerp(d0111, d1111, u);\r
+  let y1w  = lerp(x01w, x11w, v);\r
+\r
+  let zLayer1 = lerp(y0w, y1w, t);\r
+\r
+  // final interp along w\r
+  return lerp(zLayer0, zLayer1, s);\r
+}\r
+\r
+fn worley3D(p : vec3<f32>) -> f32 {\r
+    let fx = i32(floor(p.x));\r
+    let fy = i32(floor(p.y));\r
+    let fz = i32(floor(p.z));\r
+    var minD : f32 = 1e9;\r
+    for (var dz = -1; dz <= 1; dz = dz + 1) {\r
+      for (var dy = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx = -1; dx <= 1; dx = dx + 1) {\r
+          let xi = fx + dx;\r
+          let yi = fy + dy;\r
+          let zi = fz + dz;\r
+          let px = f32(xi) + rand3u(xi, yi, zi);\r
+          let py = f32(yi) + rand3u(yi, zi, xi);\r
+          let pz = f32(zi) + rand3u(zi, xi, yi);\r
+          let dxv = px - p.x;\r
+          let dyv = py - p.y;\r
+          let dzv = pz - p.z;\r
+          let d2 = dxv*dxv + dyv*dyv + dzv*dzv;\r
+          if (d2 < minD) { minD = d2; }\r
+        }\r
+      }\r
+    }\r
+    return sqrt(minD);\r
+  \r
+}\r
+\r
+\r
+/* ---------- 4D Worley (cellular) ---------- */\r
+fn worley4D(p: vec4<f32>) -> f32 {\r
+  let fx = i32(floor(p.x));\r
+  let fy = i32(floor(p.y));\r
+  let fz = i32(floor(p.z));\r
+  let fw = i32(floor(p.w));\r
+\r
+  var minDistSq : f32 = 1e9;\r
+\r
+  // iterate neighbor cells in 4D (3^4 = 81)\r
+  for (var dw = -1; dw <= 1; dw = dw + 1) {\r
+    for (var dz = -1; dz <= 1; dz = dz + 1) {\r
+      for (var dy = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx = -1; dx <= 1; dx = dx + 1) {\r
+          let xi = fx + dx;\r
+          let yi = fy + dy;\r
+          let zi = fz + dz;\r
+          let wi = fw + dw;\r
+\r
+          // jitter within each cell using rotated rand4u calls to decorrelate axes\r
+          let rx = rand4u(xi, yi, zi, wi);\r
+          let ry = rand4u(yi, zi, wi, xi);\r
+          let rz = rand4u(zi, wi, xi, yi);\r
+          let rw = rand4u(wi, xi, yi, zi);\r
+\r
+          let px = f32(xi) + rx;\r
+          let py = f32(yi) + ry;\r
+          let pz = f32(zi) + rz;\r
+          let pw = f32(wi) + rw;\r
+\r
+          let dxv = px - p.x;\r
+          let dyv = py - p.y;\r
+          let dzv = pz - p.z;\r
+          let dwv = pw - p.w;\r
+          let d2 = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;\r
+          if (d2 < minDistSq) { minDistSq = d2; }\r
+        }\r
+      }\r
+    }\r
+  }\r
+\r
+  return sqrt(minDistSq);\r
+}\r
+\r
+\r
+fn cellular3D(p : vec3<f32>) -> f32 {\r
+    let fx = i32(floor(p.x));\r
+    let fy = i32(floor(p.y));\r
+    let fz = i32(floor(p.z));\r
+    var d1 : f32 = 1e9; var d2 : f32 = 1e9;\r
+    for (var dz = -1; dz <= 1; dz++) {\r
+      for (var dy = -1; dy <= 1; dy++) {\r
+        for (var dx = -1; dx <= 1; dx++) {\r
+          let xi = fx + dx; let yi = fy + dy; let zi = fz + dz;\r
+          let px = f32(xi) + rand3u(xi, yi, zi);\r
+          let py = f32(yi) + rand3u(yi, zi, xi);\r
+          let pz = f32(zi) + rand3u(zi, xi, yi);\r
+          let dd = (px - p.x)*(px - p.x) + (py - p.y)*(py - p.y) + (pz - p.z)*(pz - p.z);\r
+          if (dd < d1) { d2 = d1; d1 = dd; }\r
+          else if (dd < d2) { d2 = dd; }\r
+        }\r
+      }\r
+    }\r
+    return d2 - d1;\r
+}\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  2-D Simplex  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn simplex2D(p : vec2<f32>) -> f32 {\r
+  let F2 : f32 = 0.3660254037844386;  // (\u221A3-1)/2\r
+  let G2 : f32 = 0.2113248654051871;  // (3-\u221A3)/6\r
+\r
+  // Skew to simplex grid\r
+  let s  = (p.x + p.y) * F2;\r
+  let i  = i32(floor(p.x + s));\r
+  let j  = i32(floor(p.y + s));\r
+  let t  = f32(i + j) * G2;\r
+\r
+  let X0 = f32(i) - t;\r
+  let Y0 = f32(j) - t;\r
+  let x0 = p.x - X0;\r
+  let y0 = p.y - Y0;\r
+\r
+  // Simplex corner order\r
+  var i1u : u32 = 0u;\r
+  var j1u : u32 = 0u;\r
+  if (x0 > y0) { i1u = 1u; } else { j1u = 1u; }\r
+\r
+  // Offsets for remaining corners\r
+  let x1 = x0 - f32(i1u) + G2;\r
+  let y1 = y0 - f32(j1u) + G2;\r
+  let x2 = x0 - 1.0 + 2.0 * G2;\r
+  let y2 = y0 - 1.0 + 2.0 * G2;\r
+\r
+  // Hashed gradients (mod 8 for 2D gradient table)\r
+  let ii  = u32(i) & PERM_MASK;\r
+  let jj  = u32(j) & PERM_MASK;\r
+  let gi0 = perm(ii + perm(jj)) & 7u;\r
+  let gi1 = perm(ii + i1u + perm((jj + j1u) & PERM_MASK)) & 7u;\r
+  let gi2 = perm((ii + 1u) + perm((jj + 1u) & PERM_MASK)) & 7u;\r
+\r
+  // Contributions from each corner\r
+  var t0 = 0.5 - x0 * x0 - y0 * y0;\r
+  var n0 : f32 = 0.0;\r
+  if (t0 > 0.0) {\r
+    t0 *= t0;\r
+    n0 = t0 * t0 * dot(gradient2(gi0), vec2<f32>(x0, y0));\r
+  }\r
+\r
+  var t1 = 0.5 - x1 * x1 - y1 * y1;\r
+  var n1 : f32 = 0.0;\r
+  if (t1 > 0.0) {\r
+    t1 *= t1;\r
+    n1 = t1 * t1 * dot(gradient2(gi1), vec2<f32>(x1, y1));\r
+  }\r
+\r
+  var t2 = 0.5 - x2 * x2 - y2 * y2;\r
+  var n2 : f32 = 0.0;\r
+  if (t2 > 0.0) {\r
+    t2 *= t2;\r
+    n2 = t2 * t2 * dot(gradient2(gi2), vec2<f32>(x2, y2));\r
+  }\r
+\r
+  // Same scale used in the standard reference implementation\r
+  return 70.0 * (n0 + n1 + n2);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 3-D Simplex Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// Call it like: let v = simplex3D(vec3<f32>(x,y,z));\r
+\r
+fn simplex3D(pos : vec3<f32>) -> f32 {\r
+    // Skew/\u200Bunskew factors for 3D\r
+    let F3 : f32 = 1.0 / 3.0;\r
+    let G3 : f32 = 1.0 / 6.0;\r
+\r
+    // Skew the input space to find the simplex cell\r
+    let s  = (pos.x + pos.y + pos.z) * F3;\r
+    let i_f = floor(pos.x + s);\r
+    let j_f = floor(pos.y + s);\r
+    let k_f = floor(pos.z + s);\r
+\r
+    let i = i32(i_f);\r
+    let j = i32(j_f);\r
+    let k = i32(k_f);\r
+\r
+    // Unskew back to (x,y,z) space\r
+    let t0 = f32(i + j + k) * G3;\r
+    let X0 = f32(i) - t0;\r
+    let Y0 = f32(j) - t0;\r
+    let Z0 = f32(k) - t0;\r
+\r
+    var x0 = pos.x - X0;\r
+    var y0 = pos.y - Y0;\r
+    var z0 = pos.z - Z0;\r
+\r
+    // Determine which simplex we are in\r
+    var i1: i32; var j1: i32; var k1: i32;\r
+    var i2: i32; var j2: i32; var k2: i32;\r
+    if (x0 >= y0) {\r
+        if (y0 >= z0) {\r
+            // X Y Z\r
+            i1 = 1; j1 = 0; k1 = 0;\r
+            i2 = 1; j2 = 1; k2 = 0;\r
+        } else if (x0 >= z0) {\r
+            // X Z Y\r
+            i1 = 1; j1 = 0; k1 = 0;\r
+            i2 = 1; j2 = 0; k2 = 1;\r
+        } else {\r
+            // Z X Y\r
+            i1 = 0; j1 = 0; k1 = 1;\r
+            i2 = 1; j2 = 0; k2 = 1;\r
+        }\r
+    } else {\r
+        if (y0 < z0) {\r
+            // Z Y X\r
+            i1 = 0; j1 = 0; k1 = 1;\r
+            i2 = 0; j2 = 1; k2 = 1;\r
+        } else if (x0 < z0) {\r
+            // Y Z X\r
+            i1 = 0; j1 = 1; k1 = 0;\r
+            i2 = 0; j2 = 1; k2 = 1;\r
+        } else {\r
+            // Y X Z\r
+            i1 = 0; j1 = 1; k1 = 0;\r
+            i2 = 1; j2 = 1; k2 = 0;\r
+        }\r
+    }\r
+\r
+    // Offsets for the other three corners\r
+    let x1 = x0 - f32(i1) + G3;\r
+    let y1 = y0 - f32(j1) + G3;\r
+    let z1 = z0 - f32(k1) + G3;\r
+\r
+    let x2 = x0 - f32(i2) + 2.0 * G3;\r
+    let y2 = y0 - f32(j2) + 2.0 * G3;\r
+    let z2 = z0 - f32(k2) + 2.0 * G3;\r
+\r
+    let x3 = x0 - 1.0 + 3.0 * G3;\r
+    let y3 = y0 - 1.0 + 3.0 * G3;\r
+    let z3 = z0 - 1.0 + 3.0 * G3;\r
+\r
+    // Hash the corner indices to get gradient indices\r
+    let ii = u32(i) & PERM_MASK;\r
+    let jj = u32(j) & PERM_MASK;\r
+    let kk = u32(k) & PERM_MASK;\r
+\r
+    let gi0 = perm(ii + perm(jj + perm(kk)))        % 12u;\r
+    let gi1 = perm(ii + u32(i1) + perm((jj + u32(j1)) + perm((kk + u32(k1))))) % 12u;\r
+    let gi2 = perm(ii + u32(i2) + perm((jj + u32(j2)) + perm((kk + u32(k2))))) % 12u;\r
+    let gi3 = perm(ii + 1u      + perm((jj + 1u     ) + perm((kk + 1u     )))) % 12u;\r
+\r
+    // Compute contributions from each corner\r
+    var n0: f32;\r
+    var t_0 = 0.6 - x0*x0 - y0*y0 - z0*z0;\r
+    if (t_0 < 0.0) {\r
+        n0 = 0.0;\r
+    } else {\r
+        let t2 = t_0 * t_0;\r
+        n0 = t2 * t2 * dot(gradient(gi0), vec3<f32>(x0, y0, z0));\r
+    }\r
+\r
+    var n1: f32;\r
+    var t_1 = 0.6 - x1*x1 - y1*y1 - z1*z1;\r
+    if (t_1 < 0.0) {\r
+        n1 = 0.0;\r
+    } else {\r
+        let t2 = t_1 * t_1;\r
+        n1 = t2 * t2 * dot(gradient(gi1), vec3<f32>(x1, y1, z1));\r
+    }\r
+\r
+    var n2: f32;\r
+    var t_2 = 0.6 - x2*x2 - y2*y2 - z2*z2;\r
+    if (t_2 < 0.0) {\r
+        n2 = 0.0;\r
+    } else {\r
+        let t2 = t_2 * t_2;\r
+        n2 = t2 * t2 * dot(gradient(gi2), vec3<f32>(x2, y2, z2));\r
+    }\r
+\r
+    var n3: f32;\r
+    var t_3 = 0.6 - x3*x3 - y3*y3 - z3*z3;\r
+    if (t_3 < 0.0) {\r
+        n3 = 0.0;\r
+    } else {\r
+        let t2 = t_3 * t_3;\r
+        n3 = t2 * t2 * dot(gradient(gi3), vec3<f32>(x3, y3, z3));\r
+    }\r
+\r
+    // Final scale to match [-1,1]\r
+    return 32.0 * (n0 + n1 + n2 + n3);\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  helpers  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+\r
+fn cubicInterpolate(p0 : f32, p1 : f32, p2 : f32, p3 : f32, t : f32) -> f32 {\r
+    return p1 + 0.5 * t *\r
+        (p2 - p0 + t *\r
+        (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t *\r
+        (3.0 * (p1 - p2) + p3 - p0)));\r
+}\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Fast Lanczos 2-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn lanczos2D(pos : vec2<f32>) -> f32 {\r
+    let ix  : i32 = i32(floor(pos.x));\r
+    let iy  : i32 = i32(floor(pos.y));\r
+    let dx  : f32 = pos.x - f32(ix);\r
+    let dy  : f32 = pos.y - f32(iy);\r
+\r
+    /* 4\xD74 neighbourhood hashed once \u2014 unrolled for speed */\r
+    let n00 = rand2(ix - 1, iy - 1);\r
+    let n10 = rand2(ix + 0, iy - 1);\r
+    let n20 = rand2(ix + 1, iy - 1);\r
+    let n30 = rand2(ix + 2, iy - 1);\r
+\r
+    let n01 = rand2(ix - 1, iy + 0);\r
+    let n11 = rand2(ix + 0, iy + 0);\r
+    let n21 = rand2(ix + 1, iy + 0);\r
+    let n31 = rand2(ix + 2, iy + 0);\r
+\r
+    let n02 = rand2(ix - 1, iy + 1);\r
+    let n12 = rand2(ix + 0, iy + 1);\r
+    let n22 = rand2(ix + 1, iy + 1);\r
+    let n32 = rand2(ix + 2, iy + 1);\r
+\r
+    let n03 = rand2(ix - 1, iy + 2);\r
+    let n13 = rand2(ix + 0, iy + 2);\r
+    let n23 = rand2(ix + 1, iy + 2);\r
+    let n33 = rand2(ix + 2, iy + 2);\r
+\r
+    /* cubic along x (columns) */\r
+    let col0 = cubicInterpolate(n00, n10, n20, n30, dx);\r
+    let col1 = cubicInterpolate(n01, n11, n21, n31, dx);\r
+    let col2 = cubicInterpolate(n02, n12, n22, n32, dx);\r
+    let col3 = cubicInterpolate(n03, n13, n23, n33, dx);\r
+\r
+    /* cubic along y (rows)  */\r
+    return cubicInterpolate(col0, col1, col2, col3, dy);\r
+}\r
+\r
+\r
+/* helper to fetch one z-slice and cubic-interpolate along x/y */\r
+fn slice(ix : i32, iy : i32, iz : i32, dx : f32, dy : f32) -> f32 {\r
+    let n00 = rand3(ix - 1, iy - 1, iz);\r
+    let n10 = rand3(ix + 0, iy - 1, iz);\r
+    let n20 = rand3(ix + 1, iy - 1, iz);\r
+    let n30 = rand3(ix + 2, iy - 1, iz);\r
+\r
+    let n01 = rand3(ix - 1, iy + 0, iz);\r
+    let n11 = rand3(ix + 0, iy + 0, iz);\r
+    let n21 = rand3(ix + 1, iy + 0, iz);\r
+    let n31 = rand3(ix + 2, iy + 0, iz);\r
+\r
+    let n02 = rand3(ix - 1, iy + 1, iz);\r
+    let n12 = rand3(ix + 0, iy + 1, iz);\r
+    let n22 = rand3(ix + 1, iy + 1, iz);\r
+    let n32 = rand3(ix + 2, iy + 1, iz);\r
+\r
+    let n03 = rand3(ix - 1, iy + 2, iz);\r
+    let n13 = rand3(ix + 0, iy + 2, iz);\r
+    let n23 = rand3(ix + 1, iy + 2, iz);\r
+    let n33 = rand3(ix + 2, iy + 2, iz);\r
+\r
+    let col0 = cubicInterpolate(n00, n10, n20, n30, dx);\r
+    let col1 = cubicInterpolate(n01, n11, n21, n31, dx);\r
+    let col2 = cubicInterpolate(n02, n12, n22, n32, dx);\r
+    let col3 = cubicInterpolate(n03, n13, n23, n33, dx);\r
+\r
+    return cubicInterpolate(col0, col1, col2, col3, dy);\r
+}\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Fast Lanczos 3-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn lanczos3D(pos : vec3<f32>) -> f32 {\r
+    let ix : i32 = i32(floor(pos.x));\r
+    let iy : i32 = i32(floor(pos.y));\r
+    let iz : i32 = i32(floor(pos.z));\r
+    let dx : f32 = pos.x - f32(ix);\r
+    let dy : f32 = pos.y - f32(iy);\r
+    let dz : f32 = pos.z - f32(iz);\r
+\r
+    /* 4\xD74\xD74 neighbourhood \u2014 fetch & interpolate on-the-fly */\r
+\r
+    let row0 = slice(ix, iy, iz - 1, dx, dy);\r
+    let row1 = slice(ix, iy, iz + 0, dx, dy);\r
+    let row2 = slice(ix, iy, iz + 1, dx, dy);\r
+    let row3 = slice(ix, iy, iz + 2, dx, dy);\r
+\r
+    return cubicInterpolate(row0, row1, row2, row3, dz);\r
+}\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Voronoi 2-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn voronoi2D(pos : vec2<f32>) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+\r
+    var minDist : f32 = 1e9;\r
+    var minVal  : f32 = 0.0;\r
+\r
+    for (var dy : i32 = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx : i32 = -1; dx <= 1; dx = dx + 1) {\r
+            let xi = fx + dx;\r
+            let yi = fy + dy;\r
+\r
+            let px = f32(xi) + rand2u(xi, yi);\r
+            let py = f32(yi) + rand2u(yi, xi);\r
+\r
+            let dist = (px - pos.x) * (px - pos.x) +\r
+                       (py - pos.y) * (py - pos.y);\r
+\r
+            if (dist < minDist) {\r
+                minDist = dist;\r
+                minVal  = rand2u(xi, yi);\r
+            }\r
+        }\r
+    }\r
+    return minVal;          // in [0,1]\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Voronoi 3-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+// fn voronoi3D(pos : vec3<f32>) -> f32 {\r
+//     let fx : i32 = i32(floor(pos.x));\r
+//     let fy : i32 = i32(floor(pos.y));\r
+//     let fz : i32 = i32(floor(pos.z));\r
+\r
+//     var minDist : f32 = 1e9;\r
+//     var minVal  : f32 = 0.0;\r
+\r
+//     for (var dz : i32 = -1; dz <= 1; dz = dz + 1) {\r
+//         for (var dy : i32 = -1; dy <= 1; dy = dy + 1) {\r
+//             for (var dx : i32 = -1; dx <= 1; dx = dx + 1) {\r
+//                 let xi = fx + dx;\r
+//                 let yi = fy + dy;\r
+//                 let zi = fz + dz;\r
+\r
+//                 let px = f32(xi) + rand3u(xi, yi, zi);\r
+//                 let py = f32(yi) + rand3u(yi, zi, xi);\r
+//                 let pz = f32(zi) + rand3u(zi, xi, yi);\r
+\r
+//                 let dist = (px - pos.x) * (px - pos.x) +\r
+//                            (py - pos.y) * (py - pos.y) +\r
+//                            (pz - pos.z) * (pz - pos.z);\r
+\r
+//                 if (dist < minDist) {\r
+//                     minDist = dist;\r
+//                     minVal  = rand3u(xi, yi, zi);\r
+//                 }\r
+//             }\r
+//         }\r
+//     }\r
+//     return minVal;          // in [0,1]\r
+// }\r
+\r
+\r
+\r
+// ----------------- types & mode constants -----------------\r
+struct Voro3DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };\r
+struct Voro4DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };\r
+\r
+const VORO_CELL       : u32 = 0u;\r
+const VORO_F1         : u32 = 1u;\r
+const VORO_INTERIOR   : u32 = 2u;\r
+const VORO_EDGES      : u32 = 3u;\r
+const VORO_EDGE_THRESH: u32 = 4u;\r
+\r
+// ----------------- helpers: metrics -----------------\r
+fn voro3D_metrics(pos: vec3<f32>) -> Voro3DMetrics {\r
+  let fx = i32(floor(pos.x));\r
+  let fy = i32(floor(pos.y));\r
+  let fz = i32(floor(pos.z));\r
+\r
+  var d1 : f32 = 1e9;\r
+  var d2 : f32 = 1e9;\r
+  var lab: f32 = 0.0;\r
+\r
+  for (var dz = -1; dz <= 1; dz = dz + 1) {\r
+    for (var dy = -1; dy <= 1; dy = dy + 1) {\r
+      for (var dx = -1; dx <= 1; dx = dx + 1) {\r
+        let xi = fx + dx; let yi = fy + dy; let zi = fz + dz;\r
+\r
+        let rx = rand3u(xi, yi, zi);\r
+        let ry = rand3u(yi, zi, xi);\r
+        let rz = rand3u(zi, xi, yi);\r
+\r
+        let px = f32(xi) + rx;\r
+        let py = f32(yi) + ry;\r
+        let pz = f32(zi) + rz;\r
+\r
+        let dxv = px - pos.x;\r
+        let dyv = py - pos.y;\r
+        let dzv = pz - pos.z;\r
+\r
+        let d2c = dxv*dxv + dyv*dyv + dzv*dzv;\r
+\r
+        if (d2c < d1) {\r
+          d2 = d1;\r
+          d1 = d2c;\r
+          lab = rand3u(xi, yi, zi);\r
+        } else if (d2c < d2) {\r
+          d2 = d2c;\r
+        }\r
+      }\r
+    }\r
+  }\r
+  return Voro3DMetrics(d1, d2, lab);\r
+}\r
+\r
+fn voro4D_metrics(p: vec4<f32>) -> Voro4DMetrics {\r
+  let fx = i32(floor(p.x));\r
+  let fy = i32(floor(p.y));\r
+  let fz = i32(floor(p.z));\r
+  let fw = i32(floor(p.w));\r
+\r
+  var d1 : f32 = 1e9;\r
+  var d2 : f32 = 1e9;\r
+  var lab: f32 = 0.0;\r
+\r
+  for (var dw = -1; dw <= 1; dw = dw + 1) {\r
+    for (var dz = -1; dz <= 1; dz = dz + 1) {\r
+      for (var dy = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx = -1; dx <= 1; dx = dx + 1) {\r
+          let xi = fx + dx; let yi = fy + dy; let zi = fz + dz; let wi = fw + dw;\r
+\r
+          let rx = rand4u(xi, yi, zi, wi);\r
+          let ry = rand4u(yi, zi, wi, xi);\r
+          let rz = rand4u(zi, wi, xi, yi);\r
+          let rw = rand4u(wi, xi, yi, zi);\r
+\r
+          let px = f32(xi) + rx;\r
+          let py = f32(yi) + ry;\r
+          let pz = f32(zi) + rz;\r
+          let pw = f32(wi) + rw;\r
+\r
+          let dxv = px - p.x; let dyv = py - p.y;\r
+          let dzv = pz - p.z; let dwv = pw - p.w;\r
+\r
+          let d2c = dxv*dxv + dyv*dyv + dzv*dzv + dwv*dwv;\r
+\r
+          if (d2c < d1) {\r
+            d2 = d1;\r
+            d1 = d2c;\r
+            lab = rand4u(xi, yi, zi, wi);\r
+          } else if (d2c < d2) {\r
+            d2 = d2c;\r
+          }\r
+        }\r
+      }\r
+    }\r
+  }\r
+  return Voro4DMetrics(d1, d2, lab);\r
+}\r
+\r
+\r
+// ----------------- voro_eval: pick output depending on mode -----------------\r
+// f1Sq/f2Sq are squared distances; cellVal in [0,1]. edgeK: softening scale.\r
+// threshold: gate for EDGE_THRESH mode. freqOrScale unused in some modes but kept for potential normalization.\r
+fn voro_eval(f1Sq: f32, f2Sq: f32, cellVal: f32, mode: u32, edgeK: f32, threshold: f32, freqOrScale: f32) -> f32 {\r
+  let f1 = sqrt(max(f1Sq, 0.0));\r
+  let f2 = sqrt(max(f2Sq, 0.0));\r
+  let gap = f2 - f1; // F2 - F1, larger inside cells\r
+\r
+  // simple normalized gap if you want scale invariance: comment/uncomment as needed\r
+  // let normGap = gap * freqOrScale; // (freqOrScale could be ~freq, or 1.0)\r
+\r
+  switch (mode) {\r
+    case VORO_CELL: {\r
+      // piecewise-constant tile color/value\r
+      return cellVal;\r
+    }\r
+    case VORO_F1: {\r
+      // first-nearest distance\r
+      return f1;\r
+    }\r
+    case VORO_INTERIOR: {\r
+      // interior weight: larger in cell interior (proportional to gap)\r
+      return gap;\r
+    }\r
+    case VORO_EDGES: {\r
+      // edges bright, interior dark. Use edgeK to control contrast/width.\r
+      // edgeK==0 -> just use binary of gap>0, larger edgeK -> wider bright edges\r
+      if (edgeK <= 0.0) { return clamp(gap * 10.0, 0.0, 1.0); } // fallback scaling\r
+      return clamp(gap * edgeK, 0.0, 1.0);\r
+    }\r
+    case VORO_EDGE_THRESH: {\r
+      // identical to your voronoiTileRaw: return (F2-F1) if >= threshold else 0.\r
+      let ok = gap >= threshold;\r
+      let gate = select(0.0, 1.0, ok);\r
+      return gap * gate;\r
+    }\r
+    default: {\r
+      // fallback: return interior metric\r
+      return gap;\r
+    }\r
+  }\r
+}\r
+\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Cellular 2-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn cellular2D(pos : vec2<f32>) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+\r
+    var minDist1 : f32 = 1e9;\r
+    var minDist2 : f32 = 1e9;\r
+\r
+    for (var dy : i32 = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx : i32 = -1; dx <= 1; dx = dx + 1) {\r
+            let xi = fx + dx;\r
+            let yi = fy + dy;\r
+\r
+            /* feature point */\r
+            let px = f32(xi) + rand2u(xi, yi);\r
+            let py = f32(yi) + rand2u(yi, xi);\r
+\r
+            /* squared distance */\r
+            let d = (px - pos.x) * (px - pos.x)\r
+                  + (py - pos.y) * (py - pos.y);\r
+\r
+            /* keep two smallest distances */\r
+            if (d < minDist1) {\r
+                minDist2 = minDist1;\r
+                minDist1 = d;\r
+            } else if (d < minDist2) {\r
+                minDist2 = d;\r
+            }\r
+        }\r
+    }\r
+    /* return difference of 1st and 2nd nearest feature distances */\r
+    return minDist2 - minDist1;\r
+}\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Worley 2-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn worley2D(pos : vec2<f32>) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+\r
+    var minDist : f32 = 1e9;\r
+\r
+    for (var dy : i32 = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx : i32 = -1; dx <= 1; dx = dx + 1) {\r
+            let xi = fx + dx;\r
+            let yi = fy + dy;\r
+\r
+            /* feature point */\r
+            let px = f32(xi) + rand2u(xi, yi);\r
+            let py = f32(yi) + rand2u(yi, xi);\r
+\r
+            /* squared distance */\r
+            let d = (px - pos.x) * (px - pos.x)\r
+                  + (py - pos.y) * (py - pos.y);\r
+\r
+            if (d < minDist) {\r
+                minDist = d;\r
+            }\r
+        }\r
+    }\r
+\r
+    return sqrt(minDist);    // Euclidean distance to nearest feature\r
+}\r
+\r
+/* central-diff gradient of scalar simplex */\r
+fn gradSimplex2(q: vec2<f32>, eps: f32) -> vec2<f32> {\r
+  let dx = (simplex2D(q + vec2<f32>(eps, 0.0)) - simplex2D(q - vec2<f32>(eps, 0.0))) / (2.0 * eps);\r
+  let dy = (simplex2D(q + vec2<f32>(0.0, eps)) - simplex2D(q - vec2<f32>(0.0, eps))) / (2.0 * eps);\r
+  return vec2<f32>(dx, dy);\r
+}\r
+\r
+/* single-octave curl = grad rotated 90\xB0 (\u2202N/\u2202y, -\u2202N/\u2202x) */\r
+fn curl2_simplex2D(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {\r
+  let q = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);\r
+\r
+  // choose \u03B5 ~ half a cycle of current scale to avoid lattice aliasing\r
+  let cycles_per_world = max(p.freq / max(p.zoom, 1e-6), 1e-6);\r
+  let eps = 0.5 / cycles_per_world;\r
+\r
+  let g = gradSimplex2(q, eps);\r
+  return vec2<f32>(g.y, -g.x);\r
+}\r
+\r
+/* multi-octave curl: sum derivatives per octave (no sharp creases) */\r
+fn curl2_simplexFBM(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {\r
+  var q      = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);\r
+  var freq   : f32 = p.freq;\r
+  var amp    : f32 = 1.0;\r
+  var angle  : f32 = p.seedAngle;\r
+  var curl   : vec2<f32> = vec2<f32>(0.0);\r
+\r
+  for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
+    // \u03B5 scales with octave so the finite difference stays well-conditioned\r
+    let cycles_per_world = max(freq / max(p.zoom, 1e-6), 1e-6);\r
+    let eps = 0.5 / cycles_per_world;\r
+\r
+    let g = gradSimplex2(q * freq, eps * freq);\r
+    curl += vec2<f32>(g.y, -g.x) * amp;\r
+\r
+    // next octave\r
+    freq *= p.lacunarity;\r
+    amp  *= p.gain;\r
+\r
+    // decorrelate like your Perlin path (XY rotate + shift bleed into next)\r
+    let cA = cos(angle);\r
+    let sA = sin(angle);\r
+    let nx = q.x * cA - q.y * sA;\r
+    let ny = q.x * sA + q.y * cA;\r
+    q = vec2<f32>(nx, ny) + vec2<f32>(p.xShift, p.yShift);\r
+    angle += ANGLE_INCREMENT;\r
+  }\r
+  return curl;\r
+}\r
+\r
+/* map a non-negative magnitude to [-1,1] for your writeChannel convention */\r
+fn mag_to_signed01(m: f32) -> f32 {\r
+  return clamp(m, 0.0, 1.0) * 2.0 - 1.0;\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Domain-warp FBM  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn domainWarpFBM(p: vec3<f32>, params: NoiseParams,\r
+                 warpAmp: f32, stages: u32) -> f32 {\r
+    var q = p;\r
+    for (var i: u32 = 0u; i < stages; i = i + 1u) {\r
+        let w = fbm3D(q, params) * warpAmp;\r
+        q = q + vec3<f32>(w, w, w);\r
+    }\r
+    return fbm3D(q, params);\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Gabor sparse-convolution  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn gaborOctave3D(p: vec3<f32>, radius: f32) -> f32 {\r
+    // 3 taps in a tiny kernel to keep it cheap\r
+    let R = max(0.001, radius);\r
+    var sum : f32 = 0.0;\r
+    for (var i = -1; i <= 1; i = i + 1) {\r
+        for (var j = -1; j <= 1; j = j + 1) {\r
+            let xi = vec3<f32>(f32(i), f32(j), 0.0);\r
+            let w  = exp(-dot(xi, xi) / (R * R));\r
+            let n  = simplex3D(p + xi);  // using simplex as the carrier\r
+            sum += w * n;\r
+        }\r
+    }\r
+    return sum * 0.75; // keep in ~[-1,1]\r
+}\r
+\r
+/* Multi-octave Gabor with the same rotate/shift cadence as Perlin */\r
+fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var x = p.x / params.zoom * params.freq + params.xShift;\r
+    var y = p.y / params.zoom * params.freq + params.yShift;\r
+    var z = p.z / params.zoom * params.freq + params.zShift;\r
+\r
+    var sum     : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = params.freq;\r
+    var angle   : f32 = params.seedAngle;\r
+\r
+    // tie kernel radius to frequency so bandwidth tracks lacunarity\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        let radius = max(0.001, params.gaborRadius / freqLoc);\r
+        var n = gaborOctave3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc), radius);\r
+        if (params.turbulence == 1u) { n = abs(n); }\r
+        sum += n * amp;\r
+\r
+        freqLoc *= params.lacunarity;\r
+        amp     *= params.gain;\r
+\r
+        let c  = cos(angle);\r
+        let s  = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = y * s + z * c;\r
+\r
+        x = nx + params.xShift;\r
+        y = ny + params.yShift;\r
+        z = nz + params.zShift;\r
+\r
+        angle += ANGLE_INCREMENT;\r
+    }\r
+\r
+    if (params.turbulence == 1u) { sum = sum - 1.0; }\r
+    return sum;\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Terrace & Foam filters  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn terrace(v:f32, steps:f32)  -> f32 { return floor(v*steps)/steps; }\r
+fn foamify(v:f32)             -> f32 { return pow(abs(v), 3.0)*sign(v); }\r
+fn turbulence(v:f32)          -> f32 { return abs(v); }\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Simplex (multi-octave) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn generateSimplex(pos: vec3<f32>, p: NoiseParams) -> f32 {\r
+    // start coords (zoom/freq/shift)\r
+    var x = pos.x / p.zoom * p.freq + p.xShift;\r
+    var y = pos.y / p.zoom * p.freq + p.yShift;\r
+    var z = pos.z / p.zoom * p.freq + p.zShift;\r
+\r
+    var sum     : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = p.freq;\r
+    var angle   : f32 = p.seedAngle;\r
+\r
+    for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
+        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        if (p.turbulence == 1u) { n = abs(n); }\r
+        sum += n * amp;\r
+\r
+        // advance octave\r
+        freqLoc *= p.lacunarity;\r
+        amp     *= p.gain;\r
+\r
+        // rotate in XY and bleed into Z \u2014 matches your Perlin cadence\r
+        let c  = cos(angle);\r
+        let s  = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = y * s + z * c;\r
+\r
+        x = nx + p.xShift;\r
+        y = ny + p.yShift;\r
+        z = nz + p.zShift;\r
+\r
+        angle += ANGLE_INCREMENT;\r
+    }\r
+\r
+    if (p.turbulence == 1u) { sum -= 1.0; }\r
+    return sum;\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Simplex-based fBm helper (normalized)  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn sfbm3D(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom;\r
+    var y = (pos.y + params.yShift) / params.zoom;\r
+    var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+    var sum       : f32 = 0.0;\r
+    var amplitude : f32 = 1.0;\r
+    var maxValue  : f32 = 0.0;\r
+    var freqLoc   : f32 = params.freq;\r
+\r
+    var angle     : f32 = params.seedAngle;\r
+    let angleInc  : f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
+\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        if (params.turbulence == 1u) { n = abs(n); }\r
+\r
+        sum      += amplitude * n;\r
+        maxValue += amplitude;\r
+\r
+        freqLoc   *= params.lacunarity;\r
+        amplitude *= params.gain;\r
+\r
+        // rotate & shift per octave (keeps look consistent with Perlin FBM)\r
+        angle += angleInc;\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = y * s + z * c;\r
+        x = nx + params.xShift;\r
+        y = ny + params.yShift;\r
+        z = nz + params.zShift;\r
+    }\r
+\r
+    if (maxValue > 0.0) {\r
+        return sum / maxValue;\r
+    }\r
+    return 0.0;\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Simplex FBM (Perlin-style nested fBm)  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+fn generateSimplexFBM(pos: vec3<f32>, p: NoiseParams) -> f32 {\r
+    // Same  you use for Perlin FBM: fBm once, then feed through again\r
+    let fbm1 = sfbm3D(pos, p);\r
+    let fbm2 = sfbm3D(vec3<f32>(fbm1, fbm1, fbm1), p);\r
+    return 2.0 * fbm2;  // keep roughly in [-1,1]\r
+}\r
+\r
+fn generateDomainWarpFBM1(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let v = domainWarpFBM(pos, par, par.warpAmp, 1u);\r
+    return v;\r
+}\r
+\r
+fn generateDomainWarpFBM2(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let v = domainWarpFBM(pos, par, par.warpAmp, 2u);\r
+    return v;\r
+}\r
+\r
+fn generateGaborAniso(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let v = gaborNoise3D(pos, par);\r
+    return v;\r
+}\r
+\r
+fn generateTerraceNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generatePerlin(pos, par);\r
+    let v = terrace(base, par.terraceStep);\r
+    return v;\r
+}\r
+\r
+fn generateFoamNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generateBillow(pos, par);\r
+    let v = foamify(base);\r
+    return v;\r
+}\r
+\r
+fn generateTurbulence(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generatePerlin(pos, par);\r
+    let v = turbulence(base);\r
+    return v;\r
+}\r
+\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Perlin Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generatePerlin(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    // initial coords scaled by zoom\r
+    var x = pos.x / params.zoom * params.freq + params.xShift;\r
+    var y = pos.y / params.zoom * params.freq + params.yShift;\r
+    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+\r
+    var sum : f32 = 0.0;\r
+    var amp : f32 = 1.0;\r
+    var freqLoc : f32 = params.freq;\r
+    var angle : f32 = params.seedAngle;\r
+\r
+    // accumulate octaves\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        // sample base noise\r
+        var n : f32 = noise3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)) * amp;\r
+        // optional billow / turbulence\r
+        if (params.turbulence == 1u) {\r
+            n = abs(n);\r
+        }\r
+        sum = sum + n;\r
+\r
+        // update frequency & amplitude\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        amp     = amp     * params.gain;\r
+\r
+        // rotate coords in XY plane + push into Z\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = y * s + z * c;\r
+\r
+        // apply shifts\r
+        x = nx + params.xShift;\r
+        y = ny + params.yShift;\r
+        z = nz + params.zShift;\r
+\r
+        // increment angle\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    // final tweak for turbulence mode\r
+    if (params.turbulence == 1u) {\r
+        sum = sum - 1.0;\r
+    }\r
+    return sum;\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Perlin FBM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  // Prepare base coords + starting frequency\r
+  var base    : vec4<f32>;\r
+  var freqLoc : f32;\r
+\r
+  if (params.toroidal == 1u) {\r
+    // pos = (U,V,\u03B8); HTML-style: apply zoom outside the octave loop\r
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
+    freqLoc = params.freq;                 // (freq/zoom) == (base/zoom * freq)\r
+  } else {\r
+    // original non-toroidal semantics (note: freq is baked in before the loop)\r
+    base = vec4<f32>(\r
+      pos.x / zoom * params.freq + params.xShift,\r
+      pos.y / zoom * params.freq + params.yShift,\r
+      pos.z / zoom * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+    freqLoc = params.freq;\r
+  }\r
+\r
+  var sum   : f32 = 0.0;\r
+  var amp   : f32 = 1.0;\r
+  var angle : f32 = params.seedAngle;\r
+\r
+  // Shared octave loop\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    var n = noise4D(base * freqLoc) * amp;\r
+    if (params.turbulence == 1u) { n = abs(n); }\r
+    sum += n;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp     *= params.gain;\r
+\r
+    // Only the non-toroidal path uses octave rotation/offset churn\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>( base.x * c - base.y * s, base.x * s + base.y * c );\r
+      let zw = vec2<f32>( base.z * c - base.w * s, base.z * s + base.w * c );\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum -= 1.0; }\r
+  return sum;\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Billow Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateBillow(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    // Base domain mapping\r
+    var p = (pos / params.zoom) * params.freq\r
+          + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
+\r
+    var sum: f32     = 0.0;\r
+    var amp: f32     = 1.0;\r
+    var freqLoc: f32 = 1.0;          // start at base; multiply by lacunarity each octave\r
+    var ampSum: f32  = 0.0;\r
+    var angle: f32   = params.seedAngle;\r
+\r
+    // Octave stack\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        // Billow core: absolute value of gradient noise\r
+        let n  = noise3D(p * freqLoc);\r
+        let b  = pow(abs(n), 0.75);   // gentle gamma (<1) puffs the domes\r
+        sum    = sum + b * amp;\r
+        ampSum = ampSum + amp;\r
+\r
+        // Advance octave\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        amp     = amp     * params.gain;\r
+\r
+        // Cheap domain rotation (XY) + tiny Z drift to break symmetry\r
+        let c  = cos(angle);\r
+        let s  = sin(angle);\r
+        let xy = vec2<f32>(p.x, p.y);\r
+        let r  = vec2<f32>(xy.x * c - xy.y * s, xy.x * s + xy.y * c);\r
+        p = vec3<f32>(r.x, r.y, p.z + 0.03125);   // small constant drift\r
+\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    // Normalize to [0,1]\r
+    if (ampSum > 0.0) {\r
+        sum = sum / ampSum;\r
+    }\r
+\r
+    // Mild contrast curve around 0.5 so domes pop without creating ridge-like creases\r
+    let k: f32 = 1.2;                // 1.0 = linear; >1 increases local contrast\r
+    let cMid   = sum - 0.5;\r
+    let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));\r
+\r
+    return clamp(shaped, 0.0, 1.0);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti-Billow Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateAntiBillow(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    return 1.0 - generateBillow(pos, params);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridge Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// basic ridge transform of gradient noise\r
+fn ridgeNoise(pos : vec3<f32>) -> f32 {\r
+    let v = noise3D(pos);\r
+    let w = 1.0 - abs(v);\r
+    return w * w;\r
+}\r
+\r
+// octave\u2010sum generator using ridge noise\r
+// sample like: let r = generateRidge(vec3<f32>(x,y,z));\r
+fn generateRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    var x = pos.x / params.zoom * params.freq + params.xShift;\r
+    var y = pos.y / params.zoom * params.freq + params.yShift;\r
+    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+    var sum     : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = params.freq;\r
+\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        sum = sum + ridgeNoise(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)) * amp;\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        amp     = amp     * params.gain;\r
+        x = x + params.xShift;\r
+        y = y + params.yShift;\r
+        z = z + params.zShift;\r
+    }\r
+\r
+    // JS did: sum -= 1; return -sum;\r
+    sum = sum - 1.0;\r
+    return -sum;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridge Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// identical ridge transform, but flips sign at output\r
+fn generateAntiRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    // reuse generateRidge and negate its result\r
+    return -generateRidge(pos, params);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise (Fast Lanczos) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    // initial coords: zoom + freq\r
+    var x = pos.x / params.zoom * params.freq + params.xShift;\r
+    var y = pos.y / params.zoom * params.freq + params.yShift;\r
+    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+\r
+    // first octave\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var amp : f32 = 1.0;\r
+\r
+    // subsequent octaves\r
+    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
+        x = x * params.lacunarity;\r
+        y = y * params.lacunarity;\r
+        z = z * params.lacunarity;\r
+        amp = amp * params.gain;\r
+\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        if (params.exp2 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp2);\r
+        }\r
+        if (params.exp1 != 0.0) {\r
+            n = pow(n, params.exp1);\r
+        }\r
+\r
+        sum = sum - n * amp;\r
+\r
+        x = x + params.xShift;\r
+        y = y + params.yShift;\r
+        z = z + params.zShift;\r
+    }\r
+\r
+    return sum;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 2 (Fast Lanczos + Rotation) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    // zoom + freq\r
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var amp : f32 = 1.0;\r
+    var angle : f32 = params.seedAngle;\r
+\r
+    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
+        x = x * params.lacunarity;\r
+        y = y * params.lacunarity;\r
+        z = z * params.lacunarity;\r
+        amp = amp * params.gain;\r
+\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        if (params.exp2 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp2);\r
+        }\r
+        if (params.exp1 != 0.0) {\r
+            n = pow(n, params.exp1);\r
+        }\r
+\r
+        sum = sum - n * amp;\r
+\r
+        // proper 2D rotation around Z:\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = z;\r
+\r
+        x = nx + params.xShift;\r
+        y = ny + params.yShift;\r
+        z = nz + params.zShift;\r
+\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    return sum;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 3 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    // zoom + freq\r
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    var sum : f32 = 0.0;\r
+    var amp : f32 = 1.0;\r
+\r
+    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        var n : f32 = lanczos3D(vec3<f32>(x, y, z));\r
+        n = max(1e-7, n + 1.0);\r
+        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;\r
+        n = 1.0 - abs(n);\r
+        if (params.exp1 - 1.0 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp1 - 1.0);\r
+        }\r
+\r
+        sum = sum + n * amp;\r
+\r
+        x = x * params.lacunarity + params.xShift;\r
+        y = y * params.lacunarity + params.yShift;\r
+        z = z * params.lacunarity + params.zShift;\r
+        amp = amp * params.gain;\r
+    }\r
+\r
+    return sum - 1.0;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    var sum : f32 = 0.0;\r
+    var amp : f32 = 1.0;\r
+\r
+    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        if (params.exp2 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp2);\r
+        }\r
+        if (params.exp1 != 0.0) {\r
+            n = pow(n, params.exp1);\r
+        }\r
+\r
+        sum = sum + n * amp;\r
+\r
+        x = x * params.lacunarity + params.xShift;\r
+        y = y * params.lacunarity + params.yShift;\r
+        z = z * params.lacunarity + params.zShift;\r
+        amp = amp * params.gain;\r
+    }\r
+\r
+    return sum - 1.0;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateAntiRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var amp : f32 = 1.0;\r
+\r
+    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
+        x = x * params.lacunarity;\r
+        y = y * params.lacunarity;\r
+        z = z * params.lacunarity;\r
+        amp = amp * params.gain;\r
+\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        if (params.exp2 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp2);\r
+        }\r
+        if (params.exp1 != 0.0) {\r
+            n = pow(n, params.exp1);\r
+        }\r
+\r
+        sum = sum - n * amp;\r
+\r
+        x = x + params.xShift;\r
+        y = y + params.yShift;\r
+        z = z + params.zShift;\r
+    }\r
+\r
+    return -sum;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 2 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateAntiRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var amp : f32 = 1.0;\r
+    var angle : f32 = params.seedAngle;\r
+\r
+    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
+        x = x * params.lacunarity;\r
+        y = y * params.lacunarity;\r
+        z = z * params.lacunarity;\r
+        amp = amp * params.gain;\r
+\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        if (params.exp2 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp2);\r
+        }\r
+        if (params.exp1 != 0.0) {\r
+            n = pow(n, params.exp1);\r
+        }\r
+\r
+        sum = sum - n * amp;\r
+\r
+        // proper XY rotation\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = z;\r
+\r
+        x = nx + params.xShift;\r
+        y = ny + params.yShift;\r
+        z = nz + params.zShift;\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    return -sum;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 3 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateAntiRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    var sum : f32 = 0.0;\r
+    var amp : f32 = 1.0;\r
+\r
+    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        var n : f32 = lanczos3D(vec3<f32>(x, y, z));\r
+        n = max(1e-7, n + 1.0);\r
+        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;\r
+        n = 1.0 - abs(n);\r
+        if (params.exp1 - 1.0 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp1 - 1.0);\r
+        }\r
+\r
+        sum = sum + n * amp;\r
+\r
+        x = x * params.lacunarity + params.xShift;\r
+        y = y * params.lacunarity + params.yShift;\r
+        z = z * params.lacunarity + params.zShift;\r
+        amp = amp * params.gain;\r
+    }\r
+\r
+    return -(sum - 1.0);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateAntiRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    var sum : f32 = 0.0;\r
+    var amp : f32 = 1.0;\r
+\r
+    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        if (params.exp2 != 0.0) {\r
+            n = 1.0 - pow(n, params.exp2);\r
+        }\r
+        if (params.exp1 != 0.0) {\r
+            n = pow(n, params.exp1);\r
+        }\r
+\r
+        sum = sum + n * amp;\r
+\r
+        x = x * params.lacunarity + params.xShift;\r
+        y = y * params.lacunarity + params.yShift;\r
+        z = z * params.lacunarity + params.zShift;\r
+        amp = amp * params.gain;\r
+    }\r
+\r
+    return -(sum - 1.0);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Fractal Brownian Motion (3D Simplex) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+\r
+// 3-D FBM helper: sums octaves of simplex noise with rotating shifts\r
+fn fbm3D(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    // apply zoom\r
+    var x       = (pos.x + params.xShift) / params.zoom;\r
+    var y       = (pos.y + params.yShift) / params.zoom;\r
+    var z       = (pos.z + params.zShift) / params.zoom;\r
+    var sum       : f32 = 0.0;\r
+    var amplitude : f32 = 1.0;\r
+    var maxValue  : f32 = 0.0;\r
+    var freqLoc   : f32 = params.freq;\r
+    // start angle from uniform seedAngle\r
+    var angle     : f32 = params.seedAngle;\r
+    let angleInc  : f32 = 2.0 * PI / f32(params.octaves);\r
+\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        // accumulate weighted noise\r
+        sum = sum + amplitude * simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        maxValue = maxValue + amplitude;\r
+\r
+        // next freq & amp\r
+        freqLoc   = freqLoc * params.lacunarity;\r
+        amplitude = amplitude * params.gain;\r
+\r
+        // advance rotation\r
+        angle = angle + angleInc;\r
+        let offX = params.xShift * cos(angle);\r
+        let offY = params.yShift * cos(angle);\r
+        let offZ = params.zShift * cos(angle);\r
+\r
+        // apply shift\r
+        x = x + offX;\r
+        y = y + offY;\r
+        z = z + offZ;\r
+    }\r
+    // normalize\r
+    return sum / maxValue;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 FBM Generator #1 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// two\u2010stage fbm, then doubled\r
+fn generateFBM(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    let fbm1 = fbm3D(pos, params);\r
+    let fbm2 = fbm3D(vec3<f32>(fbm1, fbm1, fbm1), params);\r
+    return 2.0 * fbm2;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 FBM Generator #2 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// chained fbm with scaling by zoom\r
+fn generateFBM2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    let fbm1 = fbm3D(pos, params);\r
+    let s    = params.zoom;\r
+    let fbm2 = fbm3D(vec3<f32>(fbm1 * s, fbm1 * s, fbm1 * s), params);\r
+    let fbm3 = fbm3D(vec3<f32>(pos.x + fbm2 * s,\r
+                               pos.y + fbm2 * s,\r
+                               pos.z + fbm2 * s), params);\r
+    return 2.0 * fbm3;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 FBM Generator #3 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// three\u2010step chaining of fbm with offset\r
+fn generateFBM3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+    let fbm1 = fbm3D(pos, params);\r
+    let s    = params.zoom;\r
+    let fbm2 = fbm3D(vec3<f32>(pos.x + fbm1 * s,\r
+                               pos.y + fbm1 * s,\r
+                               pos.z + fbm1 * s), params);\r
+    let fbm3 = fbm3D(vec3<f32>(pos.x + fbm2 * s,\r
+                               pos.y + fbm2 * s,\r
+                               pos.z + fbm2 * s), params);\r
+    return 2.0 * fbm3;\r
+}\r
+\r
+/*==============================================================================\r
+  Cellular Brownian-Motion FBM helpers & generators\r
+==============================================================================*/\r
+\r
+fn edgeCut(val: f32, threshold: f32) -> f32 {\r
+  // return 0.0 when val < threshold, otherwise return val\r
+  return select(val, 0.0, val < threshold);\r
+}\r
+\r
+// 3-D Cellular FBM helper: sums octaves of cellular3D with rotating shifts\r
+fn fbmCellular3D(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom;\r
+    var y = (pos.y + params.yShift) / params.zoom;\r
+    var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+    var sum     : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = params.freq;\r
+\r
+    var angle   : f32 = params.seedAngle;\r
+    let angleInc: f32 = 2.0 * PI / f32(params.octaves);\r
+\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        let n = edgeCut(cellular3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)),\r
+                        params.threshold);\r
+        sum = sum + amp * n;\r
+\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        amp     = amp     * params.gain;\r
+\r
+        angle = angle + angleInc;\r
+        let offX = params.xShift * cos(angle);\r
+        let offY = params.yShift * cos(angle);\r
+        let offZ = params.zShift * cos(angle);\r
+\r
+        x = x + offX;\r
+        y = y + offY;\r
+        z = z + offZ;\r
+    }\r
+    return sum;\r
+}\r
+\r
+/* ---- Three cellular FBM flavours ---------------------------------------- */\r
+fn generateCellularBM1(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
+    let f1 = fbmCellular3D(pos, params);\r
+    let f2 = fbmCellular3D(vec3<f32>(f1 * params.zoom), params);\r
+    return 1.5 * f2 - 1.0;\r
+}\r
+\r
+fn generateCellularBM2(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
+    let f1 = fbmCellular3D(pos, params);\r
+    let f2 = fbmCellular3D(vec3<f32>(f1 * params.zoom), params);\r
+    let f3 = fbmCellular3D(vec3<f32>(pos + f2 * params.zoom), params);\r
+    return 1.5 * f3 - 1.0;\r
+}\r
+\r
+fn generateCellularBM3(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
+    let f1 = fbmCellular3D(pos, params);\r
+    let f2 = fbmCellular3D(vec3<f32>(pos + f1 * params.zoom), params);\r
+    let f3 = fbmCellular3D(vec3<f32>(pos + f2 * params.zoom), params);\r
+    return 1.5 * f3 - 1.0;\r
+}\r
+\r
+/*==============================================================================\r
+  Voronoi Brownian-Motion FBM helpers & generators\r
+==============================================================================*/\r
+fn generateVoronoi(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+  var sum  : f32 = 0.0;\r
+  var amp  : f32 = 1.0;\r
+  var freqLoc : f32 = params.freq / zoom;\r
+\r
+  let mode      : u32 = params.voroMode;\r
+  let edgeK     : f32 = max(params.edgeK, 0.0);\r
+  let threshold : f32 = max(params.threshold, 0.0);\r
+\r
+  if (params.toroidal == 1u) {\r
+    // pos = (U,V,theta) -> pack to periodic 4D and sample\r
+    let base4 = packPeriodicUV(pos.x, pos.y, pos.z);\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+      let P = base4 * freqLoc;\r
+      let m = voro4D_metrics(P);\r
+      let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);\r
+      sum += v * amp;\r
+      freqLoc *= params.lacunarity;\r
+      amp     *= params.gain;\r
+    }\r
+    return sum;\r
+  }\r
+\r
+  // classic 3D Voronoi FBM (octave shifts kept simple)\r
+  var x = (pos.x + params.xShift) / zoom;\r
+  var y = (pos.y + params.yShift) / zoom;\r
+  var z = (pos.z + params.zShift) / zoom;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
+    let m = voro3D_metrics(P);\r
+    let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);\r
+    sum += v * amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp     *= params.gain;\r
+\r
+    // apply simple per-octave drift (matches your tile-style)\r
+    x += params.xShift;\r
+    y += params.yShift;\r
+    z += params.zShift;\r
+  }\r
+  return sum;\r
+}\r
+\r
+\r
+// FBM using the 3D Voronoi edge-metric (F2 - F1 with threshold gate)\r
+fn fbmVoronoi3D(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = (pos.x + params.xShift) / zoom;\r
+    var y = (pos.y + params.yShift) / zoom;\r
+    var z = (pos.z + params.zShift) / zoom;\r
+\r
+    var sum     : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = params.freq / 1.0; // freq applied multiplicatively below\r
+\r
+    var angle   : f32 = params.seedAngle;\r
+    let angleInc: f32 = 2.0 * PI / f32(max(params.octaves, 1u));\r
+\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        // sample metrics at this octave\r
+        let samplePos = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
+        let m = voro3D_metrics(samplePos);\r
+\r
+        // d1/d2 are squared distances in the metrics struct\r
+        let f1 = sqrt(max(m.f1Sq, 0.0));\r
+        let f2 = sqrt(max(m.f2Sq, 0.0));\r
+\r
+        // edge gap (same semantics as voronoiTileRaw)\r
+        let edgeDist = f2 - f1;\r
+\r
+        // threshold gate: zero out when too narrow\r
+        let gate = select(1.0, 0.0, edgeDist < params.threshold);\r
+\r
+        // accumulate\r
+        sum = sum + amp * (edgeDist * gate);\r
+\r
+        // octave updates\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        amp     = amp * params.gain;\r
+\r
+        // per-octave "spiral" / drift using angle; keeps the same style as your original\r
+        angle = angle + angleInc;\r
+        let offX = params.xShift * cos(angle);\r
+        let offY = params.yShift * cos(angle);\r
+        let offZ = params.zShift * cos(angle);\r
+\r
+        x = x + offX;\r
+        y = y + offY;\r
+        z = z + offZ;\r
+    }\r
+\r
+    // preserve original final offset used previously (sum - 1.0)\r
+    return sum - 1.0;\r
+}\r
+\r
+/* ---- Three Voronoi FBM flavours (wrappers) ------------------------------ */\r
+\r
+// BM1: feed fbm output (scalar) back as coordinate offset (uniform vector)\r
+fn generateVoronoiBM1(p : vec3<f32>, par : NoiseParams) -> f32 {\r
+    let f1 = fbmVoronoi3D(p, par);\r
+    // pack scalar into a vec3<f32> (WGSL allows vec3<f32>(s) to broadcast)\r
+    return fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2: nested two-stage warping\r
+fn generateVoronoiBM2(p : vec3<f32>, par : NoiseParams) -> f32 {\r
+    let f1 = fbmVoronoi3D(p, par);\r
+    let f2 = fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);\r
+    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3: chained warps\r
+fn generateVoronoiBM3(p : vec3<f32>, par : NoiseParams) -> f32 {\r
+    let f1 = fbmVoronoi3D(p, par);\r
+    let f2 = fbmVoronoi3D(p + vec3<f32>(f1 * par.zoom), par);\r
+    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+/*==============================================================================\r
+  Single-stage Cellular & Worley s\r
+==============================================================================*/\r
+\r
+fn generateCellular(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom;\r
+    var y = (pos.y + params.yShift) / params.zoom;\r
+    var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+    var sum     : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = params.freq;\r
+    var angle   : f32 = params.seedAngle;\r
+\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        var n = cellular3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        if (params.turbulence == 1u) { n = abs(n); }\r
+        n = edgeCut(n, params.threshold);              \r
+        sum = sum + n * amp;\r
+\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        amp     = amp     * params.gain;\r
+\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = y * s + z * c;\r
+\r
+        x = nx + params.xShift;\r
+        y = ny + params.yShift;\r
+        z = nz + params.zShift;\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    if (params.turbulence == 1u) { sum = sum - 1.0; }\r
+    return 2.0 * sum - 1.0;\r
+}\r
+\r
+fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    return -generateCellular(pos, params);\r
+}\r
+\r
+fn generateWorley(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
+    var x = (pos.x + params.xShift) / params.zoom;\r
+    var y = (pos.y + params.yShift) / params.zoom;\r
+    var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+    var sum     : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = params.freq;\r
+    var angle   : f32 = params.seedAngle;\r
+\r
+    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        var n = worley3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        if (params.turbulence == 1u) { n = abs(n); }\r
+        n = edgeCut(n, params.threshold);              \r
+        sum = sum + n * amp;\r
+\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        amp     = amp     * params.gain;\r
+\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        let nx = x * c - y * s;\r
+        let ny = x * s + y * c;\r
+        let nz = y * s + z * c;\r
+\r
+        x = nx + params.xShift;\r
+        y = ny + params.yShift;\r
+        z = nz + params.zShift;\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    if (params.turbulence == 1u) { sum = sum - 1.0; }\r
+    return sum - 1.0;\r
+}\r
+\r
+fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    return -generateWorley(pos, params);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Worley FBM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  // Prepare base coords + starting frequency\r
+  var base    : vec4<f32>;\r
+  var freqLoc : f32;\r
+\r
+  if (params.toroidal == 1u) {\r
+    // pos = (U,V,\u03B8); HTML-style uv_periodic packing\r
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom; // (freq/zoom) == (base/zoom * freq)\r
+    freqLoc = params.freq;\r
+  } else {\r
+    // original non-toroidal semantics (freq baked in pre-loop, then multiplied again)\r
+    base = vec4<f32>(\r
+      pos.x / zoom * params.freq + params.xShift,\r
+      pos.y / zoom * params.freq + params.yShift,\r
+      pos.z / zoom * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+    freqLoc = params.freq;\r
+  }\r
+\r
+  var sum   : f32 = 0.0;\r
+  var amp   : f32 = 1.0;\r
+  var angle : f32 = params.seedAngle;\r
+\r
+  // Shared octave loop\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    var v = worley4D(base * freqLoc) * amp;\r
+    if (params.turbulence == 1u) { v = abs(v); }\r
+    sum += v;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp     *= params.gain;\r
+\r
+    // Only non-toroidal path uses octave rotation/offset churn\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>( base.x * c - base.y * s, base.x * s + base.y * c );\r
+      let zw = vec2<f32>( base.z * c - base.w * s, base.z * s + base.w * c );\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum -= 1.0; }\r
+  // match JS Worley wrapper (returns 1 - sum)\r
+  return 1.0 - sum;\r
+}\r
+\r
+\r
+\r
+fn generateAntiWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    return -generateWorley4D(pos, params);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Voronoi Tile Noise (Edge-Aware) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
+  // match generateVoronoi zoom handling\r
+  let zoom = max(params.zoom, 1e-6);\r
+  var sum   : f32 = 0.0;\r
+  var amp   : f32 = 1.0;\r
+  var freqLoc : f32 = params.freq / zoom;\r
+\r
+  // always use the edge-threshold mode for this tile-noise helper\r
+  let mode : u32 = VORO_EDGE_THRESH;\r
+  let edgeK : f32 = max(params.edgeK, 0.0);      // kept if you want to tune\r
+  let thresh : f32 = max(params.threshold, 0.0);\r
+\r
+  // initial sample point (match non-toroidal branch of generateVoronoi)\r
+  var x = (pos.x + params.xShift) / zoom;\r
+  var y = (pos.y + params.yShift) / zoom;\r
+  var z = (pos.z + params.zShift) / zoom;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    // build octave sample pos (same convention as generateVoronoi)\r
+    let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
+\r
+    // get metrics and evaluate using VORO_EDGE_THRESH (voro_eval implements F2-F1 gating)\r
+    let m = voro3D_metrics(P);\r
+    let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, thresh, freqLoc);\r
+\r
+    sum = sum + v * amp;\r
+\r
+    // octave updates\r
+    freqLoc = freqLoc * params.lacunarity;\r
+    amp     = amp * params.gain;\r
+\r
+    // apply simple per-octave drift (matches previous tile-style)\r
+    x = x + params.xShift;\r
+    y = y + params.yShift;\r
+    z = z + params.zShift;\r
+  }\r
+\r
+  // NOTE: generateVoronoi returns the raw sum (not remapped).\r
+  // If you need legacy behaviour that remapped to [-1,1], uncomment the next line:\r
+  // return 2.0 * sum - 1.0;\r
+\r
+  return sum;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Lanczos Billow Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
+    var x       = (pos.x + p.xShift) / p.zoom;\r
+    var y       = (pos.y + p.yShift) / p.zoom;\r
+    var z       = (pos.z + p.zShift) / p.zoom;\r
+    var sum     : f32 = 0.0;\r
+    var maxAmp  : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = p.freq;\r
+    var angle   : f32 = p.seedAngle;\r
+\r
+    for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
+        let n = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        sum = sum + (2.0 * abs(n) - 1.0) * amp;\r
+        maxAmp = maxAmp + amp;\r
+\r
+        freqLoc = freqLoc * p.lacunarity;\r
+        amp     = amp     * p.gain;\r
+\r
+        // rotation around Z\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        var newX = x * c - y * s;\r
+        var newY = x * s + y * c;\r
+        var newZ = z;\r
+\r
+        // rotate in XZ plane\r
+        let rX = newX * c + newZ * s;\r
+        let rZ = -newX * s + newZ * c;\r
+        newX = rX; newZ = rZ;\r
+\r
+        // rotate in YZ plane\r
+        let rY = newY * c - newZ * s;\r
+        let rZ2 = newY * s + newZ * c;\r
+        newY = rY; newZ = rZ2;\r
+\r
+        // apply shift\r
+        x = newX + p.xShift;\r
+        y = newY + p.yShift;\r
+        z = newZ + p.zShift;\r
+\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    return sum / maxAmp;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Lanczos Anti-Billow Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateLanczosAntiBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
+    var x       = (pos.x + p.xShift) / p.zoom;\r
+    var y       = (pos.y + p.yShift) / p.zoom;\r
+    var z       = (pos.z + p.zShift) / p.zoom;\r
+    var sum     : f32 = 0.0;\r
+    var maxAmp  : f32 = 0.0;\r
+    var amp     : f32 = 1.0;\r
+    var freqLoc : f32 = p.freq;\r
+    var angle   : f32 = p.seedAngle;\r
+\r
+    for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
+        let n = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        sum = sum + (2.0 * abs(n) - 1.0) * amp;\r
+        maxAmp = maxAmp + amp;\r
+\r
+        freqLoc = freqLoc * p.lacunarity;\r
+        amp     = amp     * p.gain;\r
+\r
+        // simple Z\u2010axis rotation + tilt into Z\r
+        let c = cos(angle);\r
+        let s = sin(angle);\r
+        var newX = x * c - y * s;\r
+        var newY = x * s + y * c;\r
+        var newZ = y * s + z * c;\r
+\r
+        x = newX + p.xShift;\r
+        y = newY + p.yShift;\r
+        z = newZ + p.zShift;\r
+\r
+        angle = angle + ANGLE_INCREMENT;\r
+    }\r
+\r
+    return -sum / maxAmp;\r
+}\r
+\r
+\r
+// Raw Voronoi circle\u2010gradient cell value\r
+fn voronoiCircleGradient(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+    let fz : i32 = i32(floor(pos.z));\r
+    var minDist    : f32 = 1e9;\r
+    var secondDist : f32 = 1e9;\r
+    var centerVal  : f32 = 0.0;\r
+\r
+    // search the 3\xD73\xD73 neighborhood\r
+    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {\r
+        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {\r
+            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {\r
+                let xi = fx + dx;\r
+                let yi = fy + dy;\r
+                let zi = fz + dz;\r
+\r
+                // pseudo\u2010random feature point within the cell\r
+                let r0 = rand3u(xi, yi, zi);\r
+                let r1 = rand3u(yi, zi, xi);\r
+                let r2 = rand3u(zi, xi, yi);\r
+                let px = f32(xi) + r0;\r
+                let py = f32(yi) + r1;\r
+                let pz = f32(zi) + r2;\r
+\r
+                // Euclidean distance\r
+                let dx_ = px - pos.x;\r
+                let dy_ = py - pos.y;\r
+                let dz_ = pz - pos.z;\r
+                let d   = sqrt(dx_*dx_ + dy_*dy_ + dz_*dz_);\r
+\r
+                // track the two smallest distances\r
+                if (d < minDist) {\r
+                    secondDist = minDist;\r
+                    minDist    = d;\r
+                    centerVal  = r0;           // store the cell\u2019s \u201Cvalue\u201D\r
+                } else if (d < secondDist) {\r
+                    secondDist = d;\r
+                }\r
+            }\r
+        }\r
+    }\r
+\r
+    // build the circle gradient: fall\u2010off from cell center\r
+    let centerGrad = 1.0 - min(minDist, 1.0);\r
+    // edge mask: if the ridge is too thin, kill it\r
+    let edgeDist   = secondDist - minDist;\r
+    let edgeGrad   = select(1.0, 0.0, edgeDist < params.threshold);\r
+\r
+    return centerGrad * edgeGrad;\r
+}\r
+\r
+// Octaved generator matching your JS .generateNoise()\r
+fn generateVoronoiCircleNoise(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    // zoom in/out\r
+    var x       = (pos.x + params.xShift) / params.zoom;\r
+    var y       = (pos.y + params.yShift) / params.zoom;\r
+    var z       = (pos.z + params.zShift) / params.zoom;\r
+    var total : f32 = 0.0;\r
+    var amp   : f32 = 1.0;\r
+    var freq  : f32 = params.freq;\r
+\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        let samplePos = vec3<f32>(x * freq, y * freq, z * freq);\r
+        total = total + voronoiCircleGradient(samplePos, params) * amp;\r
+\r
+        // next octave\r
+        amp  = amp  * params.gain;\r
+        freq = freq * params.lacunarity;\r
+        x    = x + params.xShift;\r
+        y    = y + params.yShift;\r
+        z    = z + params.zShift;\r
+    }\r
+\r
+    // match JS: return \u2211noise \u2212 1.0\r
+    return total - 1.0;\r
+}\r
+\r
+\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 distance helpers (add once) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn euclideanDist(a: vec3<f32>, b: vec3<f32>) -> f32 {\r
+  return length(a - b);\r
+}\r
+fn euclideanDistSq(a: vec3<f32>, b: vec3<f32>) -> f32 {\r
+  let d = a - b;\r
+  return dot(d, d);\r
+}\r
+\r
+fn euclideanDist2(a: vec2<f32>, b: vec2<f32>) -> f32 {\r
+  return length(a - b);\r
+}\r
+fn euclideanDistSq2(a: vec2<f32>, b: vec2<f32>) -> f32 {\r
+  let d = a - b;\r
+  return dot(d, d);\r
+}\r
+\r
+fn euclideanDist4(a: vec4<f32>, b: vec4<f32>) -> f32 {\r
+  return length(a - b);\r
+}\r
+fn euclideanDistSq4(a: vec4<f32>, b: vec4<f32>) -> f32 {\r
+  let d = a - b;\r
+  return dot(d, d);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500 1. Voronoi Circle\u2010Gradient Tile Noise 2 \u2500\u2500\u2500\u2500\u2500\r
+\r
+fn voronoiCircleGradient2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+    let fz : i32 = i32(floor(pos.z));\r
+    var minDist : f32 = 1e9;\r
+    var minVal  : f32 = 0.0;\r
+    var closest : vec3<f32> = vec3<f32>(0.0);\r
+\r
+    for(var dz = -1; dz <= 1; dz = dz + 1) {\r
+        for(var dy = -1; dy <= 1; dy = dy + 1) {\r
+            for(var dx = -1; dx <= 1; dx = dx + 1) {\r
+                let xi = fx + dx;\r
+                let yi = fy + dy;\r
+                let zi = fz + dz;\r
+                let r0 = rand3u(xi, yi, zi);\r
+                let feature = vec3<f32>(f32(xi) + r0,\r
+                                        f32(yi) + rand3u(yi, zi, xi),\r
+                                        f32(zi) + rand3u(zi, xi, yi));\r
+                let d = euclideanDist(feature, pos);\r
+                if(d < minDist) {\r
+                    minDist = d;\r
+                    minVal = rand3u(xi, yi, zi);\r
+                    closest = feature;\r
+                }\r
+            }\r
+        }\r
+    }\r
+    let centerDist = euclideanDist(closest, pos);\r
+    let gradient = sin(centerDist * PI);\r
+    return minVal * gradient;\r
+}\r
+\r
+fn generateVoronoiCircle2(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var x = pos.x + params.xShift;\r
+    var y = pos.y + params.yShift;\r
+    var z = pos.z + params.zShift;\r
+    var total : f32 = 0.0;\r
+    var amp   : f32 = 1.0;\r
+    var freq  : f32 = params.freq;\r
+    var angle     : f32 = params.seedAngle;\r
+    let angleInc  : f32 = 2.0 * PI / f32(params.octaves);\r
+\r
+    for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        let samplePos = vec3<f32>(x * freq / params.zoom,\r
+                                  y * freq / params.zoom,\r
+                                  z * freq / params.zoom);\r
+        total = total + voronoiCircleGradient2Raw(samplePos, params) * amp;\r
+        amp   = amp * params.gain;\r
+        freq  = freq * params.lacunarity;\r
+        angle = angle + angleInc;\r
+        x = x + params.xShift * cos(angle) + params.xShift;\r
+        y = y + params.yShift * cos(angle) + params.yShift;\r
+        z = z + params.zShift * cos(angle) + params.zShift;\r
+    }\r
+    return total - 1.0;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500 2. Voronoi Flat\u2010Shade Tile Noise \u2500\u2500\u2500\u2500\u2500\r
+\r
+fn voronoiFlatShadeRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+    let fz : i32 = i32(floor(pos.z));\r
+    var minDist    : f32 = 1e9;\r
+    var secondDist : f32 = 1e9;\r
+\r
+    for(var dz = -1; dz <= 1; dz = dz + 1) {\r
+        for(var dy = -1; dy <= 1; dy = dy + 1) {\r
+            for(var dx = -1; dx <= 1; dx = dx + 1) {\r
+                let xi = fx + dx;\r
+                let yi = fy + dy;\r
+                let zi = fz + dz;\r
+                let feature = vec3<f32>(f32(xi) + rand3u(xi, yi, zi),\r
+                                        f32(yi) + rand3u(yi, zi, xi),\r
+                                        f32(zi) + rand3u(zi, xi, yi));\r
+                let d = euclideanDist(feature, pos);\r
+                if(d < minDist) {\r
+                    secondDist = minDist;\r
+                    minDist    = d;\r
+                } else if(d < secondDist) {\r
+                    secondDist = d;\r
+                }\r
+            }\r
+        }\r
+    }\r
+    let edgeDist = secondDist - minDist;\r
+    return select(1.0, 0.0, edgeDist < params.threshold);\r
+}\r
+\r
+fn generateVoronoiFlatShade(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var pos = posIn / params.zoom;\r
+    var total : f32 = 0.0;\r
+    var amp   : f32 = 1.0;\r
+    var freq  : f32 = params.freq;\r
+    for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        total = total + voronoiFlatShadeRaw(pos * freq, params) * amp;\r
+        amp  = amp * params.gain;\r
+        freq = freq * params.lacunarity;\r
+        pos  = pos + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
+    }\r
+    return total;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500 3. Voronoi Ripple 3D \u2500\u2500\u2500\u2500\u2500\r
+\r
+fn voronoiRipple3DRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+    let fz : i32 = i32(floor(pos.z));\r
+    var minDist    : f32 = 1e9;\r
+    var secondDist : f32 = 1e9;\r
+    var minVal     : f32 = 0.0;\r
+\r
+    for(var dz=-1; dz<=1; dz=dz+1) {\r
+        for(var dy=-1; dy<=1; dy=dy+1) {\r
+            for(var dx=-1; dx<=1; dx=dx+1) {\r
+                let xi = fx+dx;\r
+                let yi = fy+dy;\r
+                let zi = fz+dz;\r
+                let feature = vec3<f32>(f32(xi)+rand3u(xi,yi,zi),\r
+                                        f32(yi)+rand3u(yi,zi,xi),\r
+                                        f32(zi)+rand3u(zi,xi,yi));\r
+                let d = euclideanDist(feature, pos);\r
+                if(d < minDist) {\r
+                    secondDist = minDist;\r
+                    minDist    = d;\r
+                    minVal     = rand3u(xi, yi, zi);\r
+                } else if(d < secondDist) {\r
+                    secondDist = d;\r
+                }\r
+            }\r
+        }\r
+    }\r
+    let edgeDist = secondDist - minDist;\r
+    let ripple   = sin(PI + edgeDist * PI * params.rippleFreq + params.time);\r
+    return minVal * (1.0 + ripple) * 0.5;\r
+}\r
+\r
+fn generateVoronoiRipple3D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var x = pos.x + params.xShift;\r
+    var y = pos.y + params.yShift;\r
+    var z = pos.z + params.zShift;\r
+    var total : f32 = 0.0;\r
+    var amp   : f32 = 1.0;\r
+    var freq  : f32 = params.freq;\r
+    for(var i: u32=0u; i<params.octaves; i=i+1u) {\r
+        let sample = vec3<f32>(x * freq / params.zoom,\r
+                               y * freq / params.zoom,\r
+                               z * freq / params.zoom);\r
+        total = total + voronoiRipple3DRaw(sample, params) * amp;\r
+        amp   = amp * params.gain;\r
+        freq  = freq * params.lacunarity;\r
+        let angle = params.seedAngle * 2.0 * PI;\r
+        x = x + params.xShift * cos(angle + f32(i));\r
+        y = y + params.yShift * cos(angle + f32(i));\r
+        z = z + params.zShift * cos(angle + f32(i));\r
+    }\r
+    return 2.0 * total - 1.0;\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500 4. Voronoi Ripple 3D 2 \u2500\u2500\u2500\u2500\u2500\r
+fn voronoiRipple3D2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+    let fz : i32 = i32(floor(pos.z));\r
+    var minDist: f32 = 1e9;\r
+    var secondDist: f32 = 1e9;\r
+    var minVal: f32 = 0.0;\r
+\r
+    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {\r
+        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {\r
+            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {\r
+                let xi = fx + dx;\r
+                let yi = fy + dy;\r
+                let zi = fz + dz;\r
+                let feature = vec3<f32>(f32(xi) + rand3u(xi, yi, zi),\r
+                                        f32(yi) + rand3u(yi, zi, xi),\r
+                                        f32(zi) + rand3u(zi, xi, yi));\r
+                let d = euclideanDist(feature, pos);\r
+                if (d < minDist) {\r
+                    secondDist = minDist;\r
+                    minDist = d;\r
+                    minVal = rand3u(xi, yi, zi);\r
+                } else if (d < secondDist) {\r
+                    secondDist = d;\r
+                }\r
+            }\r
+        }\r
+    }\r
+    let edgeDist = secondDist - minDist;\r
+    let ripple = sin(PI + params.zoom * edgeDist * PI * params.rippleFreq + params.time);\r
+    return minVal * (1.0 + ripple) * 0.5;\r
+}\r
+\r
+fn generateVoronoiRipple3D2(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var x = pos.x + params.xShift;\r
+    var y = pos.y + params.yShift;\r
+    var z = pos.z + params.zShift;\r
+    var total: f32 = 0.0;\r
+    var amp: f32 = 1.0;\r
+    var freq: f32 = params.freq;\r
+\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        let sample = vec3<f32>(x * freq / params.zoom,\r
+                               y * freq / params.zoom,\r
+                               z * freq / params.zoom);\r
+        total = total + voronoiRipple3D2Raw(sample, params) * amp;\r
+        amp = amp * params.gain;\r
+        freq = freq * params.lacunarity;\r
+        let angle = params.seedAngle * 2.0 * PI;\r
+        x = x + params.xShift * cos(angle + f32(i));\r
+        y = y + params.yShift * cos(angle + f32(i));\r
+        z = z + params.zShift * cos(angle + f32(i));\r
+    }\r
+    return 2.0 * total - 1.0;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500 5. Voronoi Circular Ripple 3D \u2500\u2500\u2500\u2500\u2500\r
+fn voronoiCircularRippleRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let fx : i32 = i32(floor(pos.x));\r
+    let fy : i32 = i32(floor(pos.y));\r
+    let fz : i32 = i32(floor(pos.z));\r
+    var minDist: f32 = 1e9;\r
+    var minVal: f32 = 0.0;\r
+    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {\r
+        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {\r
+            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {\r
+                let xi = fx + dx;\r
+                let yi = fy + dy;\r
+                let zi = fz + dz;\r
+                let feature = vec3<f32>(f32(xi) + rand3u(xi, yi, zi),\r
+                                        f32(yi) + rand3u(yi, zi, xi),\r
+                                        f32(zi) + rand3u(zi, xi, yi));\r
+                let d = euclideanDist(feature, pos);\r
+                if (d < minDist) {\r
+                    minDist = d;\r
+                    minVal = rand3u(xi, yi, zi);\r
+                }\r
+            }\r
+        }\r
+    }\r
+    let ripple = sin(PI + minDist * PI * params.rippleFreq + params.time);\r
+    return minVal * (1.0 + ripple) * 0.5;\r
+}\r
+\r
+fn generateVoronoiCircularRipple(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var x = pos.x + params.xShift;\r
+    var y = pos.y + params.yShift;\r
+    var z = pos.z + params.zShift;\r
+    var total: f32 = 0.0;\r
+    var amp: f32 = 1.0;\r
+    var freq: f32 = params.freq;\r
+\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        let sample = vec3<f32>(x * freq / params.zoom,\r
+                               y * freq / params.zoom,\r
+                               z * freq / params.zoom);\r
+        total = total + voronoiCircularRippleRaw(sample, params) * amp;\r
+        amp = amp * params.gain;\r
+        freq = freq * params.lacunarity;\r
+        let angle = params.seedAngle * 2.0 * PI;\r
+        x = x + params.xShift * cos(angle + f32(i));\r
+        y = y + params.yShift * cos(angle + f32(i));\r
+        z = z + params.zShift * cos(angle + f32(i));\r
+    }\r
+    return 2.0 * total - 1.0;\r
+}\r
+\r
+// 6a. Fractal Voronoi Ripple 3D\r
+fn generateFVoronoiRipple3D(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
+    // first FBM pass\r
+    let fbm1 = generateVoronoiRipple3D(posIn, params);\r
+\r
+    // prepare second\u2010pass params: keep everything the same except zoom=1\r
+    var p2 = params;\r
+    p2.zoom = 1.0;\r
+\r
+    // second FBM pass, feeding the scalar result back into xyz\r
+    let sample = vec3<f32>(fbm1, fbm1, fbm1);\r
+    let fbm2   = generateVoronoiRipple3D(sample, p2);\r
+\r
+    return 2.0 * fbm2;\r
+}\r
+\r
+// 6b. Fractal Voronoi Circular Ripple 3D\r
+fn generateFVoronoiCircularRipple(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
+    // first FBM pass\r
+    let fbm1 = generateVoronoiCircularRipple(posIn, params);\r
+\r
+    // second\u2010pass with zoom=1\r
+    var p2 = params;\r
+    p2.zoom = 1.0;\r
+\r
+    let sample = vec3<f32>(fbm1, fbm1, fbm1);\r
+    let fbm2   = generateVoronoiCircularRipple(sample, p2);\r
+\r
+    return 2.0 * fbm2;\r
+}\r
+\r
+// \u2014\u2014\u2014 continuousPermutation \u2014\u2014\u2014\r
+fn continuousPermutation(value: f32) -> f32 {\r
+    let iVal    = floor(value);\r
+    let frac    = value - iVal;\r
+    let i0      = i32(iVal);\r
+    let idx1    = u32((i0 % 256 + 256) % 256);\r
+    let idx2    = u32(((i0 + 1) % 256 + 256) % 256);\r
+    let v1      = f32(perm(idx1));\r
+    let v2      = f32(perm(idx2));\r
+    return v1 + frac * (v2 - v1);\r
+}\r
+\r
+// \u2014\u2014\u2014 calculateRippleEffect \u2014\u2014\u2014\r
+fn calculateRippleEffect(pos: vec3<f32>,\r
+                         rippleFreq: f32,\r
+                         neighborhoodSize: i32) -> f32 {\r
+    var sum: f32 = 0.0;\r
+    var count: f32 = 0.0;\r
+    for (var dz = -neighborhoodSize; dz <= neighborhoodSize; dz = dz + 1) {\r
+        for (var dy = -neighborhoodSize; dy <= neighborhoodSize; dy = dy + 1) {\r
+            for (var dx = -neighborhoodSize; dx <= neighborhoodSize; dx = dx + 1) {\r
+                let sample = vec3<f32>(\r
+                    continuousPermutation(pos.x + f32(dx)),\r
+                    continuousPermutation(pos.y + f32(dy)),\r
+                    continuousPermutation(pos.z + f32(dz))\r
+                );\r
+                let d = length(sample - pos);\r
+                sum = sum + sin(d * PI * rippleFreq);\r
+                count = count + 1.0;\r
+            }\r
+        }\r
+    }\r
+    return sum / count;\r
+}\r
+\r
+// \u2014\u2014\u2014 generateRippleNoise \u2014\u2014\u2014\r
+fn generateRippleNoise(pos: vec3<f32>, p: NoiseParams) -> f32 {\r
+    var x = (pos.x + p.xShift) / p.zoom;\r
+    var y = (pos.y + p.yShift) / p.zoom;\r
+    var z = (pos.z + p.zShift) / p.zoom;\r
+    var sum: f32 = 0.0;\r
+    var amp: f32 = 1.0;\r
+    var freq: f32 = p.freq;\r
+    var angle: f32 = p.seedAngle * 2.0 * PI;\r
+    let angleInc = 2.0 * PI / f32(p.octaves);\r
+    let rippleFreqScaled = p.rippleFreq / p.zoom;\r
+    let neigh = i32(p.exp1);\r
+\r
+    for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
+        var n = /* your base noise fn */ lanczos3D(vec3<f32>(x * freq, y * freq, z * freq)) * amp;\r
+        if (p.turbulence == 1u) {\r
+            n = abs(n);\r
+        }\r
+        let rip = calculateRippleEffect(vec3<f32>(x * freq, y * freq, z * freq),\r
+                                        rippleFreqScaled,\r
+                                        neigh);\r
+        sum = sum + n * rip;\r
+\r
+        freq   = freq * p.lacunarity;\r
+        amp    = amp * p.gain;\r
+        angle  = angle + angleInc;\r
+\r
+        // simple phase offset; replace 0.0 with a hash if desired\r
+        let phase: f32 = 0.0;\r
+        x = x + p.xShift * cos(angle + phase);\r
+        y = y + p.yShift * cos(angle + phase);\r
+        z = z + p.zShift * cos(angle + phase);\r
+    }\r
+\r
+    if (p.turbulence == 1u) {\r
+        sum = sum - 1.0;\r
+    }\r
+    return f32(p.octaves) * sum;\r
+}\r
+\r
+// \u2014\u2014\u2014 generateFractalRipples \u2014\u2014\u2014\r
+fn generateFractalRipples(posIn: vec3<f32>, p: NoiseParams) -> f32 {\r
+    // first pass at zoom scaled by exp2\r
+    var p1 = p;\r
+    p1.zoom = p.zoom * p.exp2+1.5;\r
+    let fbm1 = generateRippleNoise(posIn, p1);\r
+\r
+    // second pass feeding fbm1 back into xyz\r
+    var p2 = p;\r
+    let sample = vec3<f32>(fbm1, fbm1, fbm1);\r
+    let fbm2   = generateRippleNoise(sample, p2);\r
+\r
+    return 2.0 * fbm2;\r
+}\r
+\r
+// \u2014\u2014\u2014 1. HexWorms Raw \u2014\u2014\u2014\r
+fn hexWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let steps       : u32 = 5u;\r
+    let persistence : f32 = 0.5;\r
+    var total       : f32 = 0.0;\r
+    var frequency   : f32 = 1.0;\r
+    var amplitude   : f32 = 1.0;\r
+\r
+    for (var i: u32 = 0u; i < steps; i = i + 1u) {\r
+        // base cellular noise for direction\r
+        let angle = generateCellular(pos * frequency, params) * 2.0 * PI;\r
+\r
+        // step along the \u201Cworm\u201D\r
+        let offset = vec3<f32>(\r
+            cos(angle),\r
+            sin(angle),\r
+            sin(angle)\r
+        ) * 0.5;\r
+        let samplePos = pos + offset;\r
+\r
+        // accumulate\r
+        total = total + generateCellular(samplePos, params) * amplitude;\r
+\r
+        amplitude = amplitude * persistence;\r
+        frequency = frequency * 2.0;\r
+    }\r
+\r
+    // match JS: subtract 1 at the end\r
+    return total - 1.0;\r
+}\r
+\r
+// \u2014\u2014\u2014 2. HexWorms Generator \u2014\u2014\u2014\r
+fn generateHexWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var pos   = posIn / params.zoom;\r
+    var sum   : f32 = 0.0;\r
+    var amp   : f32 = 1.0;\r
+    var freq  : f32 = params.freq;\r
+\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        sum = sum + hexWormsRaw(pos * freq, params) * amp;\r
+        freq = freq * params.lacunarity;\r
+        amp  = amp * params.gain;\r
+        pos  = pos + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
+    }\r
+\r
+    return sum;\r
+}\r
+\r
+// \u2014\u2014\u2014 3. PerlinWorms Raw \u2014\u2014\u2014\r
+fn perlinWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+    let steps       : u32 = 5u;\r
+    let persistence : f32 = 0.5;\r
+    var total       : f32 = 0.0;\r
+    var frequency   : f32 = 1.0;\r
+    var amplitude   : f32 = 1.0;\r
+\r
+    for (var i: u32 = 0u; i < steps; i = i + 1u) {\r
+        // base Perlin noise for direction\r
+        let angle = generatePerlin(pos * frequency, params) * 2.0 * PI;\r
+\r
+        // step along the \u201Cworm\u201D\r
+        let offset = vec3<f32>(\r
+            cos(angle),\r
+            sin(angle),\r
+            sin(angle)\r
+        ) * 0.5;\r
+        let samplePos = pos + offset;\r
+\r
+        // accumulate\r
+        total = total + generatePerlin(samplePos, params) * amplitude;\r
+\r
+        amplitude = amplitude * persistence;\r
+        frequency = frequency * 2.0;\r
+    }\r
+\r
+    return total;\r
+}\r
+\r
+// \u2014\u2014\u2014 PerlinWorms Generator \u2014\u2014\u2014\r
+fn generatePerlinWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
+    var pos   = posIn / params.zoom;\r
+    var sum   : f32 = 0.0;\r
+    var amp   : f32 = 1.0;\r
+    var freq  : f32 = params.freq;\r
+\r
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+        sum = sum + perlinWormsRaw(pos * freq, params) * amp;\r
+        freq = freq * params.lacunarity;\r
+        amp  = amp * params.gain;\r
+        pos  = pos + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
+    }\r
+\r
+    return sum;\r
+}\r
+\r
+// small helper: derive a few pseudorandom offsets from seed (u32)\r
+fn seedOffsets(seed: u32) -> vec3<f32> {\r
+  let s = f32(seed);\r
+  let a = fract(sin(s * 12.9898) * 43758.5453);\r
+  let b = fract(sin((s + 17.0) * 78.233) * 23421.631);\r
+  let c = fract(sin((s + 31.0) * 37.719) * 97531.135);\r
+  return vec3<f32>(a, b, c) * 0.5;\r
+}\r
+\r
+// safe tile sizes (u32) derived from Frame (avoid zero)\r
+fn tileSizeX() -> u32 { return max(frame.tileWidth, 1u); }\r
+fn tileSizeY() -> u32 { return max(frame.tileHeight, 1u); }\r
+fn tileSizeZ() -> u32 { return max(frame.tileDepth, 1u); }\r
+\r
+// --- helper: map pos -> integer pixel coords (uses frame uniform) ----------\r
+// Returns wrapped pixel coords (periodic) so noise will tile across chunks.\r
+fn posToPixelCoords_tiled(p : vec3<f32>) -> vec3<u32> {\r
+  let fx = p.x * f32(frame.fullWidth);\r
+  let fy = p.y * f32(frame.fullHeight);\r
+\r
+  let ox_i : i32 = max(frame.originX, 0);\r
+  let oy_i : i32 = max(frame.originY, 0);\r
+\r
+  // integer pixel coords (unwrapped)\r
+  let pxu : u32 = u32(floor(fx)) + u32(ox_i);\r
+  let pyu : u32 = u32(floor(fy)) + u32(oy_i);\r
+\r
+  let layer_i = max(frame.layerIndex, 0);\r
+  let layer_u : u32 = u32(layer_i);\r
+\r
+  // wrap coordinates into tile using modulo (cheap & correct for arbitrary tile sizes)\r
+  let tx = tileSizeX();\r
+  let ty = tileSizeY();\r
+  let tz = tileSizeZ();\r
+  let rx = pxu % tx;\r
+  let ry = pyu % ty;\r
+  let rz = layer_u % tz;\r
+\r
+  return vec3<u32>(rx, ry, rz);\r
+}\r
+\r
+// --- deterministic integer hash that mixes seed (uses perm table) ---\r
+// perm(...) implementation expected elsewhere (perm indexes 0..511)\r
+fn hashed_with_seed(ix: u32, iy: u32, iz: u32, seed: u32) -> u32 {\r
+  let a = perm((ix + seed * 1664525u) & 511u);\r
+  let b = perm((a + (iy + seed * 22695477u)) & 511u);\r
+  let c = perm((b + (iz + seed * 1103515245u)) & 511u);\r
+  return c & 511u;\r
+}\r
+fn hashTo01_seeded(ix: u32, iy: u32, iz: u32, seed: u32) -> f32 {\r
+  return f32(hashed_with_seed(ix, iy, iz, seed)) / 511.0;\r
+}\r
+fn hashToSigned01_seeded(ix: u32, iy: u32, iz: u32, seed: u32) -> f32 {\r
+  return hashTo01_seeded(ix, iy, iz, seed) * 2.0 - 1.0;\r
+}\r
+\r
+// integer lattice helper consistent with the perm table, tiled by Frame sizes.\r
+// p is continuous; freq and shifts control lattice alignment.\r
+fn posToIntsForHash_tiled(p: vec3<f32>, freq: f32, sx: f32, sy: f32, sz: f32) -> vec3<u32> {\r
+  let fx = floor(p.x * freq + sx);\r
+  let fy = floor(p.y * freq + sy);\r
+  let fz = floor(p.z * freq + sz);\r
+\r
+  // cast and wrap to tile-size\r
+  let tx = tileSizeX();\r
+  let ty = tileSizeY();\r
+  let tz = tileSizeZ();\r
+\r
+  let ix = u32(fx) % tx;\r
+  let iy = u32(fy) % ty;\r
+  let iz = u32(fz) % tz;\r
+  return vec3<u32>(ix, iy, iz);\r
+}\r
+\r
+// ---------------------- tiled value-noise 2D (smooth) ----------------------\r
+// Uses posToIntsForHash_tiled internally => tiled/periodic by Frame tile sizes.\r
+fn valueNoise2D_seeded(p : vec2<f32>, freq: f32, seed: u32, sx: f32, sy: f32) -> f32 {\r
+  let f = max(freq, 1e-6);\r
+  let fx = p.x * f + sx;\r
+  let fy = p.y * f + sy;\r
+  let ix_f = floor(fx);\r
+  let iy_f = floor(fy);\r
+  let txf = fx - ix_f;\r
+  let tyf = fy - iy_f;\r
+\r
+  // get tiled integer lattice coords (z = 0)\r
+  let base = posToIntsForHash_tiled(vec3<f32>(ix_f, iy_f, 0.0), 1.0, 0.0, 0.0, 0.0);\r
+  let ix = base.x;\r
+  let iy = base.y;\r
+\r
+  // neighbors (wrapped by tile in posToIntsForHash_tiled above)\r
+  let ix1 = (ix + 1u) % tileSizeX();\r
+  let iy1 = (iy + 1u) % tileSizeY();\r
+\r
+  let h00 = hashToSigned01_seeded(ix,  iy,  0u, seed);\r
+  let h10 = hashToSigned01_seeded(ix1, iy,  0u, seed);\r
+  let h01 = hashToSigned01_seeded(ix,  iy1, 0u, seed);\r
+  let h11 = hashToSigned01_seeded(ix1, iy1, 0u, seed);\r
+\r
+  let sx_f = fade(txf);\r
+  let sy_f = fade(tyf);\r
+  let a = lerp(h00, h10, sx_f);\r
+  let b = lerp(h01, h11, sx_f);\r
+  return lerp(a, b, sy_f);\r
+}\r
+\r
+// ---------------------- White Noise (tiled, seeded, contrast/gain) ----\r
+fn generateWhiteNoise(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
+  let seed : u32 = params.seed;\r
+\r
+  // integer pixel coords (wrapped to tile)\r
+  let ip = posToPixelCoords_tiled(pos);\r
+\r
+  // subsampling (blocky) or per-pixel; safe cast\r
+  let subs = max(u32(max(params.freq, 1.0)), 1u);\r
+  let sx = (ip.x / subs) % tileSizeX();\r
+  let sy = (ip.y / subs) % tileSizeY();\r
+  let sz = ip.z % tileSizeZ();\r
+\r
+  var v01 = hashTo01_seeded(sx, sy, sz, seed);\r
+\r
+  // apply contrast around 0.5 via params.gain\r
+  let contrast = 1.0 + params.gain;\r
+  v01 = (v01 - 0.5) * contrast + 0.5;\r
+\r
+  return clamp(v01, 0.0, 1.0);\r
+}\r
+\r
+// ---------------------- Blue Noise Generator (tiled, seeded) -------------\r
+fn generateBlueNoise(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
+  let seed : u32 = params.seed;\r
+\r
+  // pixel-space coords\r
+  let px = pos.xy * vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r
+\r
+  // scale control (same heuristic you had)\r
+  let pixelBase = max(min(f32(frame.fullWidth), f32(frame.fullHeight)), 1.0);\r
+  let highScale = max(params.freq * 0.02 * pixelBase, 1e-6);\r
+  let lowScaleFactor = 0.12;\r
+  let lowScale = max(highScale * lowScaleFactor, 1e-6);\r
+\r
+  // Optional domain warp (seeded) \u2014 jitter indices with tiled lattice lookups\r
+  var wp = px;\r
+  if (params.warpAmp > 0.0) {\r
+    let ip0 = posToIntsForHash_tiled(pos, params.freq, params.xShift, params.yShift, params.zShift);\r
+    let jx = hashToSigned01_seeded(ip0.x + 5u, ip0.y + 11u, ip0.z + 17u, seed);\r
+    let jy = hashToSigned01_seeded(ip0.x + 19u, ip0.y + 23u, ip0.z + 29u, seed);\r
+    let warpScale = params.warpAmp * pixelBase * 0.0025;\r
+    wp = px + vec2<f32>(jx, jy) * warpScale;\r
+  }\r
+\r
+  // Sample HF and LF bands using the tiled value noise (coords pre-scaled)\r
+  let high = valueNoise2D_seeded(wp * highScale, 1.0, seed, 0.0, 0.0);\r
+  let lowSample = valueNoise2D_seeded(wp * lowScale, 1.0, seed, 0.0, 0.0);\r
+\r
+  let suppress = max(params.gain, 0.0);\r
+  var result = high - lowSample * suppress;\r
+\r
+  let contrastFactor = 2.0;\r
+  result = result * contrastFactor;\r
+  result = result * (1.0 / (1.0 + suppress));\r
+\r
+  let rClamped = clamp(result, -1.0, 1.0);\r
+  return rClamped * 0.5 + 0.5;\r
+}\r
+\r
+\r
+\r
+// Shared tiling constants\r
+const WGX : u32 = 8u;\r
+const WGY : u32 = 8u;\r
+const TILE_W : u32 = WGX + 2u; // 1 texel halo on each side\r
+const TILE_H : u32 = WGY + 2u;\r
+\r
+// Per-kernel workgroup tiles at module scope\r
+var<workgroup> normalTile  : array<array<f32, TILE_W>, TILE_H>;\r
+var<workgroup> normal8Tile : array<array<f32, TILE_W>, TILE_H>;\r
+var<workgroup> volumeTile  : array<array<f32, TILE_W>, TILE_H>;\r
+var<workgroup> sphereTile  : array<array<f32, TILE_W>, TILE_H>;\r
+\r
+// Height fetch \r
+fn sampleHeight(x: i32, y: i32, z: i32) -> f32 { if (readFrom3D()) { return textureLoad(inputTex3D, vec3<i32>(x, y, clampZ(z)), 0).x; } return textureLoad(inputTex, vec2<i32>(x, y), frame.layerIndex, 0).x; } fn safeNormalize(v: vec3<f32>) -> vec3<f32> { let len2 = dot(v, v); if (len2 > 1e-12) { return v * inverseSqrt(len2); } return vec3<f32>(0.0, 0.0, 1.0); }\r
+\r
+@compute @workgroup_size(WGX, WGY, 1)\r
+fn computeNormal(@builtin(global_invocation_id) gid: vec3<u32>,\r
+                 @builtin(local_invocation_id)  lid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let wMax = i32(frame.fullWidth)  - 1;\r
+  let hMax = i32(frame.fullHeight) - 1;\r
+\r
+  let tx = i32(lid.x) + 1;\r
+  let ty = i32(lid.y) + 1;\r
+\r
+  let cx = clamp(fx, 0, wMax);\r
+  let cy = clamp(fy, 0, hMax);\r
+\r
+  // center\r
+  normalTile[u32(ty)][u32(tx)] = sampleHeight(cx, cy, fz);\r
+\r
+  // 1-texel halo\r
+  if (lid.x == 0u)               { normalTile[u32(ty)][0u]               = sampleHeight(clamp(cx - 1, 0, wMax), cy, fz); }\r
+  if (lid.x == WGX - 1u)         { normalTile[u32(ty)][TILE_W - 1u]      = sampleHeight(clamp(cx + 1, 0, wMax), cy, fz); }\r
+  if (lid.y == 0u)               { normalTile[0u][u32(tx)]               = sampleHeight(cx, clamp(cy - 1, 0, hMax), fz); }\r
+  if (lid.y == WGY - 1u)         { normalTile[TILE_H - 1u][u32(tx)]      = sampleHeight(cx, clamp(cy + 1, 0, hMax), fz); }\r
+  if (lid.x == 0u && lid.y == 0u) {\r
+    normalTile[0u][0u]            = sampleHeight(clamp(cx - 1, 0, wMax), clamp(cy - 1, 0, hMax), fz);\r
+  }\r
+  if (lid.x == WGX - 1u && lid.y == 0u) {\r
+    normalTile[0u][TILE_W - 1u]   = sampleHeight(clamp(cx + 1, 0, wMax), clamp(cy - 1, 0, hMax), fz);\r
+  }\r
+  if (lid.x == 0u && lid.y == WGY - 1u) {\r
+    normalTile[TILE_H - 1u][0u]   = sampleHeight(clamp(cx - 1, 0, wMax), clamp(cy + 1, 0, hMax), fz);\r
+  }\r
+  if (lid.x == WGX - 1u && lid.y == WGY - 1u) {\r
+    normalTile[TILE_H - 1u][TILE_W - 1u] = sampleHeight(clamp(cx + 1, 0, wMax), clamp(cy + 1, 0, hMax), fz);\r
+  }\r
+\r
+  workgroupBarrier();\r
+\r
+  // 4-neighbor central differences\r
+  let zC = normalTile[u32(ty)][u32(tx)];\r
+  let zL = normalTile[u32(ty)][u32(tx - 1)];\r
+  let zR = normalTile[u32(ty)][u32(tx + 1)];\r
+  let zD = normalTile[u32(ty - 1)][u32(tx)];\r
+  let zU = normalTile[u32(ty + 1)][u32(tx)];\r
+\r
+  let dx = (zR - zL) * 0.5;\r
+  let dy = (zU - zD) * 0.5;\r
+\r
+  let n   = normalize(vec3<f32>(dx, dy, 1.0));\r
+  let enc = n * 0.5 + vec3<f32>(0.5);\r
+\r
+  // pack: .r = original height, .g = enc.y, .b = enc.x, .a = enc.z\r
+  let outCol = vec4<f32>(zC, enc.y, enc.x, enc.z);\r
+  storeRGBA(cx, cy, fz, outCol);\r
+}\r
+\r
+// 8-neighbor filtered gradient using the same tile\r
+@compute @workgroup_size(WGX, WGY, 1)\r
+fn computeNormal8(@builtin(global_invocation_id) gid: vec3<u32>,\r
+                  @builtin(local_invocation_id)  lid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let wMax = i32(frame.fullWidth)  - 1;\r
+  let hMax = i32(frame.fullHeight) - 1;\r
+\r
+  let tx = i32(lid.x) + 1;\r
+  let ty = i32(lid.y) + 1;\r
+\r
+  let cx = clamp(fx, 0, wMax);\r
+  let cy = clamp(fy, 0, hMax);\r
+\r
+  // center\r
+  normal8Tile[u32(ty)][u32(tx)] = sampleHeight(cx, cy, fz);\r
+\r
+  // halo\r
+  if (lid.x == 0u)                    { normal8Tile[u32(ty)][0u]               = sampleHeight(clamp(cx - 1, 0, wMax), cy, fz); }\r
+  if (lid.x == WGX - 1u)              { normal8Tile[u32(ty)][TILE_W - 1u]      = sampleHeight(clamp(cx + 1, 0, wMax), cy, fz); }\r
+  if (lid.y == 0u)                    { normal8Tile[0u][u32(tx)]               = sampleHeight(cx, clamp(cy - 1, 0, hMax), fz); }\r
+  if (lid.y == WGY - 1u)              { normal8Tile[TILE_H - 1u][u32(tx)]      = sampleHeight(cx, clamp(cy + 1, 0, hMax), fz); }\r
+  if (lid.x == 0u && lid.y == 0u)     { normal8Tile[0u][0u]                    = sampleHeight(clamp(cx - 1, 0, wMax), clamp(cy - 1, 0, hMax), fz); }\r
+  if (lid.x == WGX - 1u && lid.y == 0u) {\r
+    normal8Tile[0u][TILE_W - 1u]      = sampleHeight(clamp(cx + 1, 0, wMax), clamp(cy - 1, 0, hMax), fz);\r
+  }\r
+  if (lid.x == 0u && lid.y == WGY - 1u) {\r
+    normal8Tile[TILE_H - 1u][0u]      = sampleHeight(clamp(cx - 1, 0, wMax), clamp(cy + 1, 0, hMax), fz);\r
+  }\r
+  if (lid.x == WGX - 1u && lid.y == WGY - 1u) {\r
+    normal8Tile[TILE_H - 1u][TILE_W - 1u] = sampleHeight(clamp(cx + 1, 0, wMax), clamp(cy + 1, 0, hMax), fz);\r
+  }\r
+\r
+  workgroupBarrier();\r
+\r
+  let zC  = normal8Tile[u32(ty)][u32(tx)];\r
+  let zL  = normal8Tile[u32(ty)][u32(tx - 1)];\r
+  let zR  = normal8Tile[u32(ty)][u32(tx + 1)];\r
+  let zD  = normal8Tile[u32(ty - 1)][u32(tx)];\r
+  let zU  = normal8Tile[u32(ty + 1)][u32(tx)];\r
+  let zUL = normal8Tile[u32(ty + 1)][u32(tx - 1)];\r
+  let zUR = normal8Tile[u32(ty + 1)][u32(tx + 1)];\r
+  let zDL = normal8Tile[u32(ty - 1)][u32(tx - 1)];\r
+  let zDR = normal8Tile[u32(ty - 1)][u32(tx + 1)];\r
+\r
+  let dx = ((zR + zUR + zDR) - (zL + zUL + zDL)) / 3.0;\r
+  let dy = ((zU + zUR + zUL) - (zD + zDR + zDL)) / 3.0;\r
+\r
+  let n   = normalize(vec3<f32>(dx, dy, 1.0));\r
+  let enc = n * 0.5 + vec3<f32>(0.5);\r
+  let outCol = vec4<f32>(zC, enc.y, enc.x, enc.z);\r
+  storeRGBA(cx, cy, fz, outCol);\r
+}\r
+\r
+fn encode01(v: vec3<f32>) -> vec3<f32> {\r
+    return v * 0.5 + vec3<f32>(0.5);\r
+}\r
+\r
+// Volume normals: tile the XY plane and only sample Z neighbors per pixel\r
+@compute @workgroup_size(WGX, WGY, 1)\r
+fn computeNormalVolume(@builtin(global_invocation_id) gid: vec3<u32>,\r
+                       @builtin(local_invocation_id)  lid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let wMax = i32(frame.fullWidth)  - 1;\r
+  let hMax = i32(frame.fullHeight) - 1;\r
+\r
+  let tx = i32(lid.x) + 1;\r
+  let ty = i32(lid.y) + 1;\r
+\r
+  let cx = clamp(fx, 0, wMax);\r
+  let cy = clamp(fy, 0, hMax);\r
+\r
+  // center slice values once per tile\r
+  volumeTile[u32(ty)][u32(tx)] = sampleHeight(cx, cy, fz);\r
+  if (lid.x == 0u)                    { volumeTile[u32(ty)][0u]               = sampleHeight(clamp(cx - 1, 0, wMax), cy, fz); }\r
+  if (lid.x == WGX - 1u)              { volumeTile[u32(ty)][TILE_W - 1u]      = sampleHeight(clamp(cx + 1, 0, wMax), cy, fz); }\r
+  if (lid.y == 0u)                    { volumeTile[0u][u32(tx)]               = sampleHeight(cx, clamp(cy - 1, 0, hMax), fz); }\r
+  if (lid.y == WGY - 1u)              { volumeTile[TILE_H - 1u][u32(tx)]      = sampleHeight(cx, clamp(cy + 1, 0, hMax), fz); }\r
+  if (lid.x == 0u && lid.y == 0u)     { volumeTile[0u][0u]                    = sampleHeight(clamp(cx - 1, 0, wMax), clamp(cy - 1, 0, hMax), fz); }\r
+  if (lid.x == WGX - 1u && lid.y == 0u) {\r
+    volumeTile[0u][TILE_W - 1u]       = sampleHeight(clamp(cx + 1, 0, wMax), clamp(cy - 1, 0, hMax), fz);\r
+  }\r
+  if (lid.x == 0u && lid.y == WGY - 1u) {\r
+    volumeTile[TILE_H - 1u][0u]       = sampleHeight(clamp(cx - 1, 0, wMax), clamp(cy + 1, 0, hMax), fz);\r
+  }\r
+  if (lid.x == WGX - 1u && lid.y == WGY - 1u) {\r
+    volumeTile[TILE_H - 1u][TILE_W - 1u] = sampleHeight(clamp(cx + 1, 0, wMax), clamp(cy + 1, 0, hMax), fz);\r
+  }\r
+\r
+  workgroupBarrier();\r
+\r
+  let zC = volumeTile[u32(ty)][u32(tx)];\r
+  let zL = volumeTile[u32(ty)][u32(tx - 1)];\r
+  let zR = volumeTile[u32(ty)][u32(tx + 1)];\r
+  let zD = volumeTile[u32(ty - 1)][u32(tx)];\r
+  let zU = volumeTile[u32(ty + 1)][u32(tx)];\r
+\r
+  let dx = (zR - zL) * 0.5;\r
+  let dy = (zU - zD) * 0.5;\r
+\r
+  let zB = sampleHeight(cx, cy, clampZ(fz - 1));\r
+  let zF = sampleHeight(cx, cy, clampZ(fz + 1));\r
+  let dz = (zF - zB) * 0.5;\r
+\r
+  let n   = safeNormalize(vec3<f32>(dx, dy, dz));\r
+  let enc = encode01(n);\r
+  storeRGBA(cx, cy, fz, vec4<f32>(enc, zC));\r
+}\r
+\r
+\r
+// Sphere normals with shared tile and wrapped longitude\r
+@compute @workgroup_size(WGX, WGY, 1)\r
+fn computeSphereNormal(@builtin(global_invocation_id) gid: vec3<u32>,\r
+                       @builtin(local_invocation_id)  lid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let w  = i32(frame.fullWidth);\r
+    let h  = i32(frame.fullHeight);\r
+\r
+    // wrap longitude, clamp latitude\r
+    let wrapX  = ((fx % w) + w) % w;\r
+    let clampY = clamp(fy, 0, h - 1);\r
+\r
+    let tx = i32(lid.x) + 1;\r
+    let ty = i32(lid.y) + 1;\r
+\r
+    // center\r
+    sphereTile[u32(ty)][u32(tx)] =\r
+        textureLoad(inputTex, vec2<i32>(wrapX, clampY), frame.layerIndex, 0).x;\r
+\r
+    // halo\r
+    if (lid.x == 0u) {\r
+        let lx = ((wrapX - 1) % w + w) % w;\r
+        sphereTile[u32(ty)][0u] =\r
+            textureLoad(inputTex, vec2<i32>(lx, clampY), frame.layerIndex, 0).x;\r
+    }\r
+    if (lid.x == WGX - 1u) {\r
+        let rx = ((wrapX + 1) % w + w) % w;\r
+        sphereTile[u32(ty)][TILE_W - 1u] =\r
+            textureLoad(inputTex, vec2<i32>(rx, clampY), frame.layerIndex, 0).x;\r
+    }\r
+    if (lid.y == 0u) {\r
+        let dy = clamp(clampY - 1, 0, h - 1);\r
+        sphereTile[0u][u32(tx)] =\r
+            textureLoad(inputTex, vec2<i32>(wrapX, dy), frame.layerIndex, 0).x;\r
+    }\r
+    if (lid.y == WGY - 1u) {\r
+        let uy = clamp(clampY + 1, 0, h - 1);\r
+        sphereTile[TILE_H - 1u][u32(tx)] =\r
+            textureLoad(inputTex, vec2<i32>(wrapX, uy), frame.layerIndex, 0).x;\r
+    }\r
+    // corners\r
+    if (lid.x == 0u && lid.y == 0u) {\r
+        let lx = ((wrapX - 1) % w + w) % w;\r
+        let dy = clamp(clampY - 1, 0, h - 1);\r
+        sphereTile[0u][0u] =\r
+            textureLoad(inputTex, vec2<i32>(lx, dy), frame.layerIndex, 0).x;\r
+    }\r
+    if (lid.x == WGX - 1u && lid.y == 0u) {\r
+        let rx = ((wrapX + 1) % w + w) % w;\r
+        let dy = clamp(clampY - 1, 0, h - 1);\r
+        sphereTile[0u][TILE_W - 1u] =\r
+            textureLoad(inputTex, vec2<i32>(rx, dy), frame.layerIndex, 0).x;\r
+    }\r
+    if (lid.x == 0u && lid.y == WGY - 1u) {\r
+        let lx = ((wrapX - 1) % w + w) % w;\r
+        let uy = clamp(clampY + 1, 0, h - 1);\r
+        sphereTile[TILE_H - 1u][0u] =\r
+            textureLoad(inputTex, vec2<i32>(lx, uy), frame.layerIndex, 0).x;\r
+    }\r
+    if (lid.x == WGX - 1u && lid.y == WGY - 1u) {\r
+        let rx = ((wrapX + 1) % w + w) % w;\r
+        let uy = clamp(clampY + 1, 0, h - 1);\r
+        sphereTile[TILE_H - 1u][TILE_W - 1u] =\r
+            textureLoad(inputTex, vec2<i32>(rx, uy), frame.layerIndex, 0).x;\r
+    }\r
+\r
+    workgroupBarrier();\r
+\r
+    // fetch\r
+    let baseH = sphereTile[u32(ty)][u32(tx)];\r
+    let hL    = sphereTile[u32(ty)][u32(tx - 1)];\r
+    let hR    = sphereTile[u32(ty)][u32(tx + 1)];\r
+    let hD    = sphereTile[u32(ty - 1)][u32(tx)];\r
+    let hU    = sphereTile[u32(ty + 1)][u32(tx)];\r
+\r
+    // radii\r
+    let r0 = options.baseRadius + baseH * options.heightScale;\r
+    let rL = options.baseRadius + hL    * options.heightScale;\r
+    let rR = options.baseRadius + hR    * options.heightScale;\r
+    let rD = options.baseRadius + hD    * options.heightScale;\r
+    let rU = options.baseRadius + hU    * options.heightScale;\r
+\r
+    // spherical angles and increments\r
+    let theta  = f32(clampY) / f32(h - 1) * PI;\r
+    let phi    = f32(wrapX)  / f32(w - 1) * 2.0 * PI;\r
+    let dTheta = PI / f32(h - 1);\r
+    let dPhi   = 2.0 * PI / f32(w - 1);\r
+\r
+    // precompute sines and cosines\r
+    let sTh  = sin(theta);\r
+    let cTh  = cos(theta);\r
+    let sPh  = sin(phi);\r
+    let cPh  = cos(phi);\r
+    let sThU = sin(theta + dTheta);\r
+    let cThU = cos(theta + dTheta);\r
+    let sPhE = sin(phi + dPhi);\r
+    let cPhE = cos(phi + dPhi);\r
+\r
+    // positions on the sphere\r
+    let p0 = vec3<f32>(r0 * sTh * cPh,\r
+                       r0 * sTh * sPh,\r
+                       r0 * cTh);\r
+\r
+    let pE = vec3<f32>(rR * sTh * cPhE,\r
+                       rR * sTh * sPhE,\r
+                       rR * cTh);\r
+\r
+    let pN = vec3<f32>(rU * sThU * cPh,\r
+                       rU * sThU * sPh,\r
+                       rU * cThU);\r
+\r
+    // normal\r
+    let tE = pE - p0;\r
+    let tN = pN - p0;\r
+    let n  = normalize(cross(tE, tN));\r
+    let enc = n * 0.5 + vec3<f32>(0.5);\r
+\r
+    // pack and store\r
+    let outCol = vec4<f32>(baseH, enc.x, enc.y, enc.z);\r
+    textureStore(outputTex, vec2<i32>(wrapX, clampY), frame.layerIndex, outCol);\r
+}\r
+\r
+\r
+// Texture clear to reset channel(s)\r
+@compute @workgroup_size(8, 8, 1)\r
+fn clearTexture(@builtin(global_invocation_id) gid : vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  writeChannel(fx, fy, fz, 0.0, options.outputChannel, 1u);\r
+}\r
+\r
+// \u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\r
+// 0) Perlin\r
+// \u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computePerlin(@builtin(global_invocation_id) gid : vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+    // fetch the 3D position for this pixel\r
+    let p  = fetchPos(fx, fy, fz);\r
+\r
+    // generate one sample of Perlin noise\r
+    let v0 = generatePerlin(p, params);\r
+\r
+    // add it into the selected channel (or all channels) of the output\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 0.1) Perlin 4D (fBM using time as W)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computePerlin4D(@builtin(global_invocation_id) gid : vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+    // fetch the 3D position for this pixel (w comes from params.time inside the generator)\r
+    let p  = fetchPos(fx, fy, fz);\r
+\r
+    // generate one sample of 4D Perlin fBM (uses params.time as 4th dim)\r
+    let v0 = generatePerlin4D(p, params);\r
+\r
+    // write into output\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 1) Billow\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeBillow(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateBillow(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 2) AntiBillow\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiBillow(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiBillow(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 3) Ridge\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeRidge(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateRidge(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 4) AntiRidge\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiRidge(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiRidge(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 5) RidgedMultifractal\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeRidgedMultifractal(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateRidgedMultifractal(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 6) RidgedMultifractal2\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeRidgedMultifractal2(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateRidgedMultifractal2(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 7) RidgedMultifractal3\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeRidgedMultifractal3(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateRidgedMultifractal3(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 8) RidgedMultifractal4\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeRidgedMultifractal4(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateRidgedMultifractal4(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 9) AntiRidgedMultifractal\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiRidgedMultifractal(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiRidgedMultifractal(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 10) AntiRidgedMultifractal2\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiRidgedMultifractal2(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiRidgedMultifractal2(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 11) AntiRidgedMultifractal3\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiRidgedMultifractal3(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiRidgedMultifractal3(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 12) AntiRidgedMultifractal4\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiRidgedMultifractal4(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiRidgedMultifractal4(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 13) FBM (2\xB7simplex chain)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFBM(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateFBM(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 14) FBM2 (chain+zoom FBM)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFBM2(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateFBM2(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 15) FBM3 (three-stage FBM chain)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFBM3(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateFBM3(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 16) CellularBM1\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM1(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateCellularBM1(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 17) CellularBM2\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM2(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateCellularBM2(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 18) CellularBM3\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM3(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateCellularBM3(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 19) VoronoiBM1\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM1(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiBM1(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 20) VoronoiBM2\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM2(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiBM2(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 21) VoronoiBM3\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM3(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiBM3(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 22) Cellular\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellular(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateCellular(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+  22.1) AntiCellular\r
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiCellular(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiCellular(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 23) Worley\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorley(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateWorley(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+  23.1) AntiWorley\r
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiWorley(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiWorley(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 23.2) Worley 4D (fBM using time as W)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorley4D(@builtin(global_invocation_id) gid : vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+    // fetch the 3D position for this pixel (w comes from params.time inside the generator)\r
+    let p  = fetchPos(fx, fy, fz);\r
+\r
+    // generate one sample of 4D Worley fBM (uses params.time as 4th dim)\r
+    let v0 = generateWorley4D(p, params);\r
+\r
+    // write into output\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 23.3) Worley 4D (fBM using time as W)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiWorley4D(@builtin(global_invocation_id) gid : vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+    // fetch the 3D position for this pixel (w comes from params.time inside the generator)\r
+    let p  = fetchPos(fx, fy, fz);\r
+\r
+    // generate one sample of 4D Worley fBM (uses params.time as 4th dim)\r
+    let v0 = generateAntiWorley4D(p, params);\r
+\r
+    // write into output\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 24) VoronoiTileNoise\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiTileNoise(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiTileNoise(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 25) LanczosBillow\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeLanczosBillow(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateLanczosBillow(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 26) LanczosAntiBillow\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeLanczosAntiBillow(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateLanczosAntiBillow(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 27) Voronoi Circle-Gradient Noise\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiCircleNoise(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiCircleNoise(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 28) Voronoi Circle-Gradient Tile Noise 2\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiCircle2(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiCircle2(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 29) Voronoi Flat-Shade Tile Noise\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiFlatShade(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiFlatShade(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 30) Voronoi Ripple 3D\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiRipple3D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiRipple3D(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 31) Voronoi Ripple 3D 2\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiRipple3D2(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiRipple3D2(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 32) Voronoi Circular Ripple 3D\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiCircularRipple(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateVoronoiCircularRipple(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 33) Fractal Voronoi Ripple 3D\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFVoronoiRipple3D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateFVoronoiRipple3D(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 34) Fractal Voronoi Circular Ripple 3D\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFVoronoiCircularRipple(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateFVoronoiCircularRipple(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 35) Ripple Noise\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeRippleNoise(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateRippleNoise(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 36) Fractal Ripples\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFractalRipples(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateFractalRipples(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 37) HexWorms\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeHexWorms(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateHexWormsNoise(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 38) PerlinWorms\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computePerlinWorms(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generatePerlinWormsNoise(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 39) White Noise\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWhiteNoise(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateWhiteNoise(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 40) Blue Noise\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeBlueNoise(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateBlueNoise(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// 41) Simplex\r
+@compute @workgroup_size(8,8,1)\r
+fn computeSimplex(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  let v0 = generateSimplex(p, params);\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeSimplexFBM(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  let v0 = generateSimplexFBM(p, params);\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeCurl2D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let pos = fetchPos(fx, fy, fz).xy;\r
+  let v   = curl2_simplex2D(pos, params);\r
+  // gentle gain so it doesn\u2019t clip hard; tweak 0.75 if you like\r
+  let m   = mag_to_signed01(length(v) * 0.75);\r
+\r
+  writeChannel(fx, fy, fz, m, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeCurlFBM2D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let pos = fetchPos(fx, fy, fz).xy;\r
+  let v   = curl2_simplexFBM(pos, params);\r
+  let m   = mag_to_signed01(length(v) * 0.75);\r
+\r
+  writeChannel(fx, fy, fz, m, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeDomainWarpFBM1(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM1(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeDomainWarpFBM2(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM2(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeGaborAnisotropic(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateGaborAniso(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeTerraceNoise(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateTerraceNoise(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeFoamNoise(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateFoamNoise(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeTurbulence(@builtin(global_invocation_id) gid: vec3<u32>){\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateTurbulence(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+\r
+\r
+\r
+\r
+\r
+\r
+\r
+\r
+\r
+\r
+// too slow to compile all at once due to branching, had to write new entry point logic\r
+// fn computeMixedNoise(pos : vec3<f32>) -> f32 {\r
+//     var result   : f32 = 0.0;\r
+//     var paramIdx : u32 = 0u;\r
+\r
+//     // copy the mask so we can eat bits out of it\r
+//     var bits : u32 = options.mask;\r
+\r
+//     // while there's still a set bit, handle just that one\r
+//     loop {\r
+//         // bail as soon as we've consumed all bits\r
+//         if (bits == 0u) {\r
+//             break;\r
+//         }\r
+\r
+//         // find the lowest set bit index\r
+//         let i : u32 = firstTrailingBit(bits);\r
+\r
+//         // clear that bit so next iteration finds the next one\r
+//         bits = bits & (bits - 1u);\r
+\r
+//         // load this algo's params\r
+//         let p = params[paramIdx];\r
+//         paramIdx = paramIdx + 1u;\r
+\r
+//         // dispatch the one selected generator\r
+//         var v : f32 = 0.0;\r
+//         switch(i) {\r
+//             case 0u:  { v = generatePerlin(pos, p); }\r
+//             // case 1u:  { v = generateBillow(pos, p); }\r
+//             // case 2u:  { v = generateAntiBillow(pos, p); }\r
+//             // case 3u:  { v = generateRidge(pos, p); }\r
+//             // case 4u:  { v = generateAntiRidge(pos, p); }\r
+//             // case 5u:  { v = generateRidgedMultifractal(pos, p); }\r
+//             // case 6u:  { v = generateRidgedMultifractal2(pos, p); }\r
+//             // case 7u:  { v = generateRidgedMultifractal3(pos, p); }\r
+//             // case 8u:  { v = generateRidgedMultifractal4(pos, p); }\r
+//             // case 9u:  { v = generateAntiRidgedMultifractal(pos, p); }\r
+//             // case 10u: { v = generateAntiRidgedMultifractal2(pos, p); }\r
+//             // case 11u: { v = generateAntiRidgedMultifractal3(pos, p); }\r
+//             // case 12u: { v = generateAntiRidgedMultifractal4(pos, p); }\r
+//             // case 13u: { v = generateFBM(pos, p); }\r
+//             // case 14u: { v = generateFBM2(pos, p); }\r
+//             // case 15u: { v = generateFBM3(pos, p); }\r
+//             // case 16u: { v = generateCellularBM1(pos, p); }\r
+//             // case 17u: { v = generateCellularBM2(pos, p); }\r
+//             // case 18u: { v = generateCellularBM3(pos, p); }\r
+//             // case 19u: { v = generateVoronoiBM1(pos, p); }\r
+//             // case 20u: { v = generateVoronoiBM2(pos, p); }\r
+//             // case 21u: { v = generateVoronoiBM3(pos, p); }\r
+//             // case 22u: { v = generateCellular(pos, p); }\r
+//             // case 23u: { v = generateWorley(pos, p); }\r
+//             // case 24u: { v = generateVoronoiTileNoise(pos, p); }\r
+//             // case 25u: { v = generateLanczosBillow(pos, p); }\r
+//             // case 26u: { v = generateLanczosAntiBillow(pos, p); }\r
+//             //todo port the rest, also more generic ones like white/blue noise\r
+//             default:  { /* unsupported bit \u2192 no contribution */ }\r
+//         }\r
+\r
+//         result = result + v;\r
+\r
+//         // stop if we've reached the max slots you filled\r
+//         if (paramIdx >= MAX_NOISE_CONFIGS) {\r
+//             break;\r
+//         }\r
+//     }\r
+\r
+//     return result;\r
+// }\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Compute Entry \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// @compute @workgroup_size(8, 8, 1)\r
+// fn main(@builtin(global_invocation_id) gid : vec3<u32>) {\r
+//     // 2) compute absolute pixel coords in the full output\r
+//     let fx = i32(frame.originX) + i32(gid.x);\r
+//     let fy = i32(frame.originY) + i32(gid.y);\r
+//     let p = fetchPos(fx, fy);\r
+\r
+//     // 4) compute the mixed noise height\r
+//     let h = computeMixedNoise(p);\r
+\r
+//     // 5) (optional) finite-difference normal\r
+//     var out: vec4<f32>;\r
+//     if (options.getGradient == 1u) {\r
+//         // let ex = options.epsilon.x;\r
+//         // let ey = options.epsilon.y;\r
+//         // let ez = options.epsilon.z;\r
+\r
+//         // let hx = computeMixedNoise(p + vec3<f32>(ex, 0.0, 0.0));\r
+//         // let lx = computeMixedNoise(p - vec3<f32>(ex, 0.0, 0.0));\r
+//         // let hy = computeMixedNoise(p + vec3<f32>(0.0, ey, 0.0));\r
+//         // let ly = computeMixedNoise(p - vec3<f32>(0.0, ey, 0.0));\r
+//         // let hz = computeMixedNoise(p + vec3<f32>(0.0, 0.0, ez));\r
+//         // let lz = computeMixedNoise(p - vec3<f32>(0.0, 0.0, ez));\r
+\r
+//         // var dx = (hx - lx) / (2.0 * ex);\r
+//         // var dy = (hy - ly) / (2.0 * ey);\r
+//         // var dz = (hz - lz) / (2.0 * ez);\r
+//         // let invLen = 1.0 / max(1e-6, sqrt(dx*dx + dy*dy + dz*dz));\r
+//         // dx *= invLen; dy *= invLen; dz *= invLen;\r
+\r
+//         // out = vec4<f32>(h, dx, dy, dz);\r
+//     } else {\r
+//         out = vec4<f32>(h, h, h, h);\r
+//     }\r
+\r
+//   // 6) write into the layer of the 2D-array texture\r
+//   textureStore(\r
+//     outputTex,\r
+//     vec2<i32>(fx, fy),\r
+//     frame.layerIndex,      \r
+//     out\r
+//   );\r
+// }\r
+\r
+\r
+\r
+// 5x5 Gaussian blur (separable weights via shared tile, single-pass)\r
+// Applies per-channel convolution on RGBA and writes rgba16f\r
+// If options.outputChannel == 0, writes all channels\r
+// If 1..4, only that channel is replaced with blurred value, others copied from source\r
+\r
+const WG_X : u32 = 16u;\r
+const WG_Y : u32 = 16u;\r
+const R    : u32 = 2u;        // kernel radius for 5x5\r
+const TILE_SIZE : u32 = TILE_W * TILE_H;\r
+\r
+const G5 : array<f32, 5> = array<f32,5>(1.0, 4.0, 6.0, 4.0, 1.0);\r
+const G5NORM : f32 = 1.0 / 256.0;\r
+\r
+var<workgroup> tileRGBA : array<vec4<f32>, TILE_SIZE>;\r
+\r
+fn tileIndex(x: u32, y: u32)->u32 {\r
+  return y * TILE_W + x;\r
+}\r
+\r
+@compute @workgroup_size(WG_X, WG_Y, 1)\r
+fn computeGauss5x5(\r
+  @builtin(local_invocation_id)  lid: vec3<u32>,\r
+  @builtin(workgroup_id)         wid: vec3<u32>,\r
+  @builtin(global_invocation_id) gid: vec3<u32>\r
+){\r
+  // Workgroup top-left in full image space\r
+  let wgOx = i32(frame.originX) + i32(wid.x) * i32(WG_X);\r
+  let wgOy = i32(frame.originY) + i32(wid.y) * i32(WG_Y);\r
+  let fz   = i32(frame.originZ) + i32(gid.z);\r
+\r
+  // Cooperatively load a (WG_X+4) x (WG_Y+4) tile with a 2px halo\r
+  var ty: u32 = lid.y;\r
+  loop {\r
+    if (ty >= TILE_H) { break; }\r
+    var tx: u32 = lid.x;\r
+    loop {\r
+      if (tx >= TILE_W) { break; }\r
+      let sx = clamp(wgOx + i32(tx) - i32(R), 0, i32(frame.fullWidth)  - 1);\r
+      let sy = clamp(wgOy + i32(ty) - i32(R), 0, i32(frame.fullHeight) - 1);\r
+      tileRGBA[tileIndex(tx, ty)] = loadPrevRGBA(sx, sy, fz);\r
+      tx += WG_X;\r
+    }\r
+    ty += WG_Y;\r
+  }\r
+  workgroupBarrier();\r
+\r
+  // Output pixel this thread is responsible for\r
+  let fx = wgOx + i32(lid.x);\r
+  let fy = wgOy + i32(lid.y);\r
+\r
+  // Guard writes that might fall off the image on the final groups\r
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {\r
+    return;\r
+  }\r
+\r
+  // Center within the shared tile\r
+  let txc = u32(lid.x) + R;\r
+  let tyc = u32(lid.y) + R;\r
+\r
+  // 5x5 Gaussian using separable weights via outer product on the tile\r
+  var acc : vec4<f32> = vec4<f32>(0.0);\r
+  for (var j: u32 = 0u; j < 5u; j = j + 1u) {\r
+    let wy = G5[j];\r
+    let tyN = u32(i32(tyc) + i32(j) - 2);\r
+    for (var i: u32 = 0u; i < 5u; i = i + 1u) {\r
+      let wx = G5[i];\r
+      let txN = u32(i32(txc) + i32(i) - 2);\r
+      let w = (wx * wy) * G5NORM;\r
+      acc += tileRGBA[tileIndex(txN, tyN)] * w;\r
+    }\r
+  }\r
+\r
+  // Channel selection: 0 -> write all, 1..4 -> replace that channel only\r
+  var outCol = acc;\r
+  if (options.outputChannel != 0u) {\r
+    let src = loadPrevRGBA(fx, fy, fz);\r
+    let c = options.outputChannel;\r
+    outCol = src;\r
+    if (c == 1u) { outCol.x = acc.x; }\r
+    else if (c == 2u) { outCol.y = acc.y; }\r
+    else if (c == 3u) { outCol.z = acc.z; }\r
+    else if (c == 4u) { outCol.w = acc.w; }\r
+  }\r
+\r
+  storeRGBA(fx, fy, fz, outCol);\r
+}\r
+`;var A=`// Fullscreen quad (module-scope constant)\r
+const kQuad : array<vec2<f32>, 6> = array<vec2<f32>, 6>(\r
+  vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),\r
+  vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)\r
+);\r
+\r
+struct VsOut {\r
+  @builtin(position) pos : vec4<f32>,\r
+  @location(0)       uv  : vec2<f32>,\r
+};\r
+\r
+@vertex\r
+fn vs_main(@builtin(vertex_index) i : u32) -> VsOut {\r
+  let p = kQuad[i];\r
+\r
+  var o : VsOut;\r
+  o.pos = vec4<f32>(p, 0.0, 1.0);\r
+  o.uv  = p * 0.5 + vec2<f32>(0.5, 0.5);\r
+  return o;\r
+}\r
+\r
+@group(0) @binding(0) var samp : sampler;\r
+@group(0) @binding(1) var tex  : texture_2d_array<f32>;\r
+\r
+struct UBlit2D {\r
+  layer   : u32,\r
+  channel : u32,\r
+  _pad0   : u32,\r
+  _pad1   : u32,\r
+};\r
+@group(0) @binding(2) var<uniform> U : UBlit2D;\r
+\r
+@fragment\r
+fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\r
+  // For array textures the signature is (tex, sampler, uv, arrayIndex, level)\r
+  let c = textureSampleLevel(tex, samp, in.uv, i32(U.layer), 0.0);\r
+\r
+  // display a single channel directly\r
+  var v = c.r;\r
+  if (U.channel == 2u) { v = c.g; }\r
+  if (U.channel == 3u) { v = c.b; }\r
+  if (U.channel == 4u) { v = c.a; }\r
+\r
+  return vec4<f32>(clamp(v, 0.0, 1.0));\r
+}\r
+`;var C=`const kQuad : array<vec2<f32>, 6> = array<vec2<f32>, 6>(\r
+  vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),\r
+  vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)\r
+);\r
+\r
+struct VsOut {\r
+  @builtin(position) pos : vec4<f32>,\r
+  @location(0)       uv  : vec2<f32>,\r
+};\r
+\r
+@vertex\r
+fn vs_main(@builtin(vertex_index) i : u32) -> VsOut {\r
+  let p = kQuad[i];\r
+  var o : VsOut;\r
+  o.pos = vec4<f32>(p, 0.0, 1.0);\r
+  o.uv  = p * 0.5 + vec2<f32>(0.5, 0.5);\r
+  return o;\r
+}\r
+\r
+@group(0) @binding(0) var samp : sampler;\r
+@group(0) @binding(1) var tex3d : texture_3d<f32>;\r
+\r
+struct UBlit3D {\r
+  zNorm   : f32,  // normalized depth [0..1]\r
+  channel : u32,\r
+  _pad0   : u32,\r
+  _pad1   : u32,\r
+};\r
+@group(0) @binding(2) var<uniform> U : UBlit3D;\r
+\r
+@fragment\r
+fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\r
+  let coord = vec3<f32>(in.uv, clamp(U.zNorm, 0.0, 1.0));\r
+  let c = textureSample(tex3d, samp, coord);\r
+\r
+  // display a single channel directly\r
+  var v = c.r;\r
+  if (U.channel == 2u) { v = c.g; }\r
+  if (U.channel == 3u) { v = c.b; }\r
+  if (U.channel == 4u) { v = c.a; }\r
+\r
+  return vec4<f32>(clamp(v, 0.0, 1.0));\r
+}\r
+`;var V=4096,T=2048,K=8,B=class{constructor(i,e){this.device=i,this.queue=e,this.entryPoints=["computePerlin","computeBillow","computeAntiBillow","computeRidge","computeAntiRidge","computeRidgedMultifractal","computeRidgedMultifractal2","computeRidgedMultifractal3","computeRidgedMultifractal4","computeAntiRidgedMultifractal","computeAntiRidgedMultifractal2","computeAntiRidgedMultifractal3","computeAntiRidgedMultifractal4","computeFBM","computeFBM2","computeFBM3","computeCellularBM1","computeCellularBM2","computeCellularBM3","computeVoronoiBM1","computeVoronoiBM2","computeVoronoiBM3","computeCellular","computeWorley","computeAntiCellular","computeAntiWorley","computeLanczosBillow","computeLanczosAntiBillow","computeVoronoiTileNoise","computeVoronoiCircleNoise","computeVoronoiCircle2","computeVoronoiFlatShade","computeVoronoiRipple3D","computeVoronoiRipple3D2","computeVoronoiCircularRipple","computeFVoronoiRipple3D","computeFVoronoiCircularRipple","computeRippleNoise","computeFractalRipples","computeHexWorms","computePerlinWorms","computeWhiteNoise","computeBlueNoise","computeSimplex","computeCurl2D","computeCurlFBM2D","computeDomainWarpFBM1","computeDomainWarpFBM2","computeGaborAnisotropic","computeTerraceNoise","computeFoamNoise","computeTurbulence","computePerlin4D","computeWorley4D","computeAntiWorley4D","computeGauss5x5","computeNormal","computeNormal8","computeSphereNormal","computeNormalVolume","clearTexture"],this.shaderModule=i.createShaderModule({code:L}),this.bindGroupLayout=i.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:1,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:2,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:3,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:4,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"2d-array"}},{binding:5,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:6,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:7,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"3d"}},{binding:8,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"3d"}}]}),this.pipelineLayout=i.createPipelineLayout({bindGroupLayouts:[this.bindGroupLayout]}),this.pipelines=new Map,this._texPairs=new Map,this._tid=null,this._tag=new WeakMap,this._volumeCache=new Map,this.viewA=null,this.viewB=null,this.width=0,this.height=0,this.layers=1,this.isA=!0,this._initBuffers(),this._ensureDummies(),this._ctxMap=new WeakMap}_initBuffers(){this.optionsBuffer?.destroy(),this.paramsBuffer?.destroy(),this.permBuffer?.destroy(),this.nullPosBuffer?.destroy(),this.optionsBuffer=this.device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.paramsBuffer=this.device.createBuffer({size:88,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.permBuffer=this.device.createBuffer({size:512*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.nullPosBuffer=this.device.createBuffer({size:64,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.queue.writeBuffer(this.optionsBuffer,0,new ArrayBuffer(32)),this.queue.writeBuffer(this.paramsBuffer,0,new ArrayBuffer(88)),this.queue.writeBuffer(this.permBuffer,0,new Uint32Array(512))}_ensureDummies(){this._dummy2D_sampleTex||(this._dummy2D_sampleTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy2D_sampleView=this._dummy2D_sampleTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy2D_writeTex||(this._dummy2D_writeTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy2D_writeView=this._dummy2D_writeTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy3D_sampleTex||(this._dummy3D_sampleTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy3D_sampleView=this._dummy3D_sampleTex.createView({dimension:"3d"})),this._dummy3D_writeTex||(this._dummy3D_writeTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy3D_writeView=this._dummy3D_writeTex.createView({dimension:"3d"}))}resize(i){this.maxConfigs=i,this._initBuffers()}setPermTable(i){this.queue.writeBuffer(this.permBuffer,0,i)}setPosBuffer(i){this.posBuffer=i}setInputTextureView(i){try{if(((i?.texture?.usage??0)&GPUTextureUsage.TEXTURE_BINDING)===0){console.warn("setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.");return}}catch{}if(this.inputTextureView=i,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}setOutputTextureView(i){try{if(((i?.texture?.usage??0)&GPUTextureUsage.STORAGE_BINDING)===0){console.warn("setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.");return}}catch{}if(this.outputTextureView=i,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}buildPermTable(i=Date.now()){let t=new R(i).perm,a=new Uint32Array(512);for(let r=0;r<512;r++)a[r]=t[r];this.setPermTable(a)}setOptions(i={}){Array.isArray(i.noiseChoices)?this.noiseChoices=i.noiseChoices:this.noiseChoices||(this.noiseChoices=[0]);let{getGradient:e=0,outputChannel:t=1,baseRadius:a=0,heightScale:r=1,useCustomPos:o=0,ioFlags:s=0}=i;this.useCustomPos=o>>>0;let l=new ArrayBuffer(32),f=new DataView(l);f.setUint32(0,e,!0),f.setUint32(4,this.useCustomPos,!0),f.setUint32(8,t,!0),f.setUint32(12,s>>>0,!0),f.setFloat32(16,a,!0),f.setFloat32(20,r,!0),f.setFloat32(24,0,!0),f.setFloat32(28,0,!0),this.queue.writeBuffer(this.optionsBuffer,0,l);for(let u of this._texPairs.values())u.bindGroupDirty=!0}setNoiseParams(i={}){let{seed:e=Date.now()|0,zoom:t=1,freq:a=1,octaves:r=8,lacunarity:o=2,gain:s=.5,xShift:l=0,yShift:f=0,zShift:u=0,turbulence:p=0,seedAngle:m=0,exp1:g=1,exp2:d=0,threshold:x=.1,rippleFreq:y=10,time:c=0,warpAmp:z=.5,gaborRadius:b=4,terraceStep:S=8,toroidal:M=0,voroMode:U=0,edgeK:W=0}=i,fe=Math.max(t,1e-6),pe=Math.max(a,1e-6),Y=(M?1:0)>>>0,E=new ArrayBuffer(88),h=new DataView(E),v=0;h.setUint32(v+0,e>>>0,!0),h.setFloat32(v+4,t,!0),h.setFloat32(v+8,a,!0),h.setUint32(v+12,r>>>0,!0),h.setFloat32(v+16,o,!0),h.setFloat32(v+20,s,!0),h.setFloat32(v+24,l,!0),h.setFloat32(v+28,f,!0),h.setFloat32(v+32,u,!0),h.setUint32(v+36,p?1:0,!0),h.setFloat32(v+40,m,!0),h.setFloat32(v+44,g,!0),h.setFloat32(v+48,d,!0),h.setFloat32(v+52,x,!0),h.setFloat32(v+56,y,!0),h.setFloat32(v+60,c,!0),h.setFloat32(v+64,z,!0),h.setFloat32(v+68,b,!0),h.setFloat32(v+72,S,!0),h.setUint32(v+76,Y>>>0,!0),h.setUint32(v+80,U>>>0,!0),h.setFloat32(v+84,W,!0),this.queue.writeBuffer(this.paramsBuffer,0,E);for(let k of this._texPairs.values())k.bindGroupDirty=!0;for(let[k,P]of this._volumeCache)!P||!Array.isArray(P.chunks)||(P._bindGroupsDirty=!0)}_compute2DTiling(i,e){let t=Math.min(i,V),a=Math.min(e,V),r=Math.ceil(i/t),o=Math.ceil(e/a),s=r*o;return{tileW:t,tileH:a,tilesX:r,tilesY:o,layers:s}}_create2DPair(i,e){let t=this._compute2DTiling(i,e),a=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST,r=()=>this.device.createTexture({size:[t.tileW,t.tileH,t.layers],format:"rgba16float",usage:a}),o={dimension:"2d-array",arrayLayerCount:t.layers},s=r(),l=r(),f=s.createView(o),u=l.createView(o);s.label=`2D texA ${i}x${e}x${t.layers}`,l.label=`2D texB ${i}x${e}x${t.layers}`,f.label="2D:viewA",u.label="2D:viewB",this._tag.set(f,"2D:A"),this._tag.set(u,"2D:B");let p=this._texPairs.size;return this._texPairs.set(p,{texA:s,texB:l,viewA:f,viewB:u,fullWidth:i,fullHeight:e,tileWidth:t.tileW,tileHeight:t.tileH,tilesX:t.tilesX,tilesY:t.tilesY,layers:t.layers,isA:!0,tiles:null,bindGroupDirty:!0}),this._tid===null&&this.setActiveTexture(p),p}createShaderTextures(i,e){this._tid!==null&&this._texPairs.has(this._tid)&&this.destroyTexturePair(this._tid);let t=this._create2DPair(i,e);return this.setActiveTexture(t),t}destroyTexturePair(i){let e=this._texPairs.get(i);if(e){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(Array.isArray(e.tiles))for(let t of e.tiles){if(Array.isArray(t.frames))for(let a of t.frames)try{a.destroy()}catch{}if(t.posBuf&&t.posBuf!==this.nullPosBuffer)try{t.posBuf.destroy()}catch{}}this._texPairs.delete(i),this._tid===i&&(this._tid=null,this.inputTextureView=null,this.outputTextureView=null,this.viewA=null,this.viewB=null)}}destroyAllTexturePairs(){let i=Array.from(this._texPairs.keys());for(let e of i)this.destroyTexturePair(e)}setActiveTexture(i){if(!this._texPairs.has(i))throw new Error("setActiveTexture: invalid id");this._tid=i;let e=this._texPairs.get(i);this.viewA=e.viewA,this.viewB=e.viewB,this.width=e.tileWidth,this.height=e.tileHeight,this.layers=e.layers,this.inputTextureView=e.isA?e.viewA:e.viewB,this.outputTextureView=e.isA?e.viewB:e.viewA}_buildPosBuffer(i,e,t){if((this.useCustomPos|0)===0&&!t)return this.nullPosBuffer;let a=i*e,r=t instanceof Float32Array&&t.length===a*4?t:new Float32Array(a*4),o=this.device.createBuffer({size:r.byteLength,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});return this.queue.writeBuffer(o,0,r.buffer,r.byteOffset,r.byteLength),o}_writeFrameUniform(i,e){let t=new ArrayBuffer(64),a=new DataView(t);a.setUint32(0,e.fullWidth>>>0,!0),a.setUint32(4,e.fullHeight>>>0,!0),a.setUint32(8,e.tileWidth>>>0,!0),a.setUint32(12,e.tileHeight>>>0,!0),a.setInt32(16,e.originX|0,!0),a.setInt32(20,e.originY|0,!0),a.setInt32(24,e.originZ|0,!0),a.setUint32(28,e.fullDepth>>>0,!0),a.setUint32(32,e.tileDepth>>>0,!0),a.setInt32(36,e.layerIndex|0,!0),a.setUint32(40,e.layers>>>0,!0),a.setUint32(44,0,!0),a.setFloat32(48,e.originXf??0,!0),a.setFloat32(52,e.originYf??0,!0),a.setFloat32(56,0,!0),a.setFloat32(60,0,!0),this.queue.writeBuffer(i,0,t)}_create2DTileBindGroups(i,e={}){let t=this._texPairs.get(i);if(!t)throw new Error("_create2DTileBindGroups: invalid tid");if(Array.isArray(t.tiles)&&!t.bindGroupDirty&&!e.customData)return;let a=[];for(let r=0;r<t.tilesY;r++)for(let o=0;o<t.tilesX;o++){let s=r*t.tilesX+o,l=o*t.tileWidth,f=r*t.tileHeight,u=t.tiles&&t.tiles[s]||null,p;u&&u.posBuf&&!e.customData?p=u.posBuf:p=this._buildPosBuffer(t.tileWidth,t.tileHeight,e.customData);let m;u&&u.frames&&u.frames[0]?m=u.frames[0]:m=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let g=Number.isFinite(e.frameFullWidth)?e.frameFullWidth>>>0:t.fullWidth,d=Number.isFinite(e.frameFullHeight)?e.frameFullHeight>>>0:t.fullHeight,x=g/t.fullWidth,y=d/t.fullHeight,c=l*x,z=f*y;this._writeFrameUniform(m,{fullWidth:g,fullHeight:d,tileWidth:t.tileWidth,tileHeight:t.tileHeight,originX:l,originY:f,originZ:0,fullDepth:1,tileDepth:1,layerIndex:s,layers:t.layers,originXf:c,originYf:z});let b=u?.bgs?.[0]?.bgA??null,S=u?.bgs?.[0]?.bgB??null;if(!b||!S||t.bindGroupDirty)try{b=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:t.viewA},{binding:4,resource:t.viewB},{binding:5,resource:{buffer:p}},{binding:6,resource:{buffer:m}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]}),S=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:t.viewB},{binding:4,resource:t.viewA},{binding:5,resource:{buffer:p}},{binding:6,resource:{buffer:m}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]})}catch(M){throw new Error(`_create2DTileBindGroups: createBindGroup failed: ${M?.message||M}`)}a.push({layerIndex:s,originX:l,originY:f,frames:[m],posBuf:p,bgs:[{bgA:b,bgB:S}]})}t.tiles=a,t.bindGroupDirty=!1,this._tid===i&&(this._tiles=a)}async _runPipelines(i,e,t,a,r,o,s=1){let l=i,f=e,u=Array.isArray(o),p=0,m=this.device.createCommandEncoder(),g=m.beginComputePass();for(let d of this.noiseChoices){let x=typeof d=="number"?this.entryPoints[d]:d,y=this.pipelines.get(x);y||(y=this.device.createComputePipeline({layout:this.pipelineLayout,compute:{module:this.shaderModule,entryPoint:x}}),this.pipelines.set(x,y)),u&&this.setNoiseParams(o[p++]),g.setPipeline(y),g.setBindGroup(0,l),g.dispatchWorkgroups(Math.ceil(t/8),Math.ceil(a/8),s),[l,f]=[f,l]}return g.end(),this.queue.submit([m.finish()]),f}async computeToTexture(i,e,t={},a={}){let r=i|0,o=e|0;if(!(r>0&&o>0))throw new Error(`computeToTexture: invalid size ${i}x${e}`);this._tid==null&&this._create2DPair(r,o);let s=this._texPairs.get(this._tid);if(!s||s.fullWidth!==r||s.fullHeight!==o){let g=this._create2DPair(r,o);this.setActiveTexture(g),s=this._texPairs.get(g)}t&&!Array.isArray(t)&&this.setNoiseParams(t);let l=a||{};this.setOptions({...l,ioFlags:0,useCustomPos:l.useCustomPos??this.useCustomPos}),(!s.tiles||s.bindGroupDirty||l.customData)&&this._create2DTileBindGroups(this._tid,a);let f=s.isA,u=null,p=null;for(let g of s.tiles){let{bgs:d}=g,{bgA:x,bgB:y}=d[0],c=u?u===x?x:y:f?x:y,z=c===x?y:x;u=await this._runPipelines(c,z,s.tileWidth,s.tileHeight,1,t,1),p={bgA:x,bgB:y}}let m=u===p.bgB;return s.isA=m,this.isA=m,this.setActiveTexture(this._tid),this.getCurrentView()}getCurrentView(){let i=this._texPairs.get(this._tid);return i?i.isA?i.viewA:i.viewB:null}_compute3DTiling(i,e,t){let a=Math.min(i,T),r=Math.min(e,T),o=this.device?.limits?.maxBufferSize??256*1024*1024,s=a*r*K,l=Math.max(1,Math.floor(o*.8/Math.max(1,s))),f=Math.min(t,T,l),u=Math.ceil(i/a),p=Math.ceil(e/r),m=Math.ceil(t/f);return{tw:a,th:r,td:f,nx:u,ny:p,nz:m}}_create3DChunks(i,e,t){let a=this._compute3DTiling(i,e,t),r=[],o=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST;for(let s=0;s<a.nz;s++)for(let l=0;l<a.ny;l++)for(let f=0;f<a.nx;f++){let u=f*a.tw,p=l*a.th,m=s*a.td,g=this.device.createTexture({size:{width:a.tw,height:a.th,depthOrArrayLayers:a.td},dimension:"3d",format:"rgba16float",usage:o}),d=this.device.createTexture({size:{width:a.tw,height:a.th,depthOrArrayLayers:a.td},dimension:"3d",format:"rgba16float",usage:o}),x=g.createView({dimension:"3d"}),y=d.createView({dimension:"3d"});g.label=`3D texA ${a.tw}x${a.th}x${a.td} @ (${f},${l},${s})`,d.label=`3D texB ${a.tw}x${a.th}x${a.td} @ (${f},${l},${s})`,x.label=`3D:viewA[${f},${l},${s}]`,y.label=`3D:viewB[${f},${l},${s}]`,this._tag.set(x,`3D:A[${f},${l},${s}]`),this._tag.set(y,`3D:B[${f},${l},${s}]`),r.push({texA:g,texB:d,viewA:x,viewB:y,ox:u,oy:p,oz:m,w:a.tw,h:a.th,d:a.td,isA:!0,fb:null,posBuf:null,bgA:null,bgB:null})}return{chunks:r,tile:{w:a.tw,h:a.th,d:a.td},full:{w:i,h:e,d:t},grid:{nx:a.nx,ny:a.ny,nz:a.nz}}}_destroy3DSet(i){if(i)for(let e of i.chunks){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(e.viewA=null,e.viewB=null,e.bgA=null,e.bgB=null,e.fb){try{e.fb.destroy()}catch{}e.fb=null}if(e.posBuf&&e.posBuf!==this.nullPosBuffer){try{e.posBuf.destroy()}catch{}e.posBuf=null}}}destroyAllVolumes(){for(let[i,e]of this._volumeCache)this._destroy3DSet(e),this._volumeCache.delete(i)}get3DView(i){let e=this._volumeCache.get(String(i));if(!e)return null;let t=e.chunks.map(a=>a.isA?a.viewA:a.viewB);return t.length===1?t[0]:{views:t,meta:{full:e.full,tile:e.tile,grid:e.grid}}}destroyVolume(i){let e=String(i),t=this._volumeCache.get(e);t&&(this._destroy3DSet(t),this._volumeCache.delete(e))}_getOrCreate3DVolume(i,e,t,a=null,r=null){let o=a?String(a):`${i}x${e}x${t}`,s=this._volumeCache.get(o);if(s)return s;s=this._create3DChunks(i,e,t);for(let l of s.chunks){l.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=r&&Number.isFinite(r?.w)?r.w>>>0:s.full.w,u=r&&Number.isFinite(r?.h)?r.h>>>0:s.full.h,p=r&&Number.isFinite(r?.d)?r.d>>>0:s.full.d,m=f/s.full.w,g=u/s.full.h,d=l.ox*m,x=l.oy*g;this._writeFrameUniform(l.fb,{fullWidth:f,fullHeight:u,tileWidth:l.w,tileHeight:l.h,originX:l.ox,originY:l.oy,originZ:l.oz,fullDepth:p,tileDepth:l.d,layerIndex:0,layers:1,originXf:d,originYf:x});let y=this._buildPosBuffer(l.w,l.h,null);l.posBuf=y;try{l.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:y}},{binding:6,resource:{buffer:l.fb}},{binding:7,resource:l.viewA},{binding:8,resource:l.viewB}]}),l.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:l.posBuf}},{binding:6,resource:{buffer:l.fb}},{binding:7,resource:l.viewB},{binding:8,resource:l.viewA}]})}catch(c){throw new Error(`_getOrCreate3DVolume: createBindGroup failed: ${c?.message||c}`)}}return s._bindGroupsDirty=!1,this._volumeCache.set(o,s),s}_recreate3DBindGroups(i,e=null){if(!i||!Array.isArray(i.chunks))return;let t=e&&Number.isFinite(e.w)?e.w>>>0:i.full.w,a=e&&Number.isFinite(e.h)?e.h>>>0:i.full.h,r=e&&Number.isFinite(e.d)?e.d>>>0:i.full.d;for(let o of i.chunks){if(!o.fb){o.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=t/i.full.w,u=a/i.full.h,p=o.ox*f,m=o.oy*u;this._writeFrameUniform(o.fb,{fullWidth:t,fullHeight:a,tileWidth:o.w,tileHeight:o.h,originX:o.ox,originY:o.oy,originZ:o.oz,fullDepth:r,tileDepth:o.d,layerIndex:0,layers:1,originXf:p,originYf:m})}o.posBuf||(o.posBuf=this._buildPosBuffer(o.w,o.h,null));let s=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:o.posBuf}},{binding:6,resource:{buffer:o.fb}},{binding:7,resource:o.viewA},{binding:8,resource:o.viewB}],l=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:o.posBuf}},{binding:6,resource:{buffer:o.fb}},{binding:7,resource:o.viewB},{binding:8,resource:o.viewA}];try{o.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:s}),o.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:l})}catch(f){throw new Error(`_recreate3DBindGroups: failed to create bind groups: ${f?.message||f}`)}}i._bindGroupsDirty=!1}async computeToTexture3D(i,e,t,a={},r={}){let o=i|0,s=e|0,l=t|0;if(!(o>0&&s>0&&l>0))throw new Error(`computeToTexture3D: invalid size ${i}x${e}x${t}`);a&&!Array.isArray(a)&&this.setNoiseParams(a);let f=r||{};this.setOptions({...f,ioFlags:3,useCustomPos:f.useCustomPos??this.useCustomPos});let u=r&&(Number.isFinite(r.frameFullWidth)||Number.isFinite(r.frameFullHeight)||Number.isFinite(r.frameFullDepth))?{w:Number.isFinite(r.frameFullWidth)?r.frameFullWidth>>>0:o,h:Number.isFinite(r.frameFullHeight)?r.frameFullHeight>>>0:s,d:Number.isFinite(r.frameFullDepth)?r.frameFullDepth>>>0:l}:null,p=this._getOrCreate3DVolume(o,s,l,r.id,u);if(!p)throw new Error("computeToTexture3D: failed to create or retrieve volume");(p._bindGroupsDirty||!p.chunks[0].bgA||!p.chunks[0].bgB)&&this._recreate3DBindGroups(p,u);let m=null;for(let d of p.chunks){let x=d.isA?d.bgA:d.bgB,y=d.isA?d.bgB:d.bgA;if(!x||!y)throw new Error("computeToTexture3D: missing bind groups (volume not initialized correctly)");m=await this._runPipelines(x,y,d.w,d.h,d.d,a,d.d),d.isA=m===d.bgB}let g=p.chunks.map(d=>d.isA?d.viewA:d.viewB);return g.length===1?g[0]:{views:g,meta:{full:p.full,tile:p.tile,grid:p.grid}}}configureCanvas(i){let e=navigator.gpu.getPreferredCanvasFormat&&navigator.gpu.getPreferredCanvasFormat()||"bgra8unorm",t=i.getContext("webgpu");t.configure({device:this.device,format:e,alphaMode:"opaque",size:[i.width,i.height]}),this._ctxMap.set(i,{ctx:t,size:[i.width,i.height]})}initBlitRender(){this.sampler||(this.sampler=this.device.createSampler({magFilter:"linear",minFilter:"linear",addressModeU:"clamp-to-edge",addressModeV:"clamp-to-edge"})),this.bgl2D||(this.bgl2D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline2D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl2D]}),vertex:{module:this.device.createShaderModule({code:A}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:A}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit2DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})),this.bgl3D||(this.bgl3D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"3d"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline3D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl3D]}),vertex:{module:this.device.createShaderModule({code:C}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:C}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit3DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}))}_renderCommonCanvasSetup(i,e){let t="bgra8unorm",a=this._ctxMap.get(i);if(a){let s=i.width|0,l=i.height|0;(a.size[0]!==s||a.size[1]!==l)&&(a.size=[s,l],a.ctx.configure({device:this.device,format:t,alphaMode:"opaque",size:a.size}))}else{let s=i.getContext("webgpu"),l=[i.width|0,i.height|0];s.configure({device:this.device,format:t,alphaMode:"opaque",size:l}),a={ctx:s,size:l},this._ctxMap.set(i,a)}let r=this.device.createCommandEncoder(),o=r.beginRenderPass({colorAttachments:[{view:a.ctx.getCurrentTexture().createView(),loadOp:e?"clear":"load",clearValue:{r:0,g:0,b:0,a:1},storeOp:"store"}]});return{enc:r,pass:o,ctxEntry:a}}renderTextureToCanvas(i,e,t={}){let{layer:a=0,channel:r=0,preserveCanvasSize:o=!0,clear:s=!0}=t;if(this.initBlitRender(),!o)try{let m=i.texture;m&&typeof m.width=="number"&&typeof m.height=="number"&&(e.width=m.width,e.height=m.height)}catch{}let l=new Uint32Array([a>>>0,r>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,l.buffer,l.byteOffset,l.byteLength);let f=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:i},{binding:2,resource:{buffer:this.blit2DUbo}}]}),{enc:u,pass:p}=this._renderCommonCanvasSetup(e,s);p.setPipeline(this.pipeline2D),p.setBindGroup(0,f),p.draw(6,1,0,0),p.end(),this.queue.submit([u.finish()])}renderTexture3DSliceToCanvas(i,e,t={}){let{depth:a,slice:r=0,zNorm:o=null,channel:s=0,chunk:l=0,preserveCanvasSize:f=!0,clear:u=!0}=t;this.initBlitRender();let p,m;if(i&&i.views&&Array.isArray(i.views)?(p=i.views[Math.max(0,Math.min(l|0,i.views.length-1))],m=i.meta?.tile?.d??a):(p=i,m=a),!p||!m)throw new Error("renderTexture3DSliceToCanvas: need a 3D view and its depth");if(!f)try{let b=p.texture;b&&typeof b.width=="number"&&typeof b.height=="number"&&(e.width=b.width,e.height=b.height)}catch{}let g=o??(Math.min(Math.max(r,0),m-1)+.5)/m;g=Math.min(Math.max(g,0),1);let d=new ArrayBuffer(16),x=new DataView(d);x.setFloat32(0,g,!0),x.setUint32(4,s>>>0,!0),x.setUint32(8,0,!0),x.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,d);let y=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:p},{binding:2,resource:{buffer:this.blit3DUbo}}]}),{enc:c,pass:z}=this._renderCommonCanvasSetup(e,u);z.setPipeline(this.pipeline3D),z.setBindGroup(0,y),z.draw(6,1,0,0),z.end(),this.queue.submit([c.finish()])}},R=class{constructor(i=Date.now()){i<1e7&&(i*=1e7),this.seedN=i,this.seedK=i,this.perm=new Uint8Array(512),this.seed(i)}seed(i){let e=this.xorshift(i);for(let t=0;t<256;t++)this.perm[t]=t;for(let t=255;t>0;t--){let a=Math.floor(e()*(t+1));[this.perm[t],this.perm[a]]=[this.perm[a],this.perm[t]]}for(let t=0;t<256;t++)this.perm[t+256]=this.perm[t]}setSeed(i){this.seedN=i,this.seed(i),this.resetSeed()}random(i,e,t){let a;return typeof t=="number"?a=this.perm[(i&255)+this.perm[(e&255)+this.perm[t&255]]]&255:a=this.perm[(i&255)+this.perm[e&255]]&255,this.perm[a]/255*2-1}seededRandom(){this.seedK+=Math.E;let i=1e9*Math.sin(this.seedK);return i-Math.floor(i)}resetSeed(){this.seedK=this.seedN}xorshift(i){let e=i;return function(){return e^=e<<13,e^=e>>17,e^=e<<5,(e<0?1+~e:e)/4294967295}}dot(i,e=0,t=0,a=0){return i[0]*e+i[1]*t+i[2]*a}};document.body.insertAdjacentHTML("afterbegin",G);var N={0:"Perlin",1:"Billow",2:"AntiBillow",3:"Ridge",4:"AntiRidge",5:"RidgedMultifractal",6:"RidgedMultifractal2",7:"RidgedMultifractal3",8:"RidgedMultifractal4",9:"AntiRidgedMultifractal",10:"AntiRidgedMultifractal2",11:"AntiRidgedMultifractal3",12:"AntiRidgedMultifractal4",13:"FBM",14:"FBM2",15:"FBM3",16:"CellularBM1",17:"CellularBM2",18:"CellularBM3",19:"VoronoiBM1",20:"VoronoiBM2",21:"VoronoiBM3",22:"CellularPattern",23:"WorleyPattern",24:"AntiCellularPattern",25:"AntiWorleyPattern",26:"LanczosBillow",27:"LanczosAntiBillow",28:"VoronoiTileNoise",29:"VoronoiCircleNoise",30:"VoronoiCircle2",31:"VoronoiFlatShade",32:"VoronoiRipple3D",33:"VoronoiRipple3D2",34:"VoronoiCircularRipple",35:"FVoronoiRipple3D",36:"FVoronoiCircularRipple",37:"RippleNoise",38:"FractalRipples",39:"HexWorms",40:"PerlinWorms",41:"White Noise",42:"Blue Noise",43:"Simplex",44:"Curl2D",45:"CurlFBM2D",46:"DomainWarpFBM1",47:"DomainWarpFBM2",48:"GaborAnisotropic",49:"TerraceNoise",50:"FoamNoise",51:"Turbulence",52:"Perlin4D",53:"Worley4D",54:"AntiWorley4D"},j={3:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},4:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},5:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},6:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},7:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},8:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},13:{clamp:{gain:[.2,.8],octaves:[2,10]}},14:{clamp:{gain:[.2,.8],octaves:[2,10]}},15:{clamp:{gain:[.2,.8],octaves:[2,10]}},19:{clamp:{threshold:[0,1]}},20:{clamp:{threshold:[0,1]}},21:{clamp:{threshold:[0,1]}},22:{clamp:{threshold:[0,1]}},23:{clamp:{threshold:[0,1]}},24:{clamp:{threshold:[0,1]}},25:{clamp:{threshold:[0,1]}},44:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},45:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},46:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},47:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},48:{clamp:{gaborRadius:[.5,6]}},51:{force:{turbulence:1},clamp:{gain:[.5,.95]}}},$=["clearTexture","computePerlin4D","computeWorley4D"],w=128,J="toroidalDemo",D=new Map;function _(n,i,e,t){if(!Object.prototype.hasOwnProperty.call(n,i))return;let a=Number(n[i]);if(!Number.isFinite(a))return;let r=Number(e),o=Number(t);n[i]=Math.min(Math.max(a,r),o)}function Q(n,i){let e={...i},t=j[n];if(t&&t.clamp){let r=t.clamp;r.freq&&_(e,"freq",r.freq[0],r.freq[1]),r.gain&&_(e,"gain",r.gain[0],r.gain[1]),r.octaves&&_(e,"octaves",r.octaves[0],r.octaves[1]),r.threshold&&_(e,"threshold",r.threshold[0],r.threshold[1]),r.warpAmp&&_(e,"warpAmp",r.warpAmp[0],r.warpAmp[1]),r.gaborRadius&&_(e,"gaborRadius",r.gaborRadius[0],r.gaborRadius[1])}if(t&&t.force)for(let[r,o]of Object.entries(t.force))e[r]=o;let a=D.get(n);if(a)for(let[r,o]of Object.entries(a))typeof o=="number"&&Number.isFinite(o)&&(e[r]=o);return e}function F(){let n=(e,t)=>{let a=document.getElementById(e);if(!a)return t;let r=Number(a.value);return Number.isFinite(r)?r:t};return{seed:Math.max(1,Math.floor(n("noise-seed",1234567890))),zoom:n("noise-zoom",1),freq:n("noise-freq",1),octaves:Math.max(1,Math.floor(n("noise-octaves",8))),lacunarity:n("noise-lacunarity",2),gain:n("noise-gain",.5),xShift:n("noise-xShift",0),yShift:n("noise-yShift",0),zShift:n("noise-zShift",0),threshold:n("noise-threshold",.1),turbulence:0,seedAngle:0,exp1:1,exp2:0,rippleFreq:10,time:0,warpAmp:.5,gaborRadius:4,terraceStep:8,toroidal:0,voroMode:0,edgeK:0}}function ee(){let n=document.querySelectorAll('input[type="checkbox"][name="noise-type"]'),i=[];return n.forEach(e=>{if(e.checked){let t=Number(e.dataset.bit);Number.isInteger(t)&&i.push(t)}}),i}function ie(){let n=document.getElementById("noise-canvas"),i=document.getElementById("view-stack");if(!n&&i&&(n=document.createElement("canvas"),n.id="noise-canvas",n.width=800,n.height=800,i.appendChild(n)),!n)throw new Error("Missing main preview canvas (#noise-canvas)");let e=document.getElementById("mosaic");if(!e)throw new Error("Missing #mosaic container");let t=[],a=e.querySelectorAll("canvas");if(a.length)a.forEach(r=>t.push(r));else for(let r=0;r<9;r++){let o=document.createElement("canvas");o.width=256,o.height=256,e.appendChild(o),t.push(o)}return{mainCanvas:n,mosaicCanvases:t}}function te(n){return n.length?n.map(e=>N[e]||String(e)).join(", "):"Perlin"}function ae(){let n=document.getElementById("override-mode");if(!n)return;n.innerHTML="";let i=Object.keys(N).map(e=>Number(e)).filter(e=>Number.isInteger(e)&&e>=0&&e<=54).sort((e,t)=>e-t);for(let e of i){let t=document.createElement("option");t.value=String(e),t.textContent=`${e}: ${N[e]}`,n.appendChild(t)}i.length&&(n.value=String(i[0]))}function q(n){let i=D.get(n)||{},e=(t,a)=>{let r=document.getElementById(t);if(!r)return;let o=i[a];r.value=typeof o=="number"&&Number.isFinite(o)?String(o):""};e("ov-zoom","zoom"),e("ov-freq","freq"),e("ov-gain","gain"),e("ov-octaves","octaves"),e("ov-warp","warpAmp"),e("ov-threshold","threshold"),e("ov-gabor","gaborRadius"),e("ov-xShift","xShift"),e("ov-yShift","yShift"),e("ov-zShift","zShift")}function re(){let n=document.getElementById("override-mode");if(!n)return;let i=Number(n.value);if(!Number.isInteger(i))return;let e=d=>{let x=document.getElementById(d);if(!x)return null;let y=String(x.value).trim();if(!y)return null;let c=Number(y);return Number.isFinite(c)?c:null},t={},a=e("ov-zoom"),r=e("ov-freq"),o=e("ov-gain"),s=e("ov-octaves"),l=e("ov-warp"),f=e("ov-threshold"),u=e("ov-gabor"),p=e("ov-xShift"),m=e("ov-yShift"),g=e("ov-zShift");a!==null&&(t.zoom=a),r!==null&&(t.freq=r),o!==null&&(t.gain=o),s!==null&&(t.octaves=s),l!==null&&(t.warpAmp=l),f!==null&&(t.threshold=f),u!==null&&(t.gaborRadius=u),p!==null&&(t.xShift=p),m!==null&&(t.yShift=m),g!==null&&(t.zShift=g),Object.keys(t).length?D.set(i,t):D.delete(i)}function oe(){let n=document.getElementById("z-slice"),i=document.getElementById("z-slice-num"),e=0;return n?e=Number(n.value):i&&(e=Number(i.value)),Number.isFinite(e)||(e=0),e=Math.min(Math.max(Math.round(e),0),w-1),n&&String(n.value)!==String(e)&&(n.value=String(e)),i&&String(i.value)!==String(e)&&(i.value=String(e)),e}async function le(n,i){let e=Number(document.getElementById("res-width")?.value)||800,t=Number(document.getElementById("res-height")?.value)||800;i.width=e,i.height=t;let a=document.getElementById("preview-meta"),r=document.getElementById("preview-stats"),o=F();n.buildPermTable(o.seed|0);let s=ee(),l=s.length?s:[0],f={getGradient:0,outputChannel:1,baseRadius:0,heightScale:1,useCustomPos:0},u=performance.now();await n.computeToTexture(e,t,o,{...f,noiseChoices:["clearTexture"],frameFullWidth:e,frameFullHeight:t});for(let x of l){let y=Q(x,o);await n.computeToTexture(e,t,y,{...f,noiseChoices:[x],frameFullWidth:e,frameFullHeight:t})}let p=performance.now(),m=n.getCurrentView(),g=performance.now();m&&n.renderTextureToCanvas(m,i,{layer:0,channel:0,preserveCanvasSize:!0,clear:!0});let d=performance.now();if(a&&(a.textContent=`Height field preview \xB7 ${e}\xD7${t} \xB7 modes: ${te(l)}`),r){let x=(p-u).toFixed(1),y=(d-g).toFixed(1);r.textContent=`GPU compute ${x} ms \xB7 blit ${y} ms`}return{resW:e,resH:t,noiseBits:l}}function I(n,i,e){if(!i)return;let t=w,r=(oe()+.5)/t,o=e.length||9;for(let s=0;s<o;s++){let l=e[s];l.width=w,l.height=w,n.renderTexture3DSliceToCanvas(i,l,{depth:t,zNorm:r,channel:0,chunk:0,preserveCanvasSize:!0,clear:!0})}}async function se(n,i,e){let a={...F(),toroidal:1},r=performance.now(),o=await n.computeToTexture3D(w,w,w,a,{noiseChoices:$,outputChannel:1,id:J}),s=performance.now();e.lastToroidalVolumeView=o,e.lastToroidalComputeMs=s-r,I(n,o,i)}async function ne(){let n=document.getElementById("preview-stats");if(!navigator.gpu){console.error("WebGPU not available in this browser."),n&&(n.textContent="WebGPU not available in this browser.");return}let i=await navigator.gpu.requestAdapter();if(!i){console.error("Failed to get GPU adapter."),n&&(n.textContent="Failed to get GPU adapter.");return}let e=await i.requestDevice(),t=new B(e,e.queue),{mainCanvas:a,mosaicCanvases:r}=ie();t.configureCanvas(a),r.forEach(c=>t.configureCanvas(c)),ae();let o=document.getElementById("override-mode");if(o){let c=Number(o.value);Number.isInteger(c)&&q(c)}["ov-zoom","ov-freq","ov-gain","ov-octaves","ov-warp","ov-threshold","ov-gabor","ov-xShift","ov-yShift","ov-zShift"].forEach(c=>{let z=document.getElementById(c);z&&z.addEventListener("change",()=>{re()})}),o&&o.addEventListener("change",()=>{let c=Number(o.value);Number.isInteger(c)&&q(c)});let l=document.getElementById("ov-clear");l&&l.addEventListener("click",()=>{let c=document.getElementById("override-mode");if(!c)return;let z=Number(c.value);Number.isInteger(z)&&(D.delete(z),q(z))});let f=document.getElementById("noise-overrides-btn");f&&f.addEventListener("click",()=>{let c=document.getElementById("overrides-group");c&&c.scrollIntoView({behavior:"smooth",block:"start"})});let u={lastToroidalVolumeView:null,lastToroidalComputeMs:0},p=document.getElementById("render-btn"),m=document.getElementById("apply-res"),g=async()=>{try{await le(t,a),await se(t,r,u)}catch(c){console.error(c),n&&(n.textContent=String(c))}};p&&p.addEventListener("click",()=>{g().catch(c=>console.error(c))}),m&&m.addEventListener("click",()=>{g().catch(c=>console.error(c))});let d=document.getElementById("z-slice"),x=document.getElementById("z-slice-num"),y=()=>{u.lastToroidalVolumeView&&I(t,u.lastToroidalVolumeView,r)};d&&d.addEventListener("input",()=>{let c=Number(d.value);x&&(x.value=String(c)),y()}),x&&x.addEventListener("change",()=>{let c=Number(x.value);Number.isFinite(c)||(c=0),c=Math.min(Math.max(Math.round(c),0),w-1),x.value=String(c),d&&(d.value=String(c)),y()}),g().catch(c=>console.error(c))}document.addEventListener("DOMContentLoaded",()=>{ne().catch(n=>console.error(n))});})();
