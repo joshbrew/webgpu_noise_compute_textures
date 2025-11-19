@@ -135,7 +135,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 
 ### Test UI
 
-- `noiseUI.js`  
+- `noiseComputeTest.js`  
 
   - Imports the component HTML and injects it into the page
   - Creates a `NoiseComputeBuilder` instance
@@ -168,7 +168,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 The UI is wired like:
 
 ```js
-// noiseUI.js
+// noiseComputeTEst.js
 import html from './noiseComponent.html';
 import { NoiseComputeBuilder } from './noiseComputeBuilder.js';
 
@@ -544,7 +544,7 @@ Overrides are stored in `MODE_OVERRIDES[bit]`. When present they apply only to t
 
 ## UI behavior
 
-The front end wiring lives in `noiseUI.js`.
+The front end wiring lives in `noiseComputeTEst.js`.
 
 On load it:
 
@@ -701,5 +701,6 @@ builder.destroyAllVolumes();
 ```
 
 You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
+
 
 
