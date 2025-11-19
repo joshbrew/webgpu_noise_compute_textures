@@ -2057,75 +2057,67 @@ fn generateVoronoi(pos: vec3<f32>, params: NoiseParams) -> f32 {
 }
 
 
-// FBM using the 3D Voronoi edge-metric (F2 - F1 with threshold gate)
-fn fbmVoronoi3D(pos : vec3<f32>, params : NoiseParams) -> f32 {
+// Sample a Voronoi "cell value" similar to the CPU VoronoiNoise3D.noise()
+fn voronoiCellValue3D(p: vec3<f32>) -> f32 {
+    let m = voro3D_metrics(p);
+    return m.cellVal;
+}
+
+// Voronoi FBM that mirrors the CPU VoronoiBrownianMotion.fbm pattern
+fn fbmVoronoi3D(pos: vec3<f32>, params: NoiseParams) -> f32 {
     let zoom = max(params.zoom, 1e-6);
-    var x = (pos.x + params.xShift) / zoom;
-    var y = (pos.y + params.yShift) / zoom;
-    var z = (pos.z + params.zShift) / zoom;
 
-    var sum     : f32 = 0.0;
-    var amp     : f32 = 1.0;
-    var freqLoc : f32 = params.freq / 1.0; // freq applied multiplicatively below
+    // base coordinate: divide by zoom only (CPU style)
+    var x = pos.x / zoom;
+    var y = pos.y / zoom;
+    var z = pos.z / zoom;
 
-    var angle   : f32 = params.seedAngle;
+    var sum: f32 = 0.0;
+    var amp: f32 = 1.0;
+    var freqLoc: f32 = params.freq;
+
+    var angle: f32 = params.seedAngle; // host should set this to seedN * 2π
     let angleInc: f32 = 2.0 * PI / f32(max(params.octaves, 1u));
 
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {
-        // sample metrics at this octave
+    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
         let samplePos = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);
-        let m = voro3D_metrics(samplePos);
+        let v = voronoiCellValue3D(samplePos);
 
-        // d1/d2 are squared distances in the metrics struct
-        let f1 = sqrt(max(m.f1Sq, 0.0));
-        let f2 = sqrt(max(m.f2Sq, 0.0));
+        sum = sum + amp * v;
 
-        // edge gap (same semantics as voronoiTileRaw)
-        let edgeDist = f2 - f1;
-
-        // threshold gate: zero out when too narrow
-        let gate = select(1.0, 0.0, edgeDist < params.threshold);
-
-        // accumulate
-        sum = sum + amp * (edgeDist * gate);
-
-        // octave updates
         freqLoc = freqLoc * params.lacunarity;
-        amp     = amp * params.gain;
+        amp = amp * params.gain;
 
-        // per-octave "spiral" / drift using angle; keeps the same style as your original
         angle = angle + angleInc;
-        let offX = params.xShift * cos(angle);
-        let offY = params.yShift * cos(angle);
-        let offZ = params.zShift * cos(angle);
+        let offsetX = params.xShift * cos(angle);
+        let offsetY = params.yShift * sin(angle);
+        let offsetZ = params.zShift * sin(angle);
 
-        x = x + offX;
-        y = y + offY;
-        z = z + offZ;
+        x = x + offsetX;
+        y = y + offsetY;
+        z = z + offsetZ;
     }
 
-    // preserve original final offset used previously (sum - 1.0)
     return sum - 1.0;
 }
 
-/* ---- Three Voronoi FBM flavours (wrappers) ------------------------------ */
+/* ---- Voronoi Brownian-Motion flavours ---------------------------------- */
 
-// BM1: feed fbm output (scalar) back as coordinate offset (uniform vector)
-fn generateVoronoiBM1(p : vec3<f32>, par : NoiseParams) -> f32 {
+// BM1: CPU VoronoiBrownianMotion.generateNoise
+fn generateVoronoiBM1(p: vec3<f32>, par: NoiseParams) -> f32 {
     let f1 = fbmVoronoi3D(p, par);
-    // pack scalar into a vec3<f32> (WGSL allows vec3<f32>(s) to broadcast)
     return fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);
 }
 
-// BM2: nested two-stage warping
-fn generateVoronoiBM2(p : vec3<f32>, par : NoiseParams) -> f32 {
+// BM2: CPU VoronoiBrownianMotion2.generateNoise
+fn generateVoronoiBM2(p: vec3<f32>, par: NoiseParams) -> f32 {
     let f1 = fbmVoronoi3D(p, par);
     let f2 = fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);
     return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);
 }
 
-// BM3: chained warps
-fn generateVoronoiBM3(p : vec3<f32>, par : NoiseParams) -> f32 {
+// BM3: CPU VoronoiBrownianMotion3.generateNoise
+fn generateVoronoiBM3(p: vec3<f32>, par: NoiseParams) -> f32 {
     let f1 = fbmVoronoi3D(p, par);
     let f2 = fbmVoronoi3D(p + vec3<f32>(f1 * par.zoom), par);
     return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);
