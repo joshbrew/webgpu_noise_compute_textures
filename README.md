@@ -1,5 +1,5 @@
 
-# WebGPU Noise Compute Shaders. 2D, 3D, and 4D toroidal.
+# WebGPU Noise Playground
 
 GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
 
@@ -17,9 +17,6 @@ The helper aims to:
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you don't have it. You can also locally host the index.html with prebuilt files.
 
-<img width="2921" height="1781" alt="image" src="https://github.com/user-attachments/assets/37ec91c4-160d-4bad-95ec-842c8aefc9e4" />
-
-<img width="2222" height="1685" alt="image" src="https://github.com/user-attachments/assets/4fe0773d-010b-4b7c-8708-c11262e386de" />
 
 ---
 
@@ -697,7 +694,4 @@ builder.destroyAllVolumes();
 ```
 
 You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
-
-
-
 

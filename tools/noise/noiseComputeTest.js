@@ -4,7 +4,7 @@ import { NoiseComputeBuilder } from './noiseCompute.js';
 
 document.body.insertAdjacentHTML('afterbegin', html);
 
-const NOISE_LABELS_BY_BIT = { //you can use the names or the numbers (based on the index in the label array in noiseCompute.js)
+const NOISE_LABELS_BY_BIT = {
   0: 'Perlin',
   1: 'Billow',
   2: 'AntiBillow',
@@ -565,11 +565,25 @@ async function initNoiseDemo() {
     'ov-xShift', 'ov-yShift', 'ov-zShift'
   ];
 
+  let mainRenderPending = false;
+  const scheduleMainRender = () => {
+    if (mainRenderPending) return;
+    mainRenderPending = true;
+    requestAnimationFrame(() => {
+      mainRenderPending = false;
+      renderMainNoise(builder, mainCanvas).catch(err => {
+        console.error(err);
+        if (statsEl) statsEl.textContent = String(err);
+      });
+    });
+  };
+
   overrideInputs.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', () => {
       updateOverridesFromFields();
+      scheduleMainRender();
     });
   });
 
@@ -590,6 +604,7 @@ async function initNoiseDemo() {
       if (!Number.isInteger(bit)) return;
       MODE_OVERRIDES.delete(bit);
       populateOverrideFieldsForBit(bit);
+      scheduleMainRender();
     });
   }
 
@@ -610,25 +625,20 @@ async function initNoiseDemo() {
   const renderBtn = document.getElementById('render-btn');
   const applyResBtn = document.getElementById('apply-res');
 
-  const doRender = async () => {
-    try {
-      await renderMainNoise(builder, mainCanvas);
-      await renderToroidalDemo(builder, mosaicCanvases, state);
-    } catch (err) {
-      console.error(err);
-      if (statsEl) statsEl.textContent = String(err);
-    }
-  };
-
   if (renderBtn) {
     renderBtn.addEventListener('click', () => {
-      doRender().catch(err => console.error(err));
+      renderMainNoise(builder, mainCanvas)
+        .then(() => renderToroidalDemo(builder, mosaicCanvases, state))
+        .catch(err => {
+          console.error(err);
+          if (statsEl) statsEl.textContent = String(err);
+        });
     });
   }
 
   if (applyResBtn) {
     applyResBtn.addEventListener('click', () => {
-      doRender().catch(err => console.error(err));
+      scheduleMainRender();
     });
   }
 
@@ -659,7 +669,33 @@ async function initNoiseDemo() {
     });
   }
 
-  doRender().catch(err => console.error(err));
+  const GLOBAL_PARAM_IDS = [
+    'noise-seed',
+    'noise-zoom',
+    'noise-freq',
+    'noise-octaves',
+    'noise-lacunarity',
+    'noise-gain',
+    'noise-xShift',
+    'noise-yShift',
+    'noise-zShift',
+    'noise-threshold'
+  ];
+
+  GLOBAL_PARAM_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', scheduleMainRender);
+    el.addEventListener('change', scheduleMainRender);
+  });
+
+  const noiseBoxes = document.querySelectorAll('input[type="checkbox"][name="noise-type"]');
+  noiseBoxes.forEach(box => {
+    box.addEventListener('change', scheduleMainRender);
+  });
+
+  await renderMainNoise(builder, mainCanvas);
+  await renderToroidalDemo(builder, mosaicCanvases, state);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
