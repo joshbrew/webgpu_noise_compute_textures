@@ -3,6 +3,8 @@
 
 ### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
 
+#### See also: [https://codepen.io/joshbrew/pen/RNWQvXB](https://codepen.io/joshbrew/pen/RNWQvXB) Toroidal noise explainer.
+
 GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
 
 This repo has two main parts:
@@ -703,6 +705,7 @@ builder.destroyAllVolumes();
 ```
 
 You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
+
 
 
 
