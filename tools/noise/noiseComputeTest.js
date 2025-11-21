@@ -1,154 +1,154 @@
 // noiseUI.js
-import html from './noiseComponent.html';
-import { NoiseComputeBuilder } from './noiseCompute.js';
+import html from "./noiseComponent.html";
+import { NoiseComputeBuilder } from "./noiseCompute.js";
 
-document.body.insertAdjacentHTML('afterbegin', html);
+document.body.insertAdjacentHTML("afterbegin", html);
 
 const NOISE_LABELS_BY_BIT = {
-  0: 'Perlin',
-  1: 'Billow',
-  2: 'AntiBillow',
-  3: 'Ridge',
-  4: 'AntiRidge',
-  5: 'RidgedMultifractal',
-  6: 'RidgedMultifractal2',
-  7: 'RidgedMultifractal3',
-  8: 'RidgedMultifractal4',
-  9: 'AntiRidgedMultifractal',
-  10: 'AntiRidgedMultifractal2',
-  11: 'AntiRidgedMultifractal3',
-  12: 'AntiRidgedMultifractal4',
-  13: 'FBM',
-  14: 'FBM2',
-  15: 'FBM3',
-  16: 'CellularBM1',
-  17: 'CellularBM2',
-  18: 'CellularBM3',
-  19: 'VoronoiBM1',
-  20: 'VoronoiBM2',
-  21: 'VoronoiBM3',
-  22: 'CellularPattern',
-  23: 'WorleyPattern',
-  24: 'AntiCellularPattern',
-  25: 'AntiWorleyPattern',
-  26: 'LanczosBillow',
-  27: 'LanczosAntiBillow',
-  28: 'VoronoiTileNoise',
-  29: 'VoronoiCircleNoise',
-  30: 'VoronoiCircle2',
-  31: 'VoronoiFlatShade',
-  32: 'VoronoiRipple3D',
-  33: 'VoronoiRipple3D2',
-  34: 'VoronoiCircularRipple',
-  35: 'FVoronoiRipple3D',
-  36: 'FVoronoiCircularRipple',
-  37: 'RippleNoise',
-  38: 'FractalRipples',
-  39: 'HexWorms',
-  40: 'PerlinWorms',
-  41: 'White Noise',
-  42: 'Blue Noise',
-  43: 'Simplex',
-  44: 'Curl2D',
-  45: 'CurlFBM2D',
-  46: 'DomainWarpFBM1',
-  47: 'DomainWarpFBM2',
-  48: 'GaborAnisotropic',
-  49: 'TerraceNoise',
-  50: 'FoamNoise',
-  51: 'Turbulence',
-  52: 'Perlin4D',
-  53: 'Worley4D',
-  54: 'AntiWorley4D'
+  0: "Perlin",
+  1: "Billow",
+  2: "AntiBillow",
+  3: "Ridge",
+  4: "AntiRidge",
+  5: "RidgedMultifractal",
+  6: "RidgedMultifractal2",
+  7: "RidgedMultifractal3",
+  8: "RidgedMultifractal4",
+  9: "AntiRidgedMultifractal",
+  10: "AntiRidgedMultifractal2",
+  11: "AntiRidgedMultifractal3",
+  12: "AntiRidgedMultifractal4",
+  13: "FBM",
+  14: "FBM2",
+  15: "FBM3",
+  16: "CellularBM1",
+  17: "CellularBM2",
+  18: "CellularBM3",
+  19: "VoronoiBM1",
+  20: "VoronoiBM2",
+  21: "VoronoiBM3",
+  22: "CellularPattern",
+  23: "WorleyPattern",
+  24: "AntiCellularPattern",
+  25: "AntiWorleyPattern",
+  26: "LanczosBillow",
+  27: "LanczosAntiBillow",
+  28: "VoronoiTileNoise",
+  29: "VoronoiCircleNoise",
+  30: "VoronoiCircle2",
+  31: "VoronoiFlatShade",
+  32: "VoronoiRipple3D",
+  33: "VoronoiRipple3D2",
+  34: "VoronoiCircularRipple",
+  35: "FVoronoiRipple3D",
+  36: "FVoronoiCircularRipple",
+  37: "RippleNoise",
+  38: "FractalRipples",
+  39: "HexWorms",
+  40: "PerlinWorms",
+  41: "White Noise",
+  42: "Blue Noise",
+  43: "Simplex",
+  44: "Curl2D",
+  45: "CurlFBM2D",
+  46: "DomainWarpFBM1",
+  47: "DomainWarpFBM2",
+  48: "GaborAnisotropic",
+  49: "TerraceNoise",
+  50: "FoamNoise",
+  51: "Turbulence",
+  52: "Perlin4D",
+  53: "Worley4D",
+  54: "AntiWorley4D",
 };
 
 const NOISE_CONSTRAINTS_BY_BIT = {
   3: {
-    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.8], octaves: [1, 12] }
+    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.8], octaves: [1, 12] },
   },
   4: {
-    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.8], octaves: [1, 12] }
+    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.8], octaves: [1, 12] },
   },
   5: {
-    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] }
+    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
   6: {
-    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] }
+    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
   7: {
-    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] }
+    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
   8: {
-    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] }
+    clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
 
   13: {
-    clamp: { gain: [0.2, 0.8], octaves: [2, 10] }
+    clamp: { gain: [0.2, 0.8], octaves: [2, 10] },
   },
   14: {
-    clamp: { gain: [0.2, 0.8], octaves: [2, 10] }
+    clamp: { gain: [0.2, 0.8], octaves: [2, 10] },
   },
   15: {
-    clamp: { gain: [0.2, 0.8], octaves: [2, 10] }
+    clamp: { gain: [0.2, 0.8], octaves: [2, 10] },
   },
 
   19: {
-    clamp: { threshold: [0.0, 1.0] }
+    clamp: { threshold: [0.0, 1.0] },
   },
   20: {
-    clamp: { threshold: [0.0, 1.0] }
+    clamp: { threshold: [0.0, 1.0] },
   },
   21: {
-    clamp: { threshold: [0.0, 1.0] }
+    clamp: { threshold: [0.0, 1.0] },
   },
   22: {
-    clamp: { threshold: [0.0, 1.0] }
+    clamp: { threshold: [0.0, 1.0] },
   },
   23: {
-    clamp: { threshold: [0.0, 1.0] }
+    clamp: { threshold: [0.0, 1.0] },
   },
   24: {
-    clamp: { threshold: [0.0, 1.0] }
+    clamp: { threshold: [0.0, 1.0] },
   },
   25: {
-    clamp: { threshold: [0.0, 1.0] }
+    clamp: { threshold: [0.0, 1.0] },
   },
 
   44: {
     force: { turbulence: 1 },
-    clamp: { warpAmp: [0.1, 2.0], freq: [0.25, 6.0] }
+    clamp: { warpAmp: [0.1, 2.0], freq: [0.25, 6.0] },
   },
   45: {
     force: { turbulence: 1 },
-    clamp: { warpAmp: [0.1, 2.0], freq: [0.25, 6.0] }
+    clamp: { warpAmp: [0.1, 2.0], freq: [0.25, 6.0] },
   },
   46: {
     force: { turbulence: 1 },
-    clamp: { warpAmp: [0.1, 3.0] }
+    clamp: { warpAmp: [0.1, 3.0] },
   },
   47: {
     force: { turbulence: 1 },
-    clamp: { warpAmp: [0.1, 3.0] }
+    clamp: { warpAmp: [0.1, 3.0] },
   },
 
   48: {
-    clamp: { gaborRadius: [0.5, 6.0] }
+    clamp: { gaborRadius: [0.5, 6.0] },
   },
 
   51: {
     force: { turbulence: 1 },
-    clamp: { gain: [0.5, 0.95] }
-  }
+    clamp: { gain: [0.5, 0.95] },
+  },
 };
 
 const TOROIDAL_VOLUME_CHOICES = [
-  'clearTexture',
-  'computePerlin4D',
-  'computeWorley4D'
+  "clearTexture",
+  "computePerlin4D",
+  "computeWorley4D",
 ];
 
 const TOROIDAL_SIZE = 128;
-const TOROIDAL_VOLUME_KEY = 'toroidalDemo';
+const TOROIDAL_VOLUME_KEY = "toroidalDemo";
 
 const MODE_OVERRIDES = new Map();
 
@@ -167,12 +167,14 @@ function buildParamsForBit(bit, globalParams) {
 
   if (cfg && cfg.clamp) {
     const c = cfg.clamp;
-    if (c.freq) clampField(local, 'freq', c.freq[0], c.freq[1]);
-    if (c.gain) clampField(local, 'gain', c.gain[0], c.gain[1]);
-    if (c.octaves) clampField(local, 'octaves', c.octaves[0], c.octaves[1]);
-    if (c.threshold) clampField(local, 'threshold', c.threshold[0], c.threshold[1]);
-    if (c.warpAmp) clampField(local, 'warpAmp', c.warpAmp[0], c.warpAmp[1]);
-    if (c.gaborRadius) clampField(local, 'gaborRadius', c.gaborRadius[0], c.gaborRadius[1]);
+    if (c.freq) clampField(local, "freq", c.freq[0], c.freq[1]);
+    if (c.gain) clampField(local, "gain", c.gain[0], c.gain[1]);
+    if (c.octaves) clampField(local, "octaves", c.octaves[0], c.octaves[1]);
+    if (c.threshold)
+      clampField(local, "threshold", c.threshold[0], c.threshold[1]);
+    if (c.warpAmp) clampField(local, "warpAmp", c.warpAmp[0], c.warpAmp[1]);
+    if (c.gaborRadius)
+      clampField(local, "gaborRadius", c.gaborRadius[0], c.gaborRadius[1]);
   }
 
   if (cfg && cfg.force) {
@@ -184,7 +186,7 @@ function buildParamsForBit(bit, globalParams) {
   const overrideObj = MODE_OVERRIDES.get(bit);
   if (overrideObj) {
     for (const [k, v] of Object.entries(overrideObj)) {
-      if (typeof v === 'number' && Number.isFinite(v)) {
+      if (typeof v === "number" && Number.isFinite(v)) {
         local[k] = v;
       }
     }
@@ -201,19 +203,19 @@ function readGlobalParamsFromUI() {
     return Number.isFinite(v) ? v : fallback;
   };
 
-  const seed = Math.max(1, Math.floor(getNum('noise-seed', 1234567890)));
+  const seed = Math.max(1, Math.floor(getNum("noise-seed", 1234567890)));
 
   return {
     seed,
-    zoom: getNum('noise-zoom', 1.0),
-    freq: getNum('noise-freq', 1.0),
-    octaves: Math.max(1, Math.floor(getNum('noise-octaves', 8))),
-    lacunarity: getNum('noise-lacunarity', 2.0),
-    gain: getNum('noise-gain', 0.5),
-    xShift: getNum('noise-xShift', 0.0),
-    yShift: getNum('noise-yShift', 0.0),
-    zShift: getNum('noise-zShift', 0.0),
-    threshold: getNum('noise-threshold', 0.1),
+    zoom: getNum("noise-zoom", 1.0),
+    freq: getNum("noise-freq", 1.0),
+    octaves: Math.max(1, Math.floor(getNum("noise-octaves", 8))),
+    lacunarity: getNum("noise-lacunarity", 2.0),
+    gain: getNum("noise-gain", 0.5),
+    xShift: getNum("noise-xShift", 0.0),
+    yShift: getNum("noise-yShift", 0.0),
+    zShift: getNum("noise-zShift", 0.0),
+    threshold: getNum("noise-threshold", 0.1),
     turbulence: 0,
     seedAngle: 0.0,
     exp1: 1.0,
@@ -225,14 +227,16 @@ function readGlobalParamsFromUI() {
     terraceStep: 8.0,
     toroidal: 0,
     voroMode: 0,
-    edgeK: 0.0
+    edgeK: 0.0,
   };
 }
 
 function collectSelectedBitsFromUI() {
-  const boxes = document.querySelectorAll('input[type="checkbox"][name="noise-type"]');
+  const boxes = document.querySelectorAll(
+    'input[type="checkbox"][name="noise-type"]'
+  );
   const bits = [];
-  boxes.forEach(box => {
+  boxes.forEach((box) => {
     if (box.checked) {
       const bit = Number(box.dataset.bit);
       if (Number.isInteger(bit)) bits.push(bit);
@@ -242,61 +246,61 @@ function collectSelectedBitsFromUI() {
 }
 
 function initMainAndMosaicCanvases() {
-  let mainCanvas = document.getElementById('noise-canvas');
-  const stack = document.getElementById('view-stack');
+  let mainCanvas = document.getElementById("noise-canvas");
+  const stack = document.getElementById("view-stack");
 
   if (!mainCanvas && stack) {
-    mainCanvas = document.createElement('canvas');
-    mainCanvas.id = 'noise-canvas';
+    mainCanvas = document.createElement("canvas");
+    mainCanvas.id = "noise-canvas";
     mainCanvas.width = 800;
     mainCanvas.height = 800;
     stack.appendChild(mainCanvas);
   }
 
   if (!mainCanvas) {
-    throw new Error('Missing main preview canvas (#noise-canvas)');
+    throw new Error("Missing main preview canvas (#noise-canvas)");
   }
 
-  const mosaicRoot = document.getElementById('mosaic');
+  const mosaicRoot = document.getElementById("mosaic");
   if (!mosaicRoot) {
-    throw new Error('Missing #mosaic container');
+    throw new Error("Missing #mosaic container");
   }
 
   const mosaicCanvases = [];
-  const existing = mosaicRoot.querySelectorAll('canvas');
+  const existing = mosaicRoot.querySelectorAll("canvas");
   if (!existing.length) {
     for (let i = 0; i < 9; i++) {
-      const c = document.createElement('canvas');
+      const c = document.createElement("canvas");
       c.width = 256;
       c.height = 256;
       mosaicRoot.appendChild(c);
       mosaicCanvases.push(c);
     }
   } else {
-    existing.forEach(c => mosaicCanvases.push(c));
+    existing.forEach((c) => mosaicCanvases.push(c));
   }
 
   return { mainCanvas, mosaicCanvases };
 }
 
 function buildModeLabelList(bits) {
-  if (!bits.length) return 'Perlin';
-  const labels = bits.map(bit => NOISE_LABELS_BY_BIT[bit] || String(bit));
-  return labels.join(', ');
+  if (!bits.length) return "Perlin";
+  const labels = bits.map((bit) => NOISE_LABELS_BY_BIT[bit] || String(bit));
+  return labels.join(", ");
 }
 
 function populateOverrideModeSelect() {
-  const select = document.getElementById('override-mode');
+  const select = document.getElementById("override-mode");
   if (!select) return;
-  select.innerHTML = '';
+  select.innerHTML = "";
 
   const bits = Object.keys(NOISE_LABELS_BY_BIT)
-    .map(k => Number(k))
-    .filter(bit => Number.isInteger(bit) && bit >= 0 && bit <= 54)
+    .map((k) => Number(k))
+    .filter((bit) => Number.isInteger(bit) && bit >= 0 && bit <= 54)
     .sort((a, b) => a - b);
 
   for (const bit of bits) {
-    const opt = document.createElement('option');
+    const opt = document.createElement("option");
     opt.value = String(bit);
     opt.textContent = `${bit}: ${NOISE_LABELS_BY_BIT[bit]}`;
     select.appendChild(opt);
@@ -313,28 +317,28 @@ function populateOverrideFieldsForBit(bit) {
     const el = document.getElementById(id);
     if (!el) return;
     const v = overrides[key];
-    el.value = typeof v === 'number' && Number.isFinite(v) ? String(v) : '';
+    el.value = typeof v === "number" && Number.isFinite(v) ? String(v) : "";
   };
 
-  setVal('ov-zoom', 'zoom');
-  setVal('ov-freq', 'freq');
-  setVal('ov-gain', 'gain');
-  setVal('ov-octaves', 'octaves');
-  setVal('ov-warp', 'warpAmp');
-  setVal('ov-threshold', 'threshold');
-  setVal('ov-gabor', 'gaborRadius');
-  setVal('ov-xShift', 'xShift');
-  setVal('ov-yShift', 'yShift');
-  setVal('ov-zShift', 'zShift');
+  setVal("ov-zoom", "zoom");
+  setVal("ov-freq", "freq");
+  setVal("ov-gain", "gain");
+  setVal("ov-octaves", "octaves");
+  setVal("ov-warp", "warpAmp");
+  setVal("ov-threshold", "threshold");
+  setVal("ov-gabor", "gaborRadius");
+  setVal("ov-xShift", "xShift");
+  setVal("ov-yShift", "yShift");
+  setVal("ov-zShift", "zShift");
 }
 
 function updateOverridesFromFields() {
-  const select = document.getElementById('override-mode');
+  const select = document.getElementById("override-mode");
   if (!select) return;
   const bit = Number(select.value);
   if (!Number.isInteger(bit)) return;
 
-  const readNum = id => {
+  const readNum = (id) => {
     const el = document.getElementById(id);
     if (!el) return null;
     const trimmed = String(el.value).trim();
@@ -345,16 +349,16 @@ function updateOverridesFromFields() {
   };
 
   const obj = {};
-  const zoom = readNum('ov-zoom');
-  const freq = readNum('ov-freq');
-  const gain = readNum('ov-gain');
-  const octaves = readNum('ov-octaves');
-  const warpAmp = readNum('ov-warp');
-  const threshold = readNum('ov-threshold');
-  const gaborRadius = readNum('ov-gabor');
-  const xShift = readNum('ov-xShift');
-  const yShift = readNum('ov-yShift');
-  const zShift = readNum('ov-zShift');
+  const zoom = readNum("ov-zoom");
+  const freq = readNum("ov-freq");
+  const gain = readNum("ov-gain");
+  const octaves = readNum("ov-octaves");
+  const warpAmp = readNum("ov-warp");
+  const threshold = readNum("ov-threshold");
+  const gaborRadius = readNum("ov-gabor");
+  const xShift = readNum("ov-xShift");
+  const yShift = readNum("ov-yShift");
+  const zShift = readNum("ov-zShift");
 
   if (zoom !== null) obj.zoom = zoom;
   if (freq !== null) obj.freq = freq;
@@ -375,8 +379,8 @@ function updateOverridesFromFields() {
 }
 
 function getZSliceIndexFromUI() {
-  const slider = document.getElementById('z-slice');
-  const num = document.getElementById('z-slice-num');
+  const slider = document.getElementById("z-slice");
+  const num = document.getElementById("z-slice-num");
 
   let idx = 0;
   if (slider) {
@@ -398,14 +402,49 @@ function getZSliceIndexFromUI() {
   return idx;
 }
 
+// Download helpers: wait for GPU work to finish, then grab a PNG from the canvas
+async function downloadCanvasPNG(canvas, filename, device) {
+  if (!canvas) return;
+
+  if (device && device.queue && "onSubmittedWorkDone" in device.queue) {
+    try {
+      await device.queue.onSubmittedWorkDone();
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  if (typeof canvas.toBlob === "function") {
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  } else {
+    const url = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+}
+
 async function renderMainNoise(builder, mainCanvas) {
-  const resW = Number(document.getElementById('res-width')?.value) || 800;
-  const resH = Number(document.getElementById('res-height')?.value) || 800;
+  const resW = Number(document.getElementById("res-width")?.value) || 800;
+  const resH = Number(document.getElementById("res-height")?.value) || 800;
   mainCanvas.width = resW;
   mainCanvas.height = resH;
 
-  const previewMeta = document.getElementById('preview-meta');
-  const previewStats = document.getElementById('preview-stats');
+  const previewMeta = document.getElementById("preview-meta");
+  const previewStats = document.getElementById("preview-stats");
 
   const globalParams = readGlobalParamsFromUI();
   builder.buildPermTable(globalParams.seed | 0);
@@ -418,36 +457,26 @@ async function renderMainNoise(builder, mainCanvas) {
     outputChannel: 1,
     baseRadius: 0,
     heightScale: 1,
-    useCustomPos: 0
+    useCustomPos: 0,
   };
 
   const tComputeStart = performance.now();
 
-  await builder.computeToTexture(
-    resW,
-    resH,
-    globalParams,
-    {
-      ...commonOptions,
-      noiseChoices: ['clearTexture'],
-      frameFullWidth: resW,
-      frameFullHeight: resH
-    }
-  );
+  await builder.computeToTexture(resW, resH, globalParams, {
+    ...commonOptions,
+    noiseChoices: ["clearTexture"],
+    frameFullWidth: resW,
+    frameFullHeight: resH,
+  });
 
   for (const bit of noiseBits) {
     const params = buildParamsForBit(bit, globalParams);
-    await builder.computeToTexture(
-      resW,
-      resH,
-      params,
-      {
-        ...commonOptions,
-        noiseChoices: [bit],
-        frameFullWidth: resW,
-        frameFullHeight: resH
-      }
-    );
+    await builder.computeToTexture(resW, resH, params, {
+      ...commonOptions,
+      noiseChoices: [bit],
+      frameFullWidth: resW,
+      frameFullHeight: resH,
+    });
   }
 
   const tComputeEnd = performance.now();
@@ -459,13 +488,15 @@ async function renderMainNoise(builder, mainCanvas) {
       layer: 0,
       channel: 0,
       preserveCanvasSize: true,
-      clear: true
+      clear: true,
     });
   }
   const tBlitEnd = performance.now();
 
   if (previewMeta) {
-    previewMeta.textContent = `Height field preview · ${resW}×${resH} · modes: ${buildModeLabelList(noiseBits)}`;
+    previewMeta.textContent = `Height field preview · ${resW}×${resH} · modes: ${buildModeLabelList(
+      noiseBits
+    )}`;
   }
   if (previewStats) {
     const computeMs = (tComputeEnd - tComputeStart).toFixed(1);
@@ -495,7 +526,7 @@ function renderToroidalSlice(builder, volumeView, mosaicCanvases) {
       channel: 0,
       chunk: 0,
       preserveCanvasSize: true,
-      clear: true
+      clear: true,
     });
   }
 }
@@ -505,7 +536,7 @@ async function renderToroidalDemo(builder, mosaicCanvases, state) {
 
   const shapeParams = {
     ...globalParams,
-    toroidal: 1
+    toroidal: 1,
   };
 
   const t0 = performance.now();
@@ -517,7 +548,7 @@ async function renderToroidalDemo(builder, mosaicCanvases, state) {
     {
       noiseChoices: TOROIDAL_VOLUME_CHOICES,
       outputChannel: 1,
-      id: TOROIDAL_VOLUME_KEY
+      id: TOROIDAL_VOLUME_KEY,
     }
   );
   const t1 = performance.now();
@@ -529,18 +560,18 @@ async function renderToroidalDemo(builder, mosaicCanvases, state) {
 }
 
 async function initNoiseDemo() {
-  const statsEl = document.getElementById('preview-stats');
+  const statsEl = document.getElementById("preview-stats");
 
   if (!navigator.gpu) {
-    console.error('WebGPU not available in this browser.');
-    if (statsEl) statsEl.textContent = 'WebGPU not available in this browser.';
+    console.error("WebGPU not available in this browser.");
+    if (statsEl) statsEl.textContent = "WebGPU not available in this browser.";
     return;
   }
 
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
-    console.error('Failed to get GPU adapter.');
-    if (statsEl) statsEl.textContent = 'Failed to get GPU adapter.';
+    console.error("Failed to get GPU adapter.");
+    if (statsEl) statsEl.textContent = "Failed to get GPU adapter.";
     return;
   }
 
@@ -550,19 +581,26 @@ async function initNoiseDemo() {
   const { mainCanvas, mosaicCanvases } = initMainAndMosaicCanvases();
 
   builder.configureCanvas(mainCanvas);
-  mosaicCanvases.forEach(c => builder.configureCanvas(c));
+  mosaicCanvases.forEach((c) => builder.configureCanvas(c));
 
   populateOverrideModeSelect();
-  const overrideModeSelect = document.getElementById('override-mode');
+  const overrideModeSelect = document.getElementById("override-mode");
   if (overrideModeSelect) {
     const bit = Number(overrideModeSelect.value);
     if (Number.isInteger(bit)) populateOverrideFieldsForBit(bit);
   }
 
   const overrideInputs = [
-    'ov-zoom', 'ov-freq', 'ov-gain', 'ov-octaves',
-    'ov-warp', 'ov-threshold', 'ov-gabor',
-    'ov-xShift', 'ov-yShift', 'ov-zShift'
+    "ov-zoom",
+    "ov-freq",
+    "ov-gain",
+    "ov-octaves",
+    "ov-warp",
+    "ov-threshold",
+    "ov-gabor",
+    "ov-xShift",
+    "ov-yShift",
+    "ov-zShift",
   ];
 
   let mainRenderPending = false;
@@ -571,34 +609,34 @@ async function initNoiseDemo() {
     mainRenderPending = true;
     requestAnimationFrame(() => {
       mainRenderPending = false;
-      renderMainNoise(builder, mainCanvas).catch(err => {
+      renderMainNoise(builder, mainCanvas).catch((err) => {
         console.error(err);
         if (statsEl) statsEl.textContent = String(err);
       });
     });
   };
 
-  overrideInputs.forEach(id => {
+  overrideInputs.forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('change', () => {
+    el.addEventListener("change", () => {
       updateOverridesFromFields();
       scheduleMainRender();
     });
   });
 
   if (overrideModeSelect) {
-    overrideModeSelect.addEventListener('change', () => {
+    overrideModeSelect.addEventListener("change", () => {
       const bit = Number(overrideModeSelect.value);
       if (!Number.isInteger(bit)) return;
       populateOverrideFieldsForBit(bit);
     });
   }
 
-  const ovClear = document.getElementById('ov-clear');
+  const ovClear = document.getElementById("ov-clear");
   if (ovClear) {
-    ovClear.addEventListener('click', () => {
-      const select = document.getElementById('override-mode');
+    ovClear.addEventListener("click", () => {
+      const select = document.getElementById("override-mode");
       if (!select) return;
       const bit = Number(select.value);
       if (!Number.isInteger(bit)) return;
@@ -608,28 +646,28 @@ async function initNoiseDemo() {
     });
   }
 
-  const overridesBtn = document.getElementById('noise-overrides-btn');
+  const overridesBtn = document.getElementById("noise-overrides-btn");
   if (overridesBtn) {
-    overridesBtn.addEventListener('click', () => {
-      const group = document.getElementById('overrides-group');
+    overridesBtn.addEventListener("click", () => {
+      const group = document.getElementById("overrides-group");
       if (!group) return;
-      group.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      group.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
 
   const state = {
     lastToroidalVolumeView: null,
-    lastToroidalComputeMs: 0
+    lastToroidalComputeMs: 0,
   };
 
-  const renderBtn = document.getElementById('render-btn');
-  const applyResBtn = document.getElementById('apply-res');
+  const renderBtn = document.getElementById("render-btn");
+  const applyResBtn = document.getElementById("apply-res");
 
   if (renderBtn) {
-    renderBtn.addEventListener('click', () => {
+    renderBtn.addEventListener("click", () => {
       renderMainNoise(builder, mainCanvas)
         .then(() => renderToroidalDemo(builder, mosaicCanvases, state))
-        .catch(err => {
+        .catch((err) => {
           console.error(err);
           if (statsEl) statsEl.textContent = String(err);
         });
@@ -637,13 +675,13 @@ async function initNoiseDemo() {
   }
 
   if (applyResBtn) {
-    applyResBtn.addEventListener('click', () => {
+    applyResBtn.addEventListener("click", () => {
       scheduleMainRender();
     });
   }
 
-  const zSlider = document.getElementById('z-slice');
-  const zInput = document.getElementById('z-slice-num');
+  const zSlider = document.getElementById("z-slice");
+  const zInput = document.getElementById("z-slice-num");
 
   const rerenderSliceOnly = () => {
     if (!state.lastToroidalVolumeView) return;
@@ -651,7 +689,7 @@ async function initNoiseDemo() {
   };
 
   if (zSlider) {
-    zSlider.addEventListener('input', () => {
+    zSlider.addEventListener("input", () => {
       const v = Number(zSlider.value);
       if (zInput) zInput.value = String(v);
       rerenderSliceOnly();
@@ -659,7 +697,7 @@ async function initNoiseDemo() {
   }
 
   if (zInput) {
-    zInput.addEventListener('change', () => {
+    zInput.addEventListener("change", () => {
       let idx = Number(zInput.value);
       if (!Number.isFinite(idx)) idx = 0;
       idx = Math.min(Math.max(Math.round(idx), 0), TOROIDAL_SIZE - 1);
@@ -670,34 +708,119 @@ async function initNoiseDemo() {
   }
 
   const GLOBAL_PARAM_IDS = [
-    'noise-seed',
-    'noise-zoom',
-    'noise-freq',
-    'noise-octaves',
-    'noise-lacunarity',
-    'noise-gain',
-    'noise-xShift',
-    'noise-yShift',
-    'noise-zShift',
-    'noise-threshold'
+    "noise-seed",
+    "noise-zoom",
+    "noise-freq",
+    "noise-octaves",
+    "noise-lacunarity",
+    "noise-gain",
+    "noise-xShift",
+    "noise-yShift",
+    "noise-zShift",
+    "noise-threshold",
   ];
 
-  GLOBAL_PARAM_IDS.forEach(id => {
+  GLOBAL_PARAM_IDS.forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('input', scheduleMainRender);
-    el.addEventListener('change', scheduleMainRender);
+    el.addEventListener("input", scheduleMainRender);
+    el.addEventListener("change", scheduleMainRender);
   });
 
-  const noiseBoxes = document.querySelectorAll('input[type="checkbox"][name="noise-type"]');
-  noiseBoxes.forEach(box => {
-    box.addEventListener('change', scheduleMainRender);
+  const noiseBoxes = document.querySelectorAll(
+    'input[type="checkbox"][name="noise-type"]'
+  );
+  noiseBoxes.forEach((box) => {
+    box.addEventListener("change", scheduleMainRender);
   });
+
+  // Download main 2D noise as PNG via GPU readback
+  const downloadMainBtn = document.getElementById("download-main");
+  if (downloadMainBtn) {
+    downloadMainBtn.addEventListener("click", async () => {
+      try {
+        const resW = Number(document.getElementById("res-width")?.value) || 800;
+        const resH =
+          Number(document.getElementById("res-height")?.value) || 800;
+
+        const blob = await builder.exportCurrent2DToPNGBlob(resW, resH, {
+          layer: 0,
+          channel: 0,
+        });
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "noise-main.png";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error("download-main failed:", e);
+        if (statsEl) statsEl.textContent = "Export main PNG failed: " + e;
+      }
+    });
+  }
+
+  // Download a single tile (toroidal 3D slice) as PNG via GPU readback
+  const downloadTileBtn = document.getElementById("download-tile");
+  if (downloadTileBtn) {
+    downloadTileBtn.addEventListener("click", async () => {
+      try {
+        if (!state.lastToroidalVolumeView) {
+          console.warn("No toroidal volume available for export");
+          return;
+        }
+
+        let tileCanvas = document.getElementById("tile-canvas");
+        if (!tileCanvas) {
+          tileCanvas =
+            mosaicCanvases && mosaicCanvases.length ? mosaicCanvases[0] : null;
+        }
+        if (!tileCanvas) {
+          console.warn("No tile canvas found for export");
+          return;
+        }
+
+        const w = tileCanvas.width || TOROIDAL_SIZE;
+        const h = tileCanvas.height || TOROIDAL_SIZE;
+        const depth = TOROIDAL_SIZE;
+
+        const zIndex = getZSliceIndexFromUI();
+        const zNorm = (zIndex + 0.5) / depth;
+
+        const blob = await builder.export3DSliceToPNGBlob(
+          state.lastToroidalVolumeView,
+          w,
+          h,
+          {
+            depth,
+            zNorm,
+            channel: 0,
+            chunk: 0,
+          }
+        );
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "noise-tile.png";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error("download-tile failed:", e);
+        if (statsEl) statsEl.textContent = "Export tile PNG failed: " + e;
+      }
+    });
+  }
 
   await renderMainNoise(builder, mainCanvas);
   await renderToroidalDemo(builder, mosaicCanvases, state);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  initNoiseDemo().catch(err => console.error(err));
+document.addEventListener("DOMContentLoaded", () => {
+  initNoiseDemo().catch((err) => console.error(err));
 });
