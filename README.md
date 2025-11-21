@@ -14,6 +14,7 @@ The helper aims to:
 - Generate toroidal 3D volumes from 4D noise kernels
 - Visualize 2D array textures and 3D slices in WebGPU canvases
 - Reuse GPU resources where possible and dispose them explicitly when you are done
+- Make textures exportable to blobs/PNGs
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you don't have it. You can also locally host the index.html with prebuilt files.
 
@@ -694,4 +695,5 @@ builder.destroyAllVolumes();
 ```
 
 You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
+
 
