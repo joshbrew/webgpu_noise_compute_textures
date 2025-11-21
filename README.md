@@ -1,5 +1,11 @@
 
-# WebGPU Noise Playground
+# WebGPU Noise Compute Shaders
+
+### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
+
+##### See also: [https://codepen.io/joshbrew/pen/RNWQvXB](https://codepen.io/joshbrew/pen/RNWQvXB) Toroidal noise explainer.
+
+##### And for a use case: [Procedural WebGPU volumetric clouds](https://webgpuclouds.netlify.app/)
 
 GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
 
@@ -14,10 +20,17 @@ The helper aims to:
 - Generate toroidal 3D volumes from 4D noise kernels
 - Visualize 2D array textures and 3D slices in WebGPU canvases
 - Reuse GPU resources where possible and dispose them explicitly when you are done
-- Make textures exportable to blobs/PNGs
+- Export PNGs 
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you don't have it. You can also locally host the index.html with prebuilt files.
 
+<img width="500" alt="Screenshot 2025-11-18 234820" src="https://github.com/user-attachments/assets/fb6c8b0e-d84f-4565-a551-84388159ef26" />
+
+<img width="500" alt="Screenshot 2025-11-18 233631" src="https://github.com/user-attachments/assets/bf2fcc37-2f73-483c-96c4-56a994a50fce" />
+
+<img width="500" alt="Screenshot 2025-11-18 211645" src="https://github.com/user-attachments/assets/6d657cb2-e4c0-4849-8da8-0dc694f05aaf" />
+
+<img width="500" alt="Screenshot 2025-11-18 232951" src="https://github.com/user-attachments/assets/35fc121b-a5d2-47e9-bdc7-4f67b1941373" />
 
 ---
 
@@ -129,7 +142,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 
 ### Test UI
 
-- `noiseUI.js`  
+- `noiseComputeTest.js`  
 
   - Imports the component HTML and injects it into the page
   - Creates a `NoiseComputeBuilder` instance
@@ -162,7 +175,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 The UI is wired like:
 
 ```js
-// noiseUI.js
+// noiseComputeTEst.js
 import html from './noiseComponent.html';
 import { NoiseComputeBuilder } from './noiseComputeBuilder.js';
 
@@ -538,7 +551,7 @@ Overrides are stored in `MODE_OVERRIDES[bit]`. When present they apply only to t
 
 ## UI behavior
 
-The front end wiring lives in `noiseUI.js`.
+The front end wiring lives in `noiseComputeTEst.js`.
 
 On load it:
 
@@ -695,5 +708,10 @@ builder.destroyAllVolumes();
 ```
 
 You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
+
+
+
+
+
 
 
