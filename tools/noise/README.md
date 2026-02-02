@@ -21,9 +21,13 @@ To run the demo, run `npm install` then `tinybuild` within this repository. `npm
 
 ## Noise kernels and coverage
 
-`NoiseComputeBuilder` ships with a broad set of kernels wired into `NoiseComputeBuilder.entryPoints`. These cover classic scalar noise, fractal variants, Voronoi and cellular patterns, curl and domain warp fields, 4D toroidal kernels, plus normal map and filter utilities.
+`NoiseComputeBuilder` ships with a broad set of kernels wired into `NoiseComputeBuilder.entryPoints`. These cover classic scalar noise, fractal variants, Voronoi and cellular patterns, curl and domain warp fields, 4D toroidal kernels (for seamless 3D volumes), plus normal map and filter utilities.
 
 Entry points are separate so pipelines compile fast. You never have to use every kernel in one run.
+
+At runtime you pass indices or names in `noiseChoices` to select and stack any subset of these. The UI wires this through bit indexed checkboxes and always includes `clearTexture` as the first pass so every mode composites onto a clean buffer.
+
+### Supported entry points
 
 | Entry point                      | Description                                      |
 | -------------------------------- | ------------------------------------------------ |
@@ -71,6 +75,7 @@ Entry points are separate so pipelines compile fast. You never have to use every
 | `computeWhiteNoise`              | Uniform random noise, each pixel independent.    |
 | `computeBlueNoise`               | Blue noise distribution, minimal clumping.       |
 | `computeSimplex`                 | Classic simplex gradient noise.                  |
+| `computeSimplexFBM`              | Simplex based FBM configuration.                 |
 | `computeCurl2D`                  | 2D curl field from scalar noise.                 |
 | `computeCurlFBM2D`               | 2D curl field built from FBM.                    |
 | `computeDomainWarpFBM1`          | Domain warped FBM, configuration one.            |
@@ -82,14 +87,41 @@ Entry points are separate so pipelines compile fast. You never have to use every
 | `computePerlin4D`                | 4D Perlin for toroidal 3D volumes.               |
 | `computeWorley4D`                | 4D Worley driving toroidal cell volumes.         |
 | `computeAntiWorley4D`            | Inverted 4D Worley for hollow structures.        |
+| `computeCellular4D`              | 4D Cellular distance field for toroidal volumes. |
+| `computeAntiCellular4D`          | Inverted 4D Cellular distance field.             |
+| `computeBillow4D`                | 4D Billow variant for toroidal volumes.          |
+| `computeAntiBillow4D`            | Inverted 4D Billow variant.                      |
+| `computeLanczosBillow4D`         | 4D Billow with Lanczos sharpening.               |
+| `computeLanczosAntiBillow4D`     | Inverted 4D Billow with Lanczos accentuation.    |
+| `computeFBM4D`                   | 4D FBM for toroidal volumes.                     |
+| `computeVoronoi4D`               | 4D Voronoi for toroidal volumes.                 |
+| `computeVoronoiBM1_4D`           | 4D Voronoi Brownian blend, configuration one.    |
+| `computeVoronoiBM2_4D`           | 4D Voronoi Brownian blend, configuration two.    |
+| `computeVoronoiBM3_4D`           | 4D Voronoi Brownian blend, configuration three.  |
+| `computeVoronoiBM1_4D_vec`       | 4D Voronoi BM (vector output flavor), config 1.  |
+| `computeVoronoiBM2_4D_vec`       | 4D Voronoi BM (vector output flavor), config 2.  |
+| `computeVoronoiBM3_4D_vec`       | 4D Voronoi BM (vector output flavor), config 3.  |
+| `computeWorleyBM1_4D`            | 4D Worley Brownian blend, configuration one.     |
+| `computeWorleyBM2_4D`            | 4D Worley Brownian blend, configuration two.     |
+| `computeWorleyBM3_4D`            | 4D Worley Brownian blend, configuration three.   |
+| `computeWorleyBM1_4D_vec`        | 4D Worley BM (vector output flavor), config 1.   |
+| `computeWorleyBM2_4D_vec`        | 4D Worley BM (vector output flavor), config 2.   |
+| `computeWorleyBM3_4D_vec`        | 4D Worley BM (vector output flavor), config 3.   |
+| `computeCellularBM1_4D`          | 4D Cellular Brownian blend, configuration one.   |
+| `computeCellularBM2_4D`          | 4D Cellular Brownian blend, configuration two.   |
+| `computeCellularBM3_4D`          | 4D Cellular Brownian blend, configuration three. |
+| `computeCellularBM1_4D_vec`      | 4D Cellular BM (vector output flavor), config 1. |
+| `computeCellularBM2_4D_vec`      | 4D Cellular BM (vector output flavor), config 2. |
+| `computeCellularBM3_4D_vec`      | 4D Cellular BM (vector output flavor), config 3. |
+| `computeTerraceNoise4D`          | 4D terrace shaping for toroidal volumes.         |
+| `computeFoamNoise4D`             | 4D foam noise for toroidal volumes.              |
+| `computeTurbulence4D`            | 4D turbulence wrapper for toroidal volumes.      |
 | `computeGauss5x5`                | Five by five Gaussian blur filter.               |
 | `computeNormal`                  | Scalar normal map from height channel.           |
 | `computeNormal8`                 | Eight tap normal map estimator.                  |
 | `computeSphereNormal`            | Normal from spherical height interpretation.     |
 | `computeNormalVolume`            | Volume normal field from 3D scalar.              |
 | `clearTexture`                   | Clear target texture to zero.                    |
-
-At runtime you pass indices or names in `noiseChoices` to select and stack any subset of these. The UI wires this through bit indexed checkboxes and always includes `clearTexture` as the first pass so every mode composites onto a clean buffer.
 
 ---
 
@@ -115,7 +147,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
   - Classic gradient noise (Perlin, Simplex)
   - Ridged, billow, FBM variants
   - Cellular, Worley, Voronoi patterns
-  - 4D toroidal kernels like `computePerlin4D`, `computeWorley4D`, `computeAntiWorley4D`
+  - 4D toroidal kernels
   - Filters, normals, and `clearTexture`
 
 - `noiseBlit.wgsl`  
@@ -236,492 +268,4 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
-
-### Compute options (`setOptions`)
-
-These control IO behavior and stack selection. They drive the WGSL `options` uniform.
-
-| Field           | Type                     | Default | Description                                                  |
-| --------------- | ------------------------ | ------- | ------------------------------------------------------------ |
-| `noiseChoices`  | `number[]` or `string[]` | `[0]`   | List of kernel indices or entry point names to run in order. |
-| `getGradient`   | `u32`                    | `0`     | If nonzero, output gradients instead of scalar.              |
-| `outputChannel` | `u32`                    | `1`     | Target channel index in the RGBA16F output.                  |
-| `baseRadius`    | `f32`                    | `0`     | Base radius used by spherical kernels.                       |
-| `heightScale`   | `f32`                    | `1`     | Scalar multiplier on final noise output.                     |
-| `useCustomPos`  | `u32`                    | `0`     | If `1`, sample from a custom position buffer.                |
-| `ioFlags`       | `u32`                    | `0`     | `0` for 2D path, `3` for 3D volume path.                     |
-
-`noiseChoices` can also be overridden in the per call options if you want a one off stack without touching global options.
-
-### 2D compute parameters (`computeToTexture`)
-
-Signature:
-
-```ts
-await builder.computeToTexture(
-  width: number,
-  height: number,
-  params?: NoiseParams | NoiseParams[],
-  options?: Compute2DOptions
-);
-```
-
-2D specific arguments:
-
-| Argument / field          | Type                             | Required | Description                                           |
-| ------------------------- | -------------------------------- | -------- | ----------------------------------------------------- |
-| `width`                   | `number`                         | yes      | Logical width of the target surface in pixels.        |
-| `height`                  | `number`                         | yes      | Logical height of the target surface in pixels.       |
-| `params`                  | `NoiseParams` or `NoiseParams[]` | no       | Shared or per kernel parameters.                      |
-| `options.customData`      | `Float32Array`                   | no       | Optional per pixel custom positions (x,y,z,w).        |
-| `options.frameFullWidth`  | `number`                         | no       | World width used in frame UBO, defaults to `width`.   |
-| `options.frameFullHeight` | `number`                         | no       | World height used in frame UBO, defaults to `height`. |
-| `options.useCustomPos`    | `number`                         | no       | Overrides `useCustomPos` for this compute.            |
-| `options.noiseChoices`    | `number[]` or `string[]`         | no       | Per call override for `noiseChoices`.                 |
-
-Notes:
-
-* If `width` or `height` is larger than `MAX_2D_TILE`, the builder auto tiles into a 2D array texture and processes tiles layer by layer.
-* When `params` is an array, its length must match `noiseChoices`. The builder calls `setNoiseParams` for each kernel in sequence.
-* Return value is a `GPUTextureView` for the active ping pong 2D array texture.
-
-### 3D compute parameters (`computeToTexture3D`)
-
-Signature:
-
-```ts
-await builder.computeToTexture3D(
-  width: number,
-  height: number,
-  depth: number,
-  params?: NoiseParams | NoiseParams[],
-  options?: Compute3DOptions
-);
-```
-
-3D specific arguments:
-
-| Argument / field          | Type                             | Required | Description                                       |
-| ------------------------- | -------------------------------- | -------- | ------------------------------------------------- |
-| `width`                   | `number`                         | yes      | Logical volume width.                             |
-| `height`                  | `number`                         | yes      | Logical volume height.                            |
-| `depth`                   | `number`                         | yes      | Logical volume depth.                             |
-| `params`                  | `NoiseParams` or `NoiseParams[]` | no       | Shared or per kernel parameters.                  |
-| `options.id`              | `string` or `number`             | no       | Volume cache id. Reuses or creates a volume.      |
-| `options.frameFullWidth`  | `number`                         | no       | World width for frame UBO, defaults to `width`.   |
-| `options.frameFullHeight` | `number`                         | no       | World height for frame UBO, defaults to `height`. |
-| `options.frameFullDepth`  | `number`                         | no       | World depth for frame UBO, defaults to `depth`.   |
-| `options.useCustomPos`    | `number`                         | no       | Overrides `useCustomPos` for this compute.        |
-| `options.noiseChoices`    | `number[]` or `string[]`         | no       | Per call override for `noiseChoices`.             |
-
-Notes:
-
-* Volumes are packed into texture3D objects when they fit within `MAX_3D_TILE`. Otherwise the builder chunks them into smaller texture3Ds that respect device buffer limits and `BYTES_PER_VOXEL`.
-* World extents and fractional origins keep coordinates continuous across chunks.
-* `id` lets you keep several named volumes alive without automatic eviction. Use `destroyVolume(id)` or `destroyAllVolumes()` to free them.
-* Return value is either a single 3D `GPUTextureView` or an object `{ views, meta }` for chunked volumes.
-
-### Blit helper parameters
-
-The blit helpers let you preview textures in canvases.
-
-#### `renderTextureToCanvas`
-
-```ts
-builder.renderTextureToCanvas(view, canvas, {
-  layer?: number,
-  channel?: number,
-  preserveCanvasSize?: boolean,
-  clear?: boolean
-});
-```
-
-| Field                | Type                | Default  | Description                               |
-| -------------------- | ------------------- | -------- | ----------------------------------------- |
-| `view`               | `GPUTextureView`    | required | 2D array texture view to sample.          |
-| `canvas`             | `HTMLCanvasElement` | required | WebGPU configured canvas.                 |
-| `layer`              | `number`            | `0`      | Layer index in the 2D array.              |
-| `channel`            | `number`            | `0`      | Channel index from RGBA16F.               |
-| `preserveCanvasSize` | `boolean`           | `true`   | If false, resizes canvas to texture size. |
-| `clear`              | `boolean`           | `true`   | Whether to clear before drawing.          |
-
-#### `renderTexture3DSliceToCanvas`
-
-```ts
-builder.renderTexture3DSliceToCanvas(target, canvas, {
-  depth: number,
-  slice?: number,
-  zNorm?: number,
-  channel?: number,
-  chunk?: number,
-  preserveCanvasSize?: boolean,
-  clear?: boolean
-});
-```
-
-`target` can be a single 3D `GPUTextureView` or the `{ views, meta }` object returned by `computeToTexture3D`.
-
-| Field                | Type      | Default  | Description                                  |
-| -------------------- | --------- | -------- | -------------------------------------------- |
-| `depth`              | `number`  | required | Logical depth of the volume.                 |
-| `slice`              | `number`  | `0`      | Slice index if `zNorm` is not provided.      |
-| `zNorm`              | `number`  | `null`   | Normalized depth in [0, 1).                  |
-| `channel`            | `number`  | `0`      | Channel index from RGBA16F.                  |
-| `chunk`              | `number`  | `0`      | Chunk index when `target.views` is an array. |
-| `preserveCanvasSize` | `boolean` | `true`   | If false, resizes canvas to slice size.      |
-| `clear`              | `boolean` | `true`   | Whether to clear before drawing.             |
-
----
-
-## Core concepts
-
-### 1. 2D tiled array textures
-
-Basic pattern:
-
-```js
-const builder = new NoiseComputeBuilder(device, device.queue);
-
-const view = await builder.computeToTexture(width, height, params, {
-  noiseChoices: ["clearTexture", "computePerlin"]
-});
-
-const canvas = document.querySelector("#noise-canvas");
-builder.configureCanvas(canvas);
-builder.renderTextureToCanvas(view, canvas, {
-  layer: 0,
-  channel: 0,
-  preserveCanvasSize: true
-});
-```
-
-`NoiseComputeBuilder` will:
-
-* Tile the logical `width x height` surface into one or more array layers when a side exceeds `MAX_2D_TILE`
-* Allocate a ping pong pair of `rgba16float` 2D array textures
-* Build per tile frame uniforms with origin, tile size, and world extents
-* For each tile, run all selected kernels in a single batched compute pass
-
-The compositing model is:
-
-1. Run `clearTexture` to zero the target texture.
-2. For each selected mode, update parameters and dispatch that entry point over the storage texture.
-
-Each subsequent kernel sees the accumulated result from previous kernels.
-
-### 2. 3D volumes with chunking
-
-Example:
-
-```js
-const volumeView = await builder.computeToTexture3D(
-  W, H, D,
-  params,
-  {
-    id: "shape128",
-    frameFullWidth: W,
-    frameFullHeight: H,
-    frameFullDepth: D,
-    noiseChoices: ["clearTexture", "computePerlin4D", "computeWorley4D"]
-  }
-);
-```
-
-The builder will:
-
-* Use a single 3D texture if the volume fits within `MAX_3D_TILE`
-* Otherwise chunk into several 3D textures with per chunk frame uniforms and origins
-* Cache the volume in `_volumeCache` under `id`
-* Maintain ping pong storage per chunk and reuse it between calls
-* Batch all kernel dispatches per chunk into a single command encoder submission
-
-Slice preview:
-
-```js
-builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
-  depth: D,
-  zNorm: 0.5,
-  channel: 0,
-  chunk: 0
-});
-```
-
-The UI uses this to show a single toroidal slice in a 3 by 3 mosaic.
-
-### 3. Toroidal 4D kernels
-
-Toroidal behavior in the WGSL is driven entirely by uniform parameters. For 4D kernels the common pattern is:
-
-```js
-await builder.computeToTexture3D(
-  128, 128, 128,
-  { ...params, toroidal: 1 },
-  {
-    id: "toroidalDemo",
-    noiseChoices: ["clearTexture", "computePerlin4D", "computeWorley4D"],
-    outputChannel: 1
-  }
-);
-```
-
-The UI mirrors this with constants:
-
-```js
-const TOROIDAL_VOLUME_CHOICES = [
-  "clearTexture",
-  "computePerlin4D",
-  "computeWorley4D"
-];
-
-const TOROIDAL_VOLUME_ID = "toroidalDemo";
-```
-
-A Z index slider maps to a normalized depth coordinate for the 3D blit shader so you can scrub slices without rerunning `computeToTexture3D`.
-
----
-
-## Noise parameters, constraints, and overrides
-
-### Global parameters in the UI
-
-The sidebar exposes global controls mapped to the `params` UBO. Typical IDs include:
-
-* `noise-seed`
-* `noise-zoom`
-* `noise-freq`
-* `noise-octaves`
-* `noise-lacunarity`
-* `noise-gain`
-* `noise-xShift`
-* `noise-yShift`
-* `noise-zShift`
-* `noise-threshold`
-* `noise-voroMode`
-* `noise-edgeK`
-
-`readGlobalParamsFromUI()` collects these and returns an object that matches `setNoiseParams`:
-
-```js
-{
-  seed,
-  zoom,
-  freq,
-  octaves,
-  lacunarity,
-  gain,
-  xShift,
-  yShift,
-  zShift,
-  threshold,
-  turbulence,
-  seedAngle,
-  exp1,
-  exp2,
-  rippleFreq,
-  time,
-  warpAmp,
-  gaborRadius,
-  terraceStep,
-  toroidal,
-  voroMode,
-  edgeK
-}
-```
-
-### Per mode constraints
-
-`NOISE_CONSTRAINTS_BY_BIT` describes per mode clamps and forced flags. Examples:
-
-* Ridge modes clamp `freq`, `gain`, and `octaves` to keep terrain stable.
-* FBM variants clamp `gain` and `octaves`.
-* Cellular and Worley variants clamp `threshold`.
-* Curl and domain warp modes force `turbulence = 1` and clamp `warpAmp`.
-* Gabor filters clamp `gaborRadius`.
-* Turbulence mode keeps `gain` near 1 and forces `turbulence = 1`.
-
-`buildParamsForBit(bit, globalParams)` applies these constraints then merges in any overrides from `MODE_OVERRIDES`.
-
-### Per mode overrides in the UI
-
-The override panel provides:
-
-* A select box to choose a mode by index and label
-* Numeric fields for:
-
-  * `zoom`
-  * `freq`
-  * `gain`
-  * `octaves`
-  * `warpAmp`
-  * `threshold`
-  * `gaborRadius`
-  * `xShift`
-  * `yShift`
-  * `zShift`
-  * `voroMode`
-  * `edgeK`
-
-Overrides are stored in `MODE_OVERRIDES[bit]`. When present they apply only to that mode on top of the global parameters and constraint clamps.
-
----
-
-## UI behavior
-
-The front end wiring lives in `noiseUI.js`.
-
-On load it:
-
-* Injects `noiseComponent.html` into the document
-* Requests a WebGPU adapter and device
-* Constructs a `NoiseComputeBuilder`
-* Locates the main preview canvas and the nine mosaic canvases
-* Configures all canvases for WebGPU
-
-Render path:
-
-* `render-btn` and `apply-res` both call `doRender()`.
-* `doRender()` calls:
-
-  * `renderMainNoise(builder, mainCanvas)`
-  * `renderToroidalDemo(builder, mosaicCanvases, state)`
-
-### Main noise stack
-
-`renderMainNoise` steps:
-
-1. Reads `res-width` and `res-height`.
-2. Reads globals via `readGlobalParamsFromUI()`.
-3. Rebuilds the permutation table using the current seed.
-4. Collects selected modes from the checkbox list and prepends `clearTexture`.
-5. Builds per mode parameters using constraints and overrides.
-6. Runs the compositing sequence on the 2D texture.
-7. Blits the final result into `#noise-canvas`.
-8. Updates `#preview-meta` and `#preview-stats` with resolution, modes, and timing.
-
-### Toroidal 3D volume and mosaic
-
-`renderToroidalDemo`:
-
-1. Reads the same global parameters.
-2. Forces `toroidal: 1` in `params`.
-3. Calls `computeToTexture3D` with `TOROIDAL_VOLUME_CHOICES` and `id: TOROIDAL_VOLUME_ID`.
-4. Stores the returned volume view and timing in `state`.
-5. Calls `renderToroidalSlice` to draw the current Z slice into the 3 by 3 mosaic canvases.
-
-Slice controls:
-
-* Range slider `#z-slice`
-* Numeric input `#z-slice-num`
-
-Both handlers only reblit from the cached volume. Recompute only happens when `doRender()` runs again.
-
----
-
-## Resource reuse, disposal, and recycling
-
-The compute helper is built to minimize GPU allocations and make lifetimes explicit.
-
-### Bind group and buffer reuse
-
-* Options, params, perm table, and null position buffers are created once and reused.
-
-* For 2D tiling:
-
-  * Frame uniform buffers and position buffers per tile are created once and reused.
-  * Bind groups per tile are recreated only when a dirty flag is set, for example when you change options or params.
-
-* For 3D volumes:
-
-  * Each chunk owns its frame buffer, position buffer, and two bind groups for ping pong.
-  * When noise parameters change, the volume is marked dirty and `_recreate3DBindGroups` rebuilds only those bind groups.
-
-This keeps WebGPU object counts stable under interactive use instead of constantly allocating and throwing away bind groups.
-
-### Dummy textures
-
-The builder keeps minimal dummy textures for whatever path is inactive:
-
-* A 2D array dummy bound when only 3D is in use
-* A 3D dummy bound when only 2D is in use
-
-These occupy the unused bindings so a single bind group layout can drive both 2D and 3D paths without allocating throwaway textures per dispatch.
-
-### Explicit disposal
-
-For long lived apps or tools that churn many resolutions or volumes, you should explicitly destroy GPU resources.
-
-Helper methods:
-
-* `destroyTexturePair(tid)`
-  Destroy a single 2D texture pair and its per tile resources.
-
-* `destroyAllTexturePairs()`
-  Destroy all 2D texture pairs managed by the builder.
-
-* `destroyVolume(id)`
-  Destroy a single 3D volume by id, including chunks, views, frame buffers, and custom position buffers.
-
-* `destroyAllVolumes()`
-  Destroy every 3D volume in the internal cache.
-
-Typical usage:
-
-```js
-// When main preview resolution changes a lot
-builder.destroyAllTexturePairs();
-
-// When a named 3D volume is no longer needed
-builder.destroyVolume("toroidalDemo");
-
-// When tearing down the builder
-builder.destroyAllTexturePairs();
-builder.destroyAllVolumes();
-```
-
-WebGPU will free resources when the page is closed, but explicit destruction is recommended for editors, playgrounds, and long running apps. `BaseNoise` stays on the CPU and does not need disposal.
-
----
-
-## Minimal example without the UI
-
-If you only want the compute helper:
-
-```js
-import { NoiseComputeBuilder, BaseNoise } from "./noiseComputeBuilder.js";
-
-const adapter = await navigator.gpu.requestAdapter();
-const device = await adapter.requestDevice();
-const builder = new NoiseComputeBuilder(device, device.queue);
-
-// permutation table
-builder.buildPermTable(123456789);
-
-// options and params
-builder.setOptions({
-  noiseChoices: ["clearTexture", "computePerlin"],
-  outputChannel: 1
-});
-
-builder.setNoiseParams({
-  seed: 123456789,
-  zoom: 1.0,
-  freq: 1.0,
-  octaves: 6,
-  lacunarity: 2.0,
-  gain: 0.5
-});
-
-// 2D compute
-const canvas = document.querySelector("canvas");
-builder.configureCanvas(canvas);
-
-const view2D = await builder.computeToTexture(1024, 1024, null, {});
-builder.renderTextureToCanvas(view2D, canvas, { layer: 0, channel: 0 });
-
-// later, clean up
-builder.destroyAllTexturePairs();
-builder.destroyAllVolumes();
-```
-
-You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
 
