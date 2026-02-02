@@ -1,11 +1,5 @@
 
-# WebGPU Noise Compute Shaders
-
-### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
-
-##### See also: [https://codepen.io/joshbrew/pen/RNWQvXB](https://codepen.io/joshbrew/pen/RNWQvXB) Toroidal noise explainer.
-
-##### And for a use case: [Procedural WebGPU volumetric clouds](https://webgpuclouds.netlify.app/)
+# WebGPU Noise Playground
 
 GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
 
@@ -20,17 +14,8 @@ The helper aims to:
 - Generate toroidal 3D volumes from 4D noise kernels
 - Visualize 2D array textures and 3D slices in WebGPU canvases
 - Reuse GPU resources where possible and dispose them explicitly when you are done
-- Export PNGs 
 
-To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you don't have it. You can also locally host the index.html with prebuilt files.
-
-<img width="500" alt="Screenshot 2025-11-18 234820" src="https://github.com/user-attachments/assets/fb6c8b0e-d84f-4565-a551-84388159ef26" />
-
-<img width="500" alt="Screenshot 2025-11-18 233631" src="https://github.com/user-attachments/assets/bf2fcc37-2f73-483c-96c4-56a994a50fce" />
-
-<img width="500" alt="Screenshot 2025-11-18 211645" src="https://github.com/user-attachments/assets/6d657cb2-e4c0-4849-8da8-0dc694f05aaf" />
-
-<img width="500" alt="Screenshot 2025-11-18 232951" src="https://github.com/user-attachments/assets/35fc121b-a5d2-47e9-bdc7-4f67b1941373" />
+To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you do not have it. You can also locally host `index.html` with prebuilt files.
 
 ---
 
@@ -106,7 +91,6 @@ Entry points are separate so pipelines compile fast. You never have to use every
 
 At runtime you pass indices or names in `noiseChoices` to select and stack any subset of these. The UI wires this through bit indexed checkboxes and always includes `clearTexture` as the first pass so every mode composites onto a clean buffer.
 
-
 ---
 
 ## Files
@@ -142,7 +126,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 
 ### Test UI
 
-- `noiseComputeTest.js`  
+- `noiseUI.js`
 
   - Imports the component HTML and injects it into the page
   - Creates a `NoiseComputeBuilder` instance
@@ -152,7 +136,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
   - Renders a 3 by 3 mosaic of a single Z slice from a toroidal volume
   - Keeps a small state object for the most recent volume so Z slice scrubbing only reblits, not recomputes
 
-- `noiseComponent.html`  
+- `noiseComponent.html`
 
   - Sidebar based layout
   - Main preview canvas for the height field
@@ -164,7 +148,6 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
     - Resolution
     - Z slice scrubbing
 
-
 ---
 
 ## Requirements
@@ -175,12 +158,12 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 The UI is wired like:
 
 ```js
-// noiseComputeTEst.js
-import html from './noiseComponent.html';
-import { NoiseComputeBuilder } from './noiseComputeBuilder.js';
+// noiseUI.js
+import html from "./noiseComponent.html";
+import { NoiseComputeBuilder } from "./noiseComputeBuilder.js";
 
-document.body.insertAdjacentHTML('afterbegin', html);
-```
+document.body.insertAdjacentHTML("afterbegin", html);
+````
 
 Adapt this pattern to your bundler or framework as needed.
 
@@ -198,32 +181,61 @@ Adapt this pattern to your bundler or framework as needed.
 
 These drive the WGSL `params` uniform and are used by both 2D and 3D compute paths.
 
-| Field         | Type  | Default     | Description                                                 |                                         |
-| ------------- | ----- | ----------- | ----------------------------------------------------------- | --------------------------------------- |
-| `seed`        | `u32` | `Date.now() | 0`                                                          | Seed for `BaseNoise` permutation table. |
-| `zoom`        | `f32` | `1.0`       | Global UV scale, larger zoom gives coarser features.        |                                         |
-| `freq`        | `f32` | `1.0`       | Base frequency in noise space.                              |                                         |
-| `octaves`     | `u32` | `8`         | Number of FBM or multifractal layers.                       |                                         |
-| `lacunarity`  | `f32` | `2.0`       | Frequency multiplier per octave.                            |                                         |
-| `gain`        | `f32` | `0.5`       | Amplitude multiplier per octave.                            |                                         |
-| `xShift`      | `f32` | `0.0`       | Offset in X for noise domain.                               |                                         |
-| `yShift`      | `f32` | `0.0`       | Offset in Y for noise domain.                               |                                         |
-| `zShift`      | `f32` | `0.0`       | Offset in Z or slice offset.                                |                                         |
-| `turbulence`  | `u32` | `0`         | If nonzero, use absolute valued turbulence.                 |                                         |
-| `seedAngle`   | `f32` | `0.0`       | Angle used by anisotropic kernels.                          |                                         |
-| `exp1`        | `f32` | `1.0`       | Primary exponent shaping for curves.                        |                                         |
-| `exp2`        | `f32` | `0.0`       | Secondary exponent shaping term.                            |                                         |
-| `threshold`   | `f32` | `0.1`       | Threshold for Voronoi and pattern cuts.                     |                                         |
-| `rippleFreq`  | `f32` | `10.0`      | Base ripple frequency in ripple modes.                      |                                         |
-| `time`        | `f32` | `0.0`       | Time parameter for animated modes.                          |                                         |
-| `warpAmp`     | `f32` | `0.5`       | Domain warp amplitude when used.                            |                                         |
-| `gaborRadius` | `f32` | `4.0`       | Radius for Gabor kernel sampling.                           |                                         |
-| `terraceStep` | `f32` | `8.0`       | Step size for terrace quantization.                         |                                         |
-| `toroidal`    | `u32` | `0`         | If `1`, use toroidal addressing in kernels that support it. |                                         |
-| `voroMode`    | `u32` | `0`         | Mode selector inside Voronoi kernels.                       |                                         |
-| `edgeK`       | `f32` | `0.0`       | Edge contrast scaling for Voronoi.                          |                                         |
+| Field         | Type  | Default           | Description                                                 |
+| ------------- | ----- | ----------------- | ----------------------------------------------------------- |
+| `seed`        | `u32` | `Date.now() \| 0` | Seed for `BaseNoise` permutation table.                     |
+| `zoom`        | `f32` | `1.0`             | Global UV scale, larger zoom gives coarser features.        |
+| `freq`        | `f32` | `1.0`             | Base frequency in noise space.                              |
+| `octaves`     | `u32` | `8`               | Number of FBM or multifractal layers.                       |
+| `lacunarity`  | `f32` | `2.0`             | Frequency multiplier per octave.                            |
+| `gain`        | `f32` | `0.5`             | Amplitude multiplier per octave.                            |
+| `xShift`      | `f32` | `0.0`             | Offset in X for noise domain.                               |
+| `yShift`      | `f32` | `0.0`             | Offset in Y for noise domain.                               |
+| `zShift`      | `f32` | `0.0`             | Offset in Z or slice offset.                                |
+| `turbulence`  | `u32` | `0`               | If nonzero, use absolute valued turbulence.                 |
+| `seedAngle`   | `f32` | `0.0`             | Angle used by anisotropic kernels.                          |
+| `exp1`        | `f32` | `1.0`             | Primary exponent shaping for curves.                        |
+| `exp2`        | `f32` | `0.0`             | Secondary exponent shaping term.                            |
+| `threshold`   | `f32` | `0.1`             | Threshold for Voronoi derived outputs and pattern cuts.     |
+| `rippleFreq`  | `f32` | `10.0`            | Base ripple frequency in ripple modes.                      |
+| `time`        | `f32` | `0.0`             | Time parameter for animated modes.                          |
+| `warpAmp`     | `f32` | `0.5`             | Domain warp amplitude when used.                            |
+| `gaborRadius` | `f32` | `4.0`             | Radius for Gabor kernel sampling.                           |
+| `terraceStep` | `f32` | `8.0`             | Step size for terrace quantization.                         |
+| `toroidal`    | `u32` | `0`               | If `1`, use toroidal addressing in kernels that support it. |
+| `voroMode`    | `u32` | `0`               | Voronoi derived output selector (see below).                |
+| `edgeK`       | `f32` | `0.0`             | Voronoi edge scale/strength/feather, depends on mode.       |
 
 You can pass a single object and share it across all kernels or pass an array of param objects per call so each kernel gets different settings.
+
+#### Voronoi derived outputs (`voroMode`)
+
+`voroMode` selects which derived value to return from the same F1/F2 Voronoi sample. `threshold` and `edgeK` are used for edge and mask modes.
+
+| `voroMode` | Name                     | Output semantics                                                                      |
+| ---------- | ------------------------ | ------------------------------------------------------------------------------------- |
+| `0`        | `VORO_CELL`              | Cell value (granite).                                                                 |
+| `1`        | `VORO_F1`                | F1 distance (nearest feature).                                                        |
+| `2`        | `VORO_INTERIOR`          | `gap = F2 - F1`.                                                                      |
+| `3`        | `VORO_EDGES`             | `clamp(gap * edgeK)` (if `edgeK <= 0` uses default scale).                            |
+| `4`        | `VORO_EDGE_THRESH`       | `(gap >= threshold) ? gap : 0`.                                                       |
+| `5`        | `VORO_FLAT_SHADE`        | Cells = 1, edges = 0 where edges defined by `(gap < threshold)`, feather = `edgeK`.   |
+| `6`        | `VORO_FLAT_SHADE_INV`    | Edges = 1, cells = 0 where edges defined by `(gap < threshold)`, feather = `edgeK`.   |
+| `7`        | `VORO_INTERIOR_SQ`       | `gapSq = F2^2 - F1^2` (legacy cellular3D semantics).                                  |
+| `8`        | `VORO_EDGES_SQ`          | `clamp(gapSq * edgeK)` (if `edgeK <= 0` uses default scale).                          |
+| `9`        | `VORO_EDGE_THRESH_SQ`    | `(gapSq >= threshold) ? gapSq : 0`.                                                   |
+| `10`       | `VORO_FLAT_SHADE_SQ`     | Cells = 1, edges = 0 where edges defined by `(gapSq < threshold)`, feather = `edgeK`. |
+| `11`       | `VORO_FLAT_SHADE_INV_SQ` | Edges = 1, cells = 0 where edges defined by `(gapSq < threshold)`, feather = `edgeK`. |
+| `12`       | `VORO_F1_THRESH`         | `(F1 >= threshold) ? F1 : 0`.                                                         |
+| `13`       | `VORO_F1_MASK`           | Smooth mask 0..1 ramp from `threshold` to `threshold + edgeK`.                        |
+| `14`       | `VORO_F1_MASK_INV`       | Inverted smooth mask.                                                                 |
+| `15`       | `VORO_EDGE_RCP`          | `1 / (1 + gap * edgeK)`.                                                              |
+| `16`       | `VORO_EDGE_RCP_SQ`       | `1 / (1 + gapSq * edgeK)`.                                                            |
+
+Notes:
+
+* `threshold` is used by the threshold, flat shade, and mask modes.
+* `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
 
 ### Compute options (`setOptions`)
 
@@ -371,10 +383,10 @@ Basic pattern:
 const builder = new NoiseComputeBuilder(device, device.queue);
 
 const view = await builder.computeToTexture(width, height, params, {
-  noiseChoices: ['clearTexture', 'computePerlin']
+  noiseChoices: ["clearTexture", "computePerlin"]
 });
 
-const canvas = document.querySelector('#noise-canvas');
+const canvas = document.querySelector("#noise-canvas");
 builder.configureCanvas(canvas);
 builder.renderTextureToCanvas(view, canvas, {
   layer: 0,
@@ -406,11 +418,11 @@ const volumeView = await builder.computeToTexture3D(
   W, H, D,
   params,
   {
-    id: 'shape128',
+    id: "shape128",
     frameFullWidth: W,
     frameFullHeight: H,
     frameFullDepth: D,
-    noiseChoices: ['clearTexture', 'computePerlin4D', 'computeWorley4D']
+    noiseChoices: ["clearTexture", "computePerlin4D", "computeWorley4D"]
   }
 );
 ```
@@ -445,8 +457,8 @@ await builder.computeToTexture3D(
   128, 128, 128,
   { ...params, toroidal: 1 },
   {
-    id: 'toroidalDemo',
-    noiseChoices: ['clearTexture', 'computePerlin4D', 'computeWorley4D'],
+    id: "toroidalDemo",
+    noiseChoices: ["clearTexture", "computePerlin4D", "computeWorley4D"],
     outputChannel: 1
   }
 );
@@ -456,12 +468,12 @@ The UI mirrors this with constants:
 
 ```js
 const TOROIDAL_VOLUME_CHOICES = [
-  'clearTexture',
-  'computePerlin4D',
-  'computeWorley4D'
+  "clearTexture",
+  "computePerlin4D",
+  "computeWorley4D"
 ];
 
-const TOROIDAL_VOLUME_ID = 'toroidalDemo';
+const TOROIDAL_VOLUME_ID = "toroidalDemo";
 ```
 
 A Z index slider maps to a normalized depth coordinate for the 3D blit shader so you can scrub slices without rerunning `computeToTexture3D`.
@@ -484,6 +496,8 @@ The sidebar exposes global controls mapped to the `params` UBO. Typical IDs incl
 * `noise-yShift`
 * `noise-zShift`
 * `noise-threshold`
+* `noise-voroMode`
+* `noise-edgeK`
 
 `readGlobalParamsFromUI()` collects these and returns an object that matches `setNoiseParams`:
 
@@ -544,6 +558,8 @@ The override panel provides:
   * `xShift`
   * `yShift`
   * `zShift`
+  * `voroMode`
+  * `edgeK`
 
 Overrides are stored in `MODE_OVERRIDES[bit]`. When present they apply only to that mode on top of the global parameters and constraint clamps.
 
@@ -551,7 +567,7 @@ Overrides are stored in `MODE_OVERRIDES[bit]`. When present they apply only to t
 
 ## UI behavior
 
-The front end wiring lives in `noiseComputeTEst.js`.
+The front end wiring lives in `noiseUI.js`.
 
 On load it:
 
@@ -655,7 +671,7 @@ Typical usage:
 builder.destroyAllTexturePairs();
 
 // When a named 3D volume is no longer needed
-builder.destroyVolume('toroidalDemo');
+builder.destroyVolume("toroidalDemo");
 
 // When tearing down the builder
 builder.destroyAllTexturePairs();
@@ -671,7 +687,7 @@ WebGPU will free resources when the page is closed, but explicit destruction is 
 If you only want the compute helper:
 
 ```js
-import { NoiseComputeBuilder, BaseNoise } from './noiseComputeBuilder.js';
+import { NoiseComputeBuilder, BaseNoise } from "./noiseComputeBuilder.js";
 
 const adapter = await navigator.gpu.requestAdapter();
 const device = await adapter.requestDevice();
@@ -682,7 +698,7 @@ builder.buildPermTable(123456789);
 
 // options and params
 builder.setOptions({
-  noiseChoices: ['clearTexture', 'computePerlin'],
+  noiseChoices: ["clearTexture", "computePerlin"],
   outputChannel: 1
 });
 
@@ -696,7 +712,7 @@ builder.setNoiseParams({
 });
 
 // 2D compute
-const canvas = document.querySelector('canvas');
+const canvas = document.querySelector("canvas");
 builder.configureCanvas(canvas);
 
 const view2D = await builder.computeToTexture(1024, 1024, null, {});
@@ -708,10 +724,4 @@ builder.destroyAllVolumes();
 ```
 
 You can adopt the same pattern for 3D volumes and slice previews and plug `NoiseComputeBuilder` into your own engine or scene graph without using the demo UI.
-
-
-
-
-
-
 
