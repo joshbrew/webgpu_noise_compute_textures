@@ -1,547 +1,702 @@
+<!-- tools/clouds/clouds.html -->
 <!doctype html>
 <html lang="en">
 
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Clouds — UI</title>
-    <style>
-        :root {
-            --side: 340px;
-            --fg: #dbe4ff;
-            --fg2: #9fb0d0;
-            --bg: #0e1117;
-            --panel: #0c111b;
-        }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Clouds - UI</title>
+  <style>
+    :root {
+      --side: 340px;
+      --fg: #dbe4ff;
+      --fg2: #9fb0d0;
+      --bg: #0e1117;
+      --panel: #0c111b;
+    }
 
-        * {
-            box-sizing: border-box
-        }
+    * { box-sizing: border-box }
 
-        html,
-        body {
-            margin: 0;
-            height: 100%;
-            background: var(--bg);
-            color: var(--fg);
-            font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
-        }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
 
-        #sidebar {
-            position: fixed;
-            inset: 0 auto 0 0;
-            width: var(--side);
-            background: var(--panel);
-            overflow: auto;
-            padding: 16px 16px 80px;
-            border-right: 1px solid #151c2b
-        }
+    #sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: var(--side);
+      background: var(--panel);
+      overflow: auto;
+      padding: 16px 16px 80px;
+      border-right: 1px solid #151c2b;
+    }
 
-        #gpuCanvas {
-            position: fixed;
-            left: var(--side);
-            top: 0;
-            right: 0;
-            bottom: 0;
-            width: calc(100vw - var(--side));
-            height: 100vh;
-            display: block;
-            background: #000
-        }
+    #gpuCanvas {
+      position: fixed;
+      left: var(--side);
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: calc(100vw - var(--side));
+      height: 100vh;
+      display: block;
+      background: #000;
+    }
 
-        h1 {
-            margin: 0 0 8px;
-            font-size: 18px
-        }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
 
-        h2 {
-            margin: 16px 0 8px;
-            font-size: 13px;
-            color: var(--fg2)
-        }
+    h2 {
+      margin: 16px 0 8px;
+      font-size: 13px;
+      color: var(--fg2);
+    }
 
-        label {
-            display: block;
-            margin: 6px 0 2px;
-            color: var(--fg2);
-            font-size: 12px
-        }
+    label {
+      display: block;
+      margin: 6px 0 2px;
+      color: var(--fg2);
+      font-size: 12px;
+    }
 
-        select  {
-            width: 100%;
-            padding: 0px 8px;
-            border-radius: 8px;
-            border: 1px solid #26304a;
-            background: #0b0f19;
-            color: var(--fg)
-        }
-        input,
-        button {
-            width: 100%;
-            padding: 6px 8px;
-            border-radius: 8px;
-            border: 1px solid #26304a;
-            background: #0b0f19;
-            color: var(--fg)
-        }
+    select {
+      width: 100%;
+      padding: 0px 8px;
+      border-radius: 8px;
+      border: 1px solid #26304a;
+      background: #0b0f19;
+      color: var(--fg);
+      height: 28px;
+    }
 
-        input[type="number"] {
-            appearance: textfield
-        }
+    input, button {
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid #26304a;
+      background: #0b0f19;
+      color: var(--fg);
+    }
 
-        button {
-            margin-top: 10px;
-            cursor: pointer
-        }
+    input[type="number"] { appearance: textfield }
 
-        .row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px
-        }
+    button {
+      margin-top: 10px;
+      cursor: pointer;
+    }
 
-        .panel {
-            margin: 10px 0;
-            padding: 10px;
-            border: 1px solid #1a2135;
-            border-radius: 10px;
-            background: #0b101a
-        }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
 
-        .dbg .slot {
-            margin-bottom: 14px
-        }
+    .panel {
+      margin: 10px 0;
+      padding: 10px;
+      border: 1px solid #1a2135;
+      border-radius: 10px;
+      background: #0b101a;
+    }
 
-        .dbg .slot div {
-            margin: 0 0 6px;
-            font-weight: 600;
-            font-size: 12px;
-            color: #b8c7e6
-        }
+    .dbg .slot { margin-bottom: 14px }
+    .dbg .slot div {
+      margin: 0 0 6px;
+      font-weight: 600;
+      font-size: 12px;
+      color: #b8c7e6;
+    }
 
-        .dbg canvas {
-            width: 100%;
-            height: auto;
-            display: block;
-            border-radius: 8px;
-            background: #000;
-            box-shadow: 0 0 0 1px #131b2b inset
-        }
+    .dbg canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+      background: #000;
+      box-shadow: 0 0 0 1px #131b2b inset;
+    }
 
-        small {
-            color: #7f8cb0;
-            font-size: 12px
-        }
+    small { color: #7f8cb0; font-size: 12px }
 
-        #busyOverlay {
-            position: fixed;
-            left: var(--side);
-            top: 0;
-            right: 0;
-            bottom: 0;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            background: rgba(2, 4, 8, 0.55);
-            z-index: 9999
-        }
+    #busyOverlay {
+      position: fixed;
+      left: var(--side);
+      top: 0;
+      right: 0;
+      bottom: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(2, 4, 8, 0.55);
+      z-index: 9999;
+    }
 
-        #busyOverlay .box {
-            padding: 12px 16px;
-            border-radius: 8px;
-            background: #0b1220;
-            border: 1px solid #26304a;
-            color: var(--fg);
-            font-weight: 600
-        }
+    #busyOverlay .box {
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: #0b1220;
+      border: 1px solid #26304a;
+      color: var(--fg);
+      font-weight: 600;
+    }
 
-        .inline {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
+    .inline {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
 
-        .smallLabel {
-            font-size: 12px;
-            color: var(--fg2);
-            margin-right: 8px
-        }
+    .smallLabel {
+      font-size: 12px;
+      color: var(--fg2);
+      margin-right: 8px;
+    }
 
-        /* compact 3-column helper for XYZ entries */
-        .triple {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px
-        }
+    .triple {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
 
-        .compact {
-            font-size: 12px;
-            padding: 6px;
-            border-radius: 6px
-        }
-    </style>
+    .compact {
+      font-size: 12px;
+      padding: 6px;
+      border-radius: 6px;
+    }
+
+    .divider {
+      margin-top: 12px;
+      border-top: 1px dashed #142034;
+      padding-top: 10px;
+    }
+
+    .hint {
+      margin-top: 6px;
+      color: #93a6ce;
+      display: block;
+    }
+  </style>
 </head>
 
 <body>
 
-    <aside id="sidebar">
-        <h1>Pipeline</h1>
+  <aside id="sidebar">
+    <h1>Pipeline</h1>
 
-        <div class="panel">
-            <div style="display:flex;gap:8px">
-                <label for="pass">Controls:</label>
-                <select id="pass" style="flex:1">
-                    <option value="weather">Weather 2D</option>
-                    <option value="shape128">Shape128 RGBA</option>
-                    <option value="detail32">Detail32 RGB</option>
-                    <option value="blue">Blue Noise 2D</option>
-                    <option value="clouds">Clouds</option>
-                    <option value="preview" selected>Preview</option>
-                </select>
-            </div>
+    <div class="panel">
+      <div style="display:flex;gap:8px">
+        <label for="pass">Controls:</label>
+        <select id="pass" style="flex:1">
+          <option value="weather">Weather 2D</option>
+          <option value="shape128">Shape128 RGBA</option>
+          <option value="detail32">Detail32 RGB</option>
+          <option value="blue">Blue Noise 2D</option>
+          <option value="clouds">Clouds</option>
+          <option value="preview" selected>Preview</option>
+        </select>
+      </div>
 
-            <button id="rebake-all">Re-Bake Textures</button>
-            <button id="render">Re-Render</button>
+      <button id="rebake-all">Re-Bake Textures</button>
+      <button id="render">Re-Render</button>
 
-            <div style="margin-top:10px" class="inline">
-                <div style="flex:1">
-                    <label style="margin-bottom:6px">Reproject &amp; Animate</label>
-                    <button id="reproj-anim-toggle">Start x4 Anim</button>
-                    <small style="display:block;margin-top:6px;color:#93a6ce">Click to enable coarse ×4 reprojection and
-                        start/stop the animation loop.</small>
-                </div>
-                <div style="width:110px">
-                    <div style="margin-top:6px;font-size:12px;color:var(--fg2)">FPS: <span id="fpsDisplay">—</span>
-                    </div>
-                </div>
-            </div>
+      <div style="margin-top:10px" class="inline">
+        <div style="flex:1">
+          <label style="margin-bottom:6px">Reproject &amp; Animate</label>
+          <button id="reproj-anim-toggle">Start x4 Anim</button>
+          <small class="hint">Click to enable coarse x4 reprojection and start/stop the animation loop.</small>
         </div>
-
-        <!-- Weather -->
-        <div class="panel" id="p-weather">
-            <h2>Weather (FBM → 2D R) + Billow (G)</h2>
-
-            <div style="display:flex;gap:8px;margin-bottom:8px">
-                <button id="bake-weather">Bake Weather</button>
-                <button id="seed-weather">Seed Weather</button>
-                <button id="bake-blue">Bake Blue Noise</button>
-                <button id="seed-blue">Seed Blue</button>
-            </div>
-
-            <!-- Base FBM (R channel) -->
-            <div class="row">
-                <div><label>Zoom</label><input id="we-zoom" type="number" step="0.05" class="compact"></div>
-                <div><label>Frequency</label><input id="we-freq" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Octaves</label><input id="we-oct" type="number" step="1" class="compact"></div>
-                <div><label>Lacunarity</label><input id="we-lac" type="number" step="0.1" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Gain</label><input id="we-gain" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <!-- Billow (G channel) — full FBM-like parameter set, decoupled from base -->
-            <h2 style="margin-top:12px;font-size:13px;color:var(--fg2)">Billow (G channel)</h2>
-
-            <div class="row">
-                <div><label>Enable Billow</label><input id="we-billow-enable" type="checkbox" class="compact"></div>
-                <div><label>Billow Zoom</label><input id="we-billow-zoom" type="number" step="0.05" class="compact">
-                </div>
-            </div>
-
-            <div class="row">
-                <div><label>Billow Frequency</label><input id="we-billow-freq" type="number" step="0.05"
-                        class="compact"></div>
-                <div><label>Billow Octaves</label><input id="we-billow-oct" type="number" step="1" class="compact">
-                </div>
-            </div>
-
-            <div class="row">
-                <div><label>Billow Lacunarity</label><input id="we-billow-lac" type="number" step="0.1" class="compact">
-                </div>
-                <div><label>Billow Gain</label><input id="we-billow-gain" type="number" step="0.05" class="compact">
-                </div>
-            </div>
-
-
-            <!-- Note: billow DOES NOT have scroll/scale — shape & detail control scrolling/scaling in their panels. -->
+        <div style="width:110px">
+          <div style="margin-top:6px;font-size:12px;color:var(--fg2)">FPS: <span id="fpsDisplay">-</span></div>
         </div>
-        <!-- Shape128 -->
-        <div class="panel" id="p-shape128">
-            <h2>Shape128 RGBA</h2>
-
-            <div style="display:flex;gap:8px;margin-bottom:8px">
-                <button id="bake-shape128">Bake Shape128</button>
-                <button id="seed-shape">Seed Shape</button>
-            </div>
-
-            <div class="row">
-                <div><label>Zoom</label><input id="sh-zoom" type="number" step="0.05" class="compact"></div>
-                <div><label>Frequency</label><input id="sh-freq" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Octaves</label><input id="sh-oct" type="number" step="1" class="compact"></div>
-                <div><label>Lacunarity</label><input id="sh-lac" type="number" step="0.1" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Gain</label><input id="sh-gain" type="number" step="0.05" class="compact"></div>
-                <div><label>Threshold</label><input id="sh-thr" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <!-- Shape Scroll (3D) & Shape Scale -->
-            <div style="margin-top:12px;border-top:1px dashed #142034;padding-top:10px">
-                <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Shape Scale, Pos &amp; Vel (XYZ)</h2>
-
-                <div class="row">
-                    <div><label>Shape Scale</label><input id="sh-scale" type="number" step="0.0005" value="0.1"
-                            class="compact"></div>
-                    <div></div>
-                </div>
-
-                <div class="triple" style="margin-top:8px">
-                    <div><label>Shape Pos X</label><input id="sh-pos-x" type="number" step="0.001" value="0"
-                            class="compact"></div>
-                    <div><label>Shape Pos Y</label><input id="sh-pos-y" type="number" step="0.001" value="0"
-                            class="compact"></div>
-                    <div><label>Shape Pos Z</label><input id="sh-pos-z" type="number" step="0.001" value="0"
-                            class="compact"></div>
-                </div>
-
-                <div class="triple" style="margin-top:8px">
-                    <div><label>Shape Vel X</label><input id="sh-vel-x" type="number" step="0.0001" value="0.2"
-                            class="compact"></div>
-                    <div><label>Shape Vel Y</label><input id="sh-vel-y" type="number" step="0.0001" value="0"
-                            class="compact"></div>
-                    <div><label>Shape Vel Z</label><input id="sh-vel-z" type="number" step="0.0001" value="0"
-                            class="compact"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Detail32 -->
-        <div class="panel" id="p-detail32">
-            <h2>Detail32 RGB</h2>
-
-            <div style="display:flex;gap:8px;margin-bottom:8px">
-                <button id="bake-detail32">Bake Detail32</button>
-                <button id="seed-detail">Seed Detail</button>
-            </div>
-
-            <div class="row">
-                <div><label>Zoom</label><input id="de-zoom" type="number" step="0.05" class="compact"></div>
-                <div><label>Frequency</label><input id="de-freq" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Octaves</label><input id="de-oct" type="number" step="1" class="compact"></div>
-                <div><label>Lacunarity</label><input id="de-lac" type="number" step="0.1" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Gain</label><input id="de-gain" type="number" step="0.05" class="compact"></div>
-                <div><label>Threshold</label><input id="de-thr" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <!-- Detail Scroll (3D) & Detail Scale -->
-            <div style="margin-top:12px;border-top:1px dashed #142034;padding-top:10px">
-                <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Detail Scale, Pos &amp; Vel (XYZ)</h2>
-
-                <div class="row">
-                    <div><label>Detail Scale</label><input id="de-scale" type="number" step="0.0005" value="1.0"
-                            class="compact"></div>
-                    <div></div>
-                </div>
-
-                <div class="triple" style="margin-top:8px">
-                    <div><label>Detail Pos X</label><input id="de-pos-x" type="number" step="0.001" value="0"
-                            class="compact"></div>
-                    <div><label>Detail Pos Y</label><input id="de-pos-y" type="number" step="0.001" value="0"
-                            class="compact"></div>
-                    <div><label>Detail Pos Z</label><input id="de-pos-z" type="number" step="0.001" value="0"
-                            class="compact"></div>
-                </div>
-
-                <div class="triple" style="margin-top:8px">
-                    <div><label>Detail Vel X</label><input id="de-vel-x" type="number" step="0.0001" value="0.02"
-                            class="compact"></div>
-                    <div><label>Detail Vel Y</label><input id="de-vel-y" type="number" step="0.0001" value="0"
-                            class="compact"></div>
-                    <div><label>Detail Vel Z</label><input id="de-vel-z" type="number" step="0.0001" value="0"
-                            class="compact"></div>
-                </div>
-            </div>
-        </div>
-
-
-        <!-- Cloud Params + Tuning -->
-        <div class="panel" id="p-cloudParams">
-            <h2>Cloud Params</h2>
-
-            <div class="row">
-                <div><label>Sun Az (deg)</label><input id="c-az" type="number" step="1" class="compact"></div>
-                <div><label>Sun El (deg)</label><input id="c-el" type="number" step="1" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Sun Bloom</label><input id="c-bloom" type="number" step="0.05" class="compact"></div>
-                <div></div>
-            </div>
-
-            <div class="row">
-                <div><label>Coverage</label><input id="p-coverage" type="number" step="0.02" class="compact"></div>
-                <div><label>Density</label><input id="p-density" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Beer σ</label><input id="p-beer" type="number" step="0.05" class="compact"></div>
-                <div><label>Clamp</label><input id="p-clamp" type="number" step="0.01" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>In g</label><input id="p-ins" type="number" step="0.01" class="compact"></div>
-                <div><label>Out g</label><input id="p-outs" type="number" step="0.01" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>In↔Out</label><input id="p-ivo" type="number" step="0.01" class="compact"></div>
-                <div><label>Silver I</label><input id="p-sI" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Silver Exp</label><input id="p-sE" type="number" step="1" class="compact"></div>
-                <div><label>Amb Out</label><input id="p-ambOut" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Amb Min</label><input id="p-ambMin" type="number" step="0.02" class="compact"></div>
-                <div><label>Anvil</label><input id="p-anvil" type="number" step="0.02" class="compact"></div>
-            </div>
-
-            <h2 style="margin-top:12px;font-size:13px;color:var(--fg2)">Tuning</h2>
-
-            <div class="row">
-                <div><label>Max Steps</label><input id="t-maxSteps" type="number" step="1" class="compact"></div>
-                <div><label>Min Step</label><input id="t-minStep" type="number" step="0.001" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Max Step</label><input id="t-maxStep" type="number" step="0.01" class="compact"></div>
-                <div><label>Sun Steps</label><input id="t-sunSteps" type="number" step="1" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Phase Jitter</label><input id="t-phaseJitter" type="number" step="0.01" class="compact">
-                </div>
-                <div><label>Step Jitter</label><input id="t-stepJitter" type="number" step="0.01" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Base Jitter Frac</label><input id="t-baseJitter" type="number" step="0.01" class="compact">
-                </div>
-                <div><label>Top Jitter Frac</label><input id="t-topJitter" type="number" step="0.01" class="compact">
-                </div>
-            </div>
-
-            <div class="row">
-                <div><label>LOD Bias Weather</label><input id="t-lodBiasWeather" type="number" step="0.1"
-                        class="compact"></div>
-                <div><label>Near Fluff Dist</label><input id="t-nearFluffDist" type="number" step="1" class="compact">
-                </div>
-            </div>
-
-            <div class="row">
-                <div><label>Near Density Mult</label><input id="t-nearDensityMult" type="number" step="0.1"
-                        class="compact"></div>
-                <div><label>Far Start</label><input id="t-farStart" type="number" step="10" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Far Full</label><input id="t-farFull" type="number" step="10" class="compact"></div>
-                <div><label>Ray Smooth Dens</label><input id="t-raySmoothDens" type="number" step="0.01"
-                        class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Ray Smooth Sun</label><input id="t-raySmoothSun" type="number" step="0.01" class="compact">
-                </div>
-                <div></div>
-            </div>
-        </div>
-
-        <!-- Preview -->
-        <div class="panel" id="p-preview">
-            <h2>Preview (World camera)</h2>
-            <div class="row">
-                <div><label>Cam X</label><input id="v-cx" type="number" step="0.05" class="compact"></div>
-                <div><label>Cam Y</label><input id="v-cy" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Cam Z</label><input id="v-cz" type="number" step="0.05" class="compact"></div>
-                <div><label>FOV Y (deg)</label><input id="v-fov" type="number" step="1" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Yaw (deg)</label><input id="v-yaw" type="number" step="1" class="compact"></div>
-                <div><label>Pitch (deg)</label><input id="v-pitch" type="number" step="1" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Exposure</label><input id="v-exposure" type="number" step="0.05" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Sky R</label><input id="v-sr" type="number" step="0.01" class="compact"></div>
-                <div><label>Sky G</label><input id="v-sg" type="number" step="0.01" class="compact"></div>
-            </div>
-
-            <div class="row">
-                <div><label>Sky B</label><input id="v-sb" type="number" step="0.01" class="compact"></div>
-                <div><label>Sun Bloom</label><input id="v-sbloom" type="number" step="0.05" class="compact" disabled>
-                </div>
-            </div>
-        </div>
-
-        <!-- Slice -->
-        <div class="panel">
-            <h2>Slice</h2>
-            <input id="slice" type="range" min="0" max="127" value="0">
-            <small>Slice: <span id="sliceLabel">0</span> / 127</small>
-        </div>
-
-        <!-- Debug canvases -->
-        <div class="panel dbg" id="dbgWrap">
-            <div class="slot">
-                <div>Weather 2D (R)</div><canvas id="dbg-weather"></canvas>
-            </div>
-            <div class="slot">
-                <div>Weather 2D (G - Billow)</div><canvas id="dbg-weather-g"></canvas>
-            </div>
-            <div class="slot">
-                <div>Shape128 — R channel</div><canvas id="dbg-r"></canvas>
-            </div>
-            <div class="slot">
-                <div>Detail32 — R channel</div><canvas id="dbg-g"></canvas>
-            </div>
-            <div class="slot">
-                <div>Blue Noise 2D</div><canvas id="dbg-blue"></canvas>
-            </div>
-        </div>
-
-    </aside>
-
-    <!-- main canvas -->
-    <canvas id="gpuCanvas"></canvas>
-
-    <!-- busy overlay -->
-    <div id="busyOverlay">
-        <div class="box" id="busyMsg">Working...</div>
+      </div>
     </div>
+
+    <!-- Weather -->
+    <div class="panel" id="p-weather">
+      <h2>Weather 2D (R and G channels)</h2>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button id="bake-weather">Bake Weather</button>
+        <button id="seed-weather">Seed Weather</button>
+      </div>
+
+      <h2 style="margin-top:8px;font-size:13px;color:var(--fg2)">Base (R channel)</h2>
+
+      <div class="row">
+        <div>
+          <label>Mode</label>
+          <select id="we-mode" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div>
+          <label>Seed (u32)</label>
+          <input id="we-seed" type="number" step="1" class="compact">
+        </div>
+      </div>
+
+      <div class="row">
+        <div><label>Zoom</label><input id="we-zoom" type="number" step="0.05" class="compact"></div>
+        <div><label>Frequency</label><input id="we-freq" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Octaves</label><input id="we-oct" type="number" step="1" class="compact"></div>
+        <div><label>Lacunarity</label><input id="we-lac" type="number" step="0.1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Gain</label><input id="we-gain" type="number" step="0.05" class="compact"></div>
+        <div><label>Threshold</label><input id="we-thr" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Seed Angle</label><input id="we-seedAngle" type="number" step="0.01" class="compact"></div>
+        <div><label>Time</label><input id="we-time" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Voro Mode (u32)</label><input id="we-voroMode" type="number" step="1" class="compact"></div>
+        <div><label>EdgeK</label><input id="we-edgeK" type="number" step="0.1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Warp Amp</label><input id="we-warpAmp" type="number" step="0.05" class="compact"></div>
+        <div></div>
+      </div>
+
+      <div class="divider">
+        <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Secondary (G channel)</h2>
+
+        <div class="row">
+          <div class="inline" style="gap:10px">
+            <input id="we-billow-enable" type="checkbox" class="compact" style="width:auto">
+            <div class="smallLabel">Enable</div>
+          </div>
+          <div>
+            <label>Mode</label>
+            <select id="we-billow-mode" class="compact">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div><label>Seed (u32)</label><input id="we-billow-seed" type="number" step="1" class="compact"></div>
+          <div><label>Scale</label><input id="we-billow-scale" type="number" step="0.01" class="compact"></div>
+        </div>
+
+        <div class="row">
+          <div><label>Zoom</label><input id="we-billow-zoom" type="number" step="0.05" class="compact"></div>
+          <div><label>Frequency</label><input id="we-billow-freq" type="number" step="0.05" class="compact"></div>
+        </div>
+
+        <div class="row">
+          <div><label>Octaves</label><input id="we-billow-oct" type="number" step="1" class="compact"></div>
+          <div><label>Lacunarity</label><input id="we-billow-lac" type="number" step="0.1" class="compact"></div>
+        </div>
+
+        <div class="row">
+          <div><label>Gain</label><input id="we-billow-gain" type="number" step="0.05" class="compact"></div>
+          <div><label>Threshold</label><input id="we-billow-thr" type="number" step="0.01" class="compact"></div>
+        </div>
+
+        <div class="row">
+          <div><label>Seed Angle</label><input id="we-billow-seedAngle" type="number" step="0.01" class="compact"></div>
+          <div><label>Time</label><input id="we-billow-time" type="number" step="0.01" class="compact"></div>
+        </div>
+
+        <div class="row">
+          <div><label>Voro Mode (u32)</label><input id="we-billow-voroMode" type="number" step="1" class="compact"></div>
+          <div><label>EdgeK</label><input id="we-billow-edgeK" type="number" step="0.1" class="compact"></div>
+        </div>
+
+        <div class="row">
+          <div><label>Warp Amp</label><input id="we-billow-warpAmp" type="number" step="0.05" class="compact"></div>
+          <div></div>
+        </div>
+
+        <small class="hint">Weather modes list is populated from NoiseComputeBuilder entry points.</small>
+      </div>
+    </div>
+
+    <!-- Blue Noise -->
+    <div class="panel" id="p-blue">
+      <h2>Blue Noise 2D</h2>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button id="bake-blue">Bake Blue Noise</button>
+        <button id="seed-blue">Seed Blue</button>
+      </div>
+
+      <div class="row">
+        <div><label>Seed (u32)</label><input id="bn-seed" type="number" step="1" class="compact"></div>
+        <div></div>
+      </div>
+    </div>
+
+    <!-- Shape128 -->
+    <div class="panel" id="p-shape128">
+      <h2>Shape128 RGBA</h2>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button id="bake-shape128">Bake Shape128</button>
+        <button id="seed-shape">Seed Shape</button>
+      </div>
+
+      <h2 style="margin-top:8px;font-size:13px;color:var(--fg2)">Modes (4D-only)</h2>
+
+      <div class="row">
+        <div>
+          <label>Base A (R)</label>
+          <select id="sh-mode-a" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div>
+          <label>Base B (R, optional)</label>
+          <select id="sh-mode-b" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Channel 2 (G)</label>
+          <select id="sh-mode-2" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div>
+          <label>Channel 3 (B)</label>
+          <select id="sh-mode-3" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Channel 4 (A)</label>
+          <select id="sh-mode-4" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div>
+          <label>Seed (u32)</label>
+          <input id="sh-seed" type="number" step="1" class="compact">
+        </div>
+      </div>
+
+      <div class="row">
+        <div><label>Zoom</label><input id="sh-zoom" type="number" step="0.05" class="compact"></div>
+        <div><label>Frequency</label><input id="sh-freq" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Octaves</label><input id="sh-oct" type="number" step="1" class="compact"></div>
+        <div><label>Lacunarity</label><input id="sh-lac" type="number" step="0.1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Gain</label><input id="sh-gain" type="number" step="0.05" class="compact"></div>
+        <div><label>Threshold</label><input id="sh-thr" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Seed Angle</label><input id="sh-seedAngle" type="number" step="0.01" class="compact"></div>
+        <div><label>Time</label><input id="sh-time" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Voro Mode (u32)</label><input id="sh-voroMode" type="number" step="1" class="compact"></div>
+        <div><label>EdgeK</label><input id="sh-edgeK" type="number" step="0.1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Warp Amp</label><input id="sh-warpAmp" type="number" step="0.05" class="compact"></div>
+        <div></div>
+      </div>
+
+      <div class="divider">
+        <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Shape Scale, Pos &amp; Vel (XYZ)</h2>
+
+        <div class="row">
+          <div><label>Shape Scale</label><input id="sh-scale" type="number" step="0.0005" value="0.1" class="compact"></div>
+          <div></div>
+        </div>
+
+        <div class="triple" style="margin-top:8px">
+          <div><label>Shape Pos X</label><input id="sh-pos-x" type="number" step="0.001" value="0" class="compact"></div>
+          <div><label>Shape Pos Y</label><input id="sh-pos-y" type="number" step="0.001" value="0" class="compact"></div>
+          <div><label>Shape Pos Z</label><input id="sh-pos-z" type="number" step="0.001" value="0" class="compact"></div>
+        </div>
+
+        <div class="triple" style="margin-top:8px">
+          <div><label>Shape Vel X</label><input id="sh-vel-x" type="number" step="0.0001" value="0.2" class="compact"></div>
+          <div><label>Shape Vel Y</label><input id="sh-vel-y" type="number" step="0.0001" value="0" class="compact"></div>
+          <div><label>Shape Vel Z</label><input id="sh-vel-z" type="number" step="0.0001" value="0" class="compact"></div>
+        </div>
+
+        <small class="hint">Transforms apply immediately without rebaking. Modes and noise params rebake.</small>
+      </div>
+    </div>
+
+    <!-- Detail32 -->
+    <div class="panel" id="p-detail32">
+      <h2>Detail32 RGB</h2>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button id="bake-detail32">Bake Detail32</button>
+        <button id="seed-detail">Seed Detail</button>
+      </div>
+
+      <h2 style="margin-top:8px;font-size:13px;color:var(--fg2)">Modes (4D-only)</h2>
+
+      <div class="row">
+        <div>
+          <label>Channel 1 (R)</label>
+          <select id="de-mode-1" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div>
+          <label>Channel 2 (G)</label>
+          <select id="de-mode-2" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Channel 3 (B)</label>
+          <select id="de-mode-3" class="compact">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div>
+          <label>Seed (u32)</label>
+          <input id="de-seed" type="number" step="1" class="compact">
+        </div>
+      </div>
+
+      <div class="row">
+        <div><label>Zoom</label><input id="de-zoom" type="number" step="0.05" class="compact"></div>
+        <div><label>Frequency</label><input id="de-freq" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Octaves</label><input id="de-oct" type="number" step="1" class="compact"></div>
+        <div><label>Lacunarity</label><input id="de-lac" type="number" step="0.1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Gain</label><input id="de-gain" type="number" step="0.05" class="compact"></div>
+        <div><label>Threshold</label><input id="de-thr" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Seed Angle</label><input id="de-seedAngle" type="number" step="0.01" class="compact"></div>
+        <div><label>Time</label><input id="de-time" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Voro Mode (u32)</label><input id="de-voroMode" type="number" step="1" class="compact"></div>
+        <div><label>EdgeK</label><input id="de-edgeK" type="number" step="0.1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Warp Amp</label><input id="de-warpAmp" type="number" step="0.05" class="compact"></div>
+        <div></div>
+      </div>
+
+      <div class="divider">
+        <h2 style="margin:6px 0 8px;font-size:13px;color:var(--fg2)">Detail Scale, Pos &amp; Vel (XYZ)</h2>
+
+        <div class="row">
+          <div><label>Detail Scale</label><input id="de-scale" type="number" step="0.0005" value="1.0" class="compact"></div>
+          <div></div>
+        </div>
+
+        <div class="triple" style="margin-top:8px">
+          <div><label>Detail Pos X</label><input id="de-pos-x" type="number" step="0.001" value="0" class="compact"></div>
+          <div><label>Detail Pos Y</label><input id="de-pos-y" type="number" step="0.001" value="0" class="compact"></div>
+          <div><label>Detail Pos Z</label><input id="de-pos-z" type="number" step="0.001" value="0" class="compact"></div>
+        </div>
+
+        <div class="triple" style="margin-top:8px">
+          <div><label>Detail Vel X</label><input id="de-vel-x" type="number" step="0.0001" value="0.02" class="compact"></div>
+          <div><label>Detail Vel Y</label><input id="de-vel-y" type="number" step="0.0001" value="0" class="compact"></div>
+          <div><label>Detail Vel Z</label><input id="de-vel-z" type="number" step="0.0001" value="0" class="compact"></div>
+        </div>
+
+        <small class="hint">Transforms apply immediately without rebaking. Modes and noise params rebake.</small>
+      </div>
+    </div>
+
+    <!-- Cloud Params + Tuning -->
+    <div class="panel" id="p-cloudParams">
+      <h2>Cloud Params</h2>
+
+      <div class="row">
+        <div><label>Sun Az (deg)</label><input id="c-az" type="number" step="1" class="compact"></div>
+        <div><label>Sun El (deg)</label><input id="c-el" type="number" step="1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Sun Bloom</label><input id="c-bloom" type="number" step="0.05" class="compact"></div>
+        <div></div>
+      </div>
+
+      <div class="row">
+        <div><label>Coverage</label><input id="p-coverage" type="number" step="0.02" class="compact"></div>
+        <div><label>Density</label><input id="p-density" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Beer σ</label><input id="p-beer" type="number" step="0.05" class="compact"></div>
+        <div><label>Clamp</label><input id="p-clamp" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>In g</label><input id="p-ins" type="number" step="0.01" class="compact"></div>
+        <div><label>Out g</label><input id="p-outs" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>In↔Out</label><input id="p-ivo" type="number" step="0.01" class="compact"></div>
+        <div><label>Silver I</label><input id="p-sI" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Silver Exp</label><input id="p-sE" type="number" step="1" class="compact"></div>
+        <div><label>Amb Out</label><input id="p-ambOut" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Amb Min</label><input id="p-ambMin" type="number" step="0.02" class="compact"></div>
+        <div><label>Anvil</label><input id="p-anvil" type="number" step="0.02" class="compact"></div>
+      </div>
+
+      <h2 style="margin-top:12px;font-size:13px;color:var(--fg2)">Tuning</h2>
+
+      <div class="row">
+        <div><label>Max Steps</label><input id="t-maxSteps" type="number" step="1" class="compact"></div>
+        <div><label>Min Step</label><input id="t-minStep" type="number" step="0.001" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Max Step</label><input id="t-maxStep" type="number" step="0.01" class="compact"></div>
+        <div><label>Sun Steps</label><input id="t-sunSteps" type="number" step="1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Phase Jitter</label><input id="t-phaseJitter" type="number" step="0.01" class="compact"></div>
+        <div><label>Step Jitter</label><input id="t-stepJitter" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Base Jitter Frac</label><input id="t-baseJitter" type="number" step="0.01" class="compact"></div>
+        <div><label>Top Jitter Frac</label><input id="t-topJitter" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>LOD Bias Weather</label><input id="t-lodBiasWeather" type="number" step="0.1" class="compact"></div>
+        <div><label>Near Fluff Dist</label><input id="t-nearFluffDist" type="number" step="1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Near Density Mult</label><input id="t-nearDensityMult" type="number" step="0.1" class="compact"></div>
+        <div><label>Far Start</label><input id="t-farStart" type="number" step="10" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Far Full</label><input id="t-farFull" type="number" step="10" class="compact"></div>
+        <div><label>Ray Smooth Dens</label><input id="t-raySmoothDens" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Ray Smooth Sun</label><input id="t-raySmoothSun" type="number" step="0.01" class="compact"></div>
+        <div></div>
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div class="panel" id="p-preview">
+      <h2>Preview (World camera)</h2>
+
+      <div class="row">
+        <div><label>Cam X</label><input id="v-cx" type="number" step="0.05" class="compact"></div>
+        <div><label>Cam Y</label><input id="v-cy" type="number" step="0.05" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Cam Z</label><input id="v-cz" type="number" step="0.05" class="compact"></div>
+        <div><label>FOV Y (deg)</label><input id="v-fov" type="number" step="1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Yaw (deg)</label><input id="v-yaw" type="number" step="1" class="compact"></div>
+        <div><label>Pitch (deg)</label><input id="v-pitch" type="number" step="1" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Exposure</label><input id="v-exposure" type="number" step="0.05" class="compact"></div>
+        <div></div>
+      </div>
+
+      <div class="row">
+        <div><label>Sky R</label><input id="v-sr" type="number" step="0.01" class="compact"></div>
+        <div><label>Sky G</label><input id="v-sg" type="number" step="0.01" class="compact"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Sky B</label><input id="v-sb" type="number" step="0.01" class="compact"></div>
+        <div><label>Sun Bloom</label><input id="v-sbloom" type="number" step="0.05" class="compact" disabled></div>
+      </div>
+    </div>
+
+    <!-- Slice -->
+    <div class="panel">
+      <h2>Slice</h2>
+      <input id="slice" type="range" min="0" max="127" value="0">
+      <small>Slice: <span id="sliceLabel">0</span> / 127</small>
+    </div>
+
+    <!-- Debug canvases -->
+    <div class="panel dbg" id="dbgWrap">
+      <div class="slot">
+        <div>Weather 2D (R)</div><canvas id="dbg-weather"></canvas>
+      </div>
+      <div class="slot">
+        <div>Weather 2D (G)</div><canvas id="dbg-weather-g"></canvas>
+      </div>
+      <div class="slot">
+        <div>Shape128 - R channel</div><canvas id="dbg-r"></canvas>
+      </div>
+      <div class="slot">
+        <div>Detail32 - R channel</div><canvas id="dbg-g"></canvas>
+      </div>
+      <div class="slot">
+        <div>Blue Noise 2D</div><canvas id="dbg-blue"></canvas>
+      </div>
+    </div>
+
+  </aside>
+
+  <canvas id="gpuCanvas"></canvas>
+
+  <div id="busyOverlay">
+    <div class="box" id="busyMsg">Working...</div>
+  </div>
 
 </body>
 

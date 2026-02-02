@@ -112,34 +112,32 @@ const INV_SQRT2    : f32 = 0.7071067811865476; // 1/√2
 const U_SCALE : f32 = 3.0;
 const V_SCALE : f32 = 3.0;
 const T_SCALE : f32 = 2.0;
+const PACK_BIAS : vec4<f32> = vec4<f32>(0.37, 0.21, 0.29, 0.31);
 
-
-// pack like the HTML (x=cosU*uS, y=sinU*uS, z=cosV*vS+cosT*tS, w=sinV*vS+sinT*tS)
 fn packPeriodicUV(u: f32, v: f32, theta: f32) -> vec4<f32> {
-  let aU = u * TWO_PI;
-  let aV = v * TWO_PI;
-  let aT = (theta - floor(theta)) * TWO_PI;
+  let aU = fract(u) * TWO_PI;
+  let aV = fract(v) * TWO_PI;
+  let aT = fract(theta) * TWO_PI;
 
   let x = cos(aU) * U_SCALE;
   let y = sin(aU) * U_SCALE;
   let z = cos(aV) * V_SCALE + cos(aT) * T_SCALE;
   let w = sin(aV) * V_SCALE + sin(aT) * T_SCALE;
-  return vec4<f32>(x, y, z, w);
+
+  return vec4<f32>(x, y, z, w) + PACK_BIAS;
 }
+
 
 fn thetaFromDepth(fz: i32) -> f32 {
   let uses3D = writeTo3D() || readFrom3D();
   if (uses3D) {
-    if (frame.fullDepth <= 1u) { return 0.0; }
-    // center-of-slice mapping: 0.5/N .. (N-0.5)/N
-    return (f32(clampZ(fz)) + 0.5) / f32(frame.fullDepth);
+    let d = max(f32(frame.fullDepth), 1.0);
+    return (f32(clampZ(fz)) + 0.5) / d; // [0,1)
   }
   return layerToZ(frame.layerIndex, frame.layers);
 }
 
-fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {
-
-  // ── original paths (unchanged) when not in toroidal mode ──
+fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {
   if (options.useCustomPos == 1u) {
     let use3D = writeTo3D() || readFrom3D();
     let slice_i = select(frame.layerIndex, clampZ(fz), use3D);
@@ -148,6 +146,20 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {
     let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);
     let idx = slice * frame.fullWidth * frame.fullHeight + u32(cy) * frame.fullWidth + u32(cx);
     return posBuf[idx].xyz;
+  }
+
+  if (params.toroidal == 1u) {
+    let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);
+    let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);
+
+    let invW = 1.0 / max(f32(frame.fullWidth), 1.0);
+    let invH = 1.0 / max(f32(frame.fullHeight), 1.0);
+
+    let U = (f32(cx) + 0.5) * invW;   // [0,1)
+    let V = (f32(cy) + 0.5) * invH;   // [0,1)
+    let theta = thetaFromDepth(fz);   // [0,1)
+
+    return vec3<f32>(U, V, theta);
   }
 
   let invW = 1.0 / max(f32(frame.fullWidth), 1.0);
@@ -160,22 +172,10 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {
     oy = f32(frame.originY);
   }
 
-  if (params.toroidal == 1u) {
-    // center-of-texel UVs (matches the HTML path)
-    let U = (ox + f32(fx) + 0.5) * invW;  // [0,1)
-    let V = (oy + f32(fy) + 0.5) * invH;  // [0,1)
-    let theta = thetaFromDepth(fz);       // derive θ from depth
-
-    // return (U,V,θ) — z carries θ, used by packPeriodicUV in generatePerlin4D
-    return vec3<f32>(U, V, theta);
-    //this is for 4d noise functions with toroidal implementations
-  }
-
-
   let x = (ox + f32(fx)) * invW;
   let y = (oy + f32(fy)) * invH;
 
-  var z : f32;
+  var z: f32;
   let uses3D = writeTo3D() || readFrom3D();
   if (uses3D) {
     if (frame.fullDepth <= 1u) { z = 0.0; }
@@ -183,8 +183,10 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {
   } else {
     z = layerToZ(frame.layerIndex, frame.layers);
   }
+
   return vec3<f32>(x, y, z);
 }
+
 
 
 
@@ -532,48 +534,48 @@ fn worley3D(p : vec3<f32>) -> f32 {
 
 
 /* ---------- 4D Worley (cellular) ---------- */
-fn worley4D(p: vec4<f32>) -> f32 {
-  let fx = i32(floor(p.x));
-  let fy = i32(floor(p.y));
-  let fz = i32(floor(p.z));
-  let fw = i32(floor(p.w));
+// fn worley4D(p: vec4<f32>) -> f32 {
+//   let fx = i32(floor(p.x));
+//   let fy = i32(floor(p.y));
+//   let fz = i32(floor(p.z));
+//   let fw = i32(floor(p.w));
 
-  var minDistSq : f32 = 1e9;
+//   var minDistSq : f32 = 1e9;
 
-  // iterate neighbor cells in 4D (3^4 = 81)
-  for (var dw = -1; dw <= 1; dw = dw + 1) {
-    for (var dz = -1; dz <= 1; dz = dz + 1) {
-      for (var dy = -1; dy <= 1; dy = dy + 1) {
-        for (var dx = -1; dx <= 1; dx = dx + 1) {
-          let xi = fx + dx;
-          let yi = fy + dy;
-          let zi = fz + dz;
-          let wi = fw + dw;
+//   // iterate neighbor cells in 4D (3^4 = 81)
+//   for (var dw = -1; dw <= 1; dw = dw + 1) {
+//     for (var dz = -1; dz <= 1; dz = dz + 1) {
+//       for (var dy = -1; dy <= 1; dy = dy + 1) {
+//         for (var dx = -1; dx <= 1; dx = dx + 1) {
+//           let xi = fx + dx;
+//           let yi = fy + dy;
+//           let zi = fz + dz;
+//           let wi = fw + dw;
 
-          // jitter within each cell using rotated rand4u calls to decorrelate axes
-          let rx = rand4u(xi, yi, zi, wi);
-          let ry = rand4u(yi, zi, wi, xi);
-          let rz = rand4u(zi, wi, xi, yi);
-          let rw = rand4u(wi, xi, yi, zi);
+//           // jitter within each cell using rotated rand4u calls to decorrelate axes
+//           let rx = rand4u(xi, yi, zi, wi);
+//           let ry = rand4u(yi, zi, wi, xi);
+//           let rz = rand4u(zi, wi, xi, yi);
+//           let rw = rand4u(wi, xi, yi, zi);
 
-          let px = f32(xi) + rx;
-          let py = f32(yi) + ry;
-          let pz = f32(zi) + rz;
-          let pw = f32(wi) + rw;
+//           let px = f32(xi) + rx;
+//           let py = f32(yi) + ry;
+//           let pz = f32(zi) + rz;
+//           let pw = f32(wi) + rw;
 
-          let dxv = px - p.x;
-          let dyv = py - p.y;
-          let dzv = pz - p.z;
-          let dwv = pw - p.w;
-          let d2 = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;
-          if (d2 < minDistSq) { minDistSq = d2; }
-        }
-      }
-    }
-  }
+//           let dxv = px - p.x;
+//           let dyv = py - p.y;
+//           let dzv = pz - p.z;
+//           let dwv = pw - p.w;
+//           let d2 = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;
+//           if (d2 < minDistSq) { minDistSq = d2; }
+//         }
+//       }
+//     }
+//   }
 
-  return sqrt(minDistSq);
-}
+//   return sqrt(minDistSq);
+// }
 
 
 fn cellular3D(p : vec3<f32>) -> f32 {
@@ -951,11 +953,157 @@ fn voronoi2D(pos : vec2<f32>) -> f32 {
 struct Voro3DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };
 struct Voro4DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };
 
-const VORO_CELL       : u32 = 0u;
-const VORO_F1         : u32 = 1u;
-const VORO_INTERIOR   : u32 = 2u;
-const VORO_EDGES      : u32 = 3u;
-const VORO_EDGE_THRESH: u32 = 4u;
+// ----------------- voro_eval: pick output depending on mode -----------------
+
+
+const VORO_CELL            : u32 = 0u;
+const VORO_F1              : u32 = 1u;
+const VORO_INTERIOR        : u32 = 2u;  // gap = F2 - F1
+const VORO_EDGES           : u32 = 3u;  // scaled gap
+const VORO_EDGE_THRESH     : u32 = 4u;  // gate gap >= threshold
+const VORO_FLAT_SHADE      : u32 = 5u;  // interior = 1, edges = 0 (edges defined by gap < threshold)
+const VORO_FLAT_SHADE_INV  : u32 = 6u;  // edges = 1, interior = 0 (gap < threshold)
+
+// Added: "old cellular3D" compatible squared-gap modes (F2^2 - F1^2)
+const VORO_INTERIOR_SQ        : u32 = 7u;  // gapSq = F2^2 - F1^2
+const VORO_EDGES_SQ           : u32 = 8u;  // scaled gapSq
+const VORO_EDGE_THRESH_SQ     : u32 = 9u;  // gate gapSq >= threshold
+const VORO_FLAT_SHADE_SQ      : u32 = 10u; // interior = 1, edges = 0 (gapSq < threshold)
+const VORO_FLAT_SHADE_INV_SQ  : u32 = 11u; // edges = 1, interior = 0 (gapSq < threshold)
+
+// Added: F1 threshold and masks (useful for "radius" gates, bubble masks, etc.)
+const VORO_F1_THRESH      : u32 = 12u; // gate F1 >= threshold, returns F1 * gate
+const VORO_F1_MASK        : u32 = 13u; // smooth mask: 0 below threshold, 1 above (feather=edgeK)
+const VORO_F1_MASK_INV    : u32 = 14u; // inverted mask: 1 below threshold, 0 above (feather=edgeK)
+
+// Added: softer edge line response (no threshold needed)
+const VORO_EDGE_RCP       : u32 = 15u; // 1 / (1 + gap*k)
+const VORO_EDGE_RCP_SQ    : u32 = 16u; // 1 / (1 + gapSq*k)
+
+fn voro_edge_dist(f1Sq: f32, f2Sq: f32) -> f32 {
+  let f1 = sqrt(max(f1Sq, 0.0));
+  let f2 = sqrt(max(f2Sq, 0.0));
+  return max(f2 - f1, 0.0);
+}
+
+// edgeDist is gap (or gapSq for *_SQ modes)
+// returns 1 near edges (small edgeDist), 0 in interior
+fn voro_edge_mask(edgeDist: f32, threshold: f32, feather: f32) -> f32 {
+  let t = max(threshold, 0.0);
+  if (t <= 0.0) { return 0.0; }
+
+  let f = max(feather, 0.0);
+  if (f > 0.0) {
+    return 1.0 - smoothstep(t, t + f, edgeDist);
+  }
+  return select(0.0, 1.0, edgeDist < t);
+}
+
+// returns 0 below threshold, 1 above (optionally smoothed)
+fn voro_thresh_mask(v: f32, threshold: f32, feather: f32) -> f32 {
+  let t = max(threshold, 0.0);
+  if (t <= 0.0) { return 0.0; }
+
+  let f = max(feather, 0.0);
+  if (f > 0.0) {
+    return smoothstep(t, t + f, v);
+  }
+  return select(0.0, 1.0, v >= t);
+}
+
+
+// f1Sq/f2Sq are squared distances; cellVal in [0,1].
+// edgeK is scale (edges modes) or feather (mask modes). freqOrScale unused.
+fn voro_eval(
+  f1Sq: f32,
+  f2Sq: f32,
+  cellVal: f32,
+  mode: u32,
+  edgeK: f32,
+  threshold: f32,
+  freqOrScale: f32
+) -> f32 {
+  let f1 = sqrt(max(f1Sq, 0.0));
+  let f2 = sqrt(max(f2Sq, 0.0));
+  let gap = max(f2 - f1, 0.0);
+
+  let gapSq = max(f2Sq - f1Sq, 0.0);
+
+  switch (mode) {
+    case VORO_CELL: {
+      return cellVal;
+    }
+    case VORO_F1: {
+      return f1;
+    }
+    case VORO_INTERIOR: {
+      return gap;
+    }
+    case VORO_EDGES: {
+      let k = max(edgeK, 0.0);
+      return clamp(gap * select(10.0, k, k > 0.0), 0.0, 1.0);
+    }
+    case VORO_EDGE_THRESH: {
+      let t = max(threshold, 0.0);
+      let gate = select(0.0, 1.0, gap >= t);
+      return gap * gate;
+    }
+    case VORO_FLAT_SHADE: {
+      let edge = voro_edge_mask(gap, threshold, edgeK);
+      return 1.0 - edge;
+    }
+    case VORO_FLAT_SHADE_INV: {
+      let edge = voro_edge_mask(gap, threshold, edgeK);
+      return edge;
+    }
+
+    case VORO_INTERIOR_SQ: {
+      return gapSq;
+    }
+    case VORO_EDGES_SQ: {
+      let k = max(edgeK, 0.0);
+      return clamp(gapSq * select(10.0, k, k > 0.0), 0.0, 1.0);
+    }
+    case VORO_EDGE_THRESH_SQ: {
+      let t = max(threshold, 0.0);
+      let gate = select(0.0, 1.0, gapSq >= t);
+      return gapSq * gate;
+    }
+    case VORO_FLAT_SHADE_SQ: {
+      let edge = voro_edge_mask(gapSq, threshold, edgeK);
+      return 1.0 - edge;
+    }
+    case VORO_FLAT_SHADE_INV_SQ: {
+      let edge = voro_edge_mask(gapSq, threshold, edgeK);
+      return edge;
+    }
+
+    case VORO_F1_THRESH: {
+      let t = max(threshold, 0.0);
+      let gate = select(0.0, 1.0, f1 >= t);
+      return f1 * gate;
+    }
+    case VORO_F1_MASK: {
+      return voro_thresh_mask(f1, threshold, edgeK);
+    }
+    case VORO_F1_MASK_INV: {
+      return 1.0 - voro_thresh_mask(f1, threshold, edgeK);
+    }
+
+    case VORO_EDGE_RCP: {
+      let k = max(edgeK, 0.0);
+      return 1.0 / (1.0 + gap * k*10);
+    }
+    case VORO_EDGE_RCP_SQ: {
+      let k = max(edgeK, 0.0);
+      return 1.0 / (1.0 + gapSq * k*10);
+    }
+
+    default: {
+      return gap;
+    }
+  }
+}
 
 // ----------------- helpers: metrics -----------------
 fn voro3D_metrics(pos: vec3<f32>) -> Voro3DMetrics {
@@ -1043,51 +1191,6 @@ fn voro4D_metrics(p: vec4<f32>) -> Voro4DMetrics {
   }
   return Voro4DMetrics(d1, d2, lab);
 }
-
-
-// ----------------- voro_eval: pick output depending on mode -----------------
-// f1Sq/f2Sq are squared distances; cellVal in [0,1]. edgeK: softening scale.
-// threshold: gate for EDGE_THRESH mode. freqOrScale unused in some modes but kept for potential normalization.
-fn voro_eval(f1Sq: f32, f2Sq: f32, cellVal: f32, mode: u32, edgeK: f32, threshold: f32, freqOrScale: f32) -> f32 {
-  let f1 = sqrt(max(f1Sq, 0.0));
-  let f2 = sqrt(max(f2Sq, 0.0));
-  let gap = f2 - f1; // F2 - F1, larger inside cells
-
-  // simple normalized gap if you want scale invariance: comment/uncomment as needed
-  // let normGap = gap * freqOrScale; // (freqOrScale could be ~freq, or 1.0)
-
-  switch (mode) {
-    case VORO_CELL: {
-      // piecewise-constant tile color/value
-      return cellVal;
-    }
-    case VORO_F1: {
-      // first-nearest distance
-      return f1;
-    }
-    case VORO_INTERIOR: {
-      // interior weight: larger in cell interior (proportional to gap)
-      return gap;
-    }
-    case VORO_EDGES: {
-      // edges bright, interior dark. Use edgeK to control contrast/width.
-      // edgeK==0 -> just use binary of gap>0, larger edgeK -> wider bright edges
-      if (edgeK <= 0.0) { return clamp(gap * 10.0, 0.0, 1.0); } // fallback scaling
-      return clamp(gap * edgeK, 0.0, 1.0);
-    }
-    case VORO_EDGE_THRESH: {
-      // identical to your voronoiTileRaw: return (F2-F1) if >= threshold else 0.
-      let ok = gap >= threshold;
-      let gate = select(0.0, 1.0, ok);
-      return gap * gate;
-    }
-    default: {
-      // fallback: return interior metric
-      return gap;
-    }
-  }
-}
-
 
 
 /*──────────────────────────  Cellular 2-D  ─────────────────────────────*/
@@ -1741,133 +1844,22 @@ fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
 // ──────────────── Anti‐Ridged Multifractal Noise ────────────────
 fn generateAntiRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;
-
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));
-    var amp : f32 = 1.0;
-
-    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {
-        x = x * params.lacunarity;
-        y = y * params.lacunarity;
-        z = z * params.lacunarity;
-        amp = amp * params.gain;
-
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));
-        if (params.exp2 != 0.0) {
-            n = 1.0 - pow(n, params.exp2);
-        }
-        if (params.exp1 != 0.0) {
-            n = pow(n, params.exp1);
-        }
-
-        sum = sum - n * amp;
-
-        x = x + params.xShift;
-        y = y + params.yShift;
-        z = z + params.zShift;
-    }
-
-    return -sum;
+    return -generateRidgedMultifractal(pos, params);
 }
 
 // ────────────── Anti‐Ridged Multifractal Noise 2 ────────────────
 fn generateAntiRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;
-
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));
-    var amp : f32 = 1.0;
-    var angle : f32 = params.seedAngle;
-
-    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {
-        x = x * params.lacunarity;
-        y = y * params.lacunarity;
-        z = z * params.lacunarity;
-        amp = amp * params.gain;
-
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));
-        if (params.exp2 != 0.0) {
-            n = 1.0 - pow(n, params.exp2);
-        }
-        if (params.exp1 != 0.0) {
-            n = pow(n, params.exp1);
-        }
-
-        sum = sum - n * amp;
-
-        // proper XY rotation
-        let c = cos(angle);
-        let s = sin(angle);
-        let nx = x * c - y * s;
-        let ny = x * s + y * c;
-        let nz = z;
-
-        x = nx + params.xShift;
-        y = ny + params.yShift;
-        z = nz + params.zShift;
-        angle = angle + ANGLE_INCREMENT;
-    }
-
-    return -sum;
+    return -generateRidgedMultifractal2(pos, params);
 }
 
 // ─────────────── Anti‐Ridged Multifractal Noise 3 ───────────────
 fn generateAntiRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;
-    var sum : f32 = 0.0;
-    var amp : f32 = 1.0;
-
-    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {
-        var n : f32 = lanczos3D(vec3<f32>(x, y, z));
-        n = max(1e-7, n + 1.0);
-        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;
-        n = 1.0 - abs(n);
-        if (params.exp1 - 1.0 != 0.0) {
-            n = 1.0 - pow(n, params.exp1 - 1.0);
-        }
-
-        sum = sum + n * amp;
-
-        x = x * params.lacunarity + params.xShift;
-        y = y * params.lacunarity + params.yShift;
-        z = z * params.lacunarity + params.zShift;
-        amp = amp * params.gain;
-    }
-
-    return -(sum - 1.0);
+    return -generateRidgedMultifractal3(pos, params);
 }
 
 // ─────────────── Anti‐Ridged Multifractal Noise 4 ───────────────
 fn generateAntiRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;
-    var sum : f32 = 0.0;
-    var amp : f32 = 1.0;
-
-    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));
-        if (params.exp2 != 0.0) {
-            n = 1.0 - pow(n, params.exp2);
-        }
-        if (params.exp1 != 0.0) {
-            n = pow(n, params.exp1);
-        }
-
-        sum = sum + n * amp;
-
-        x = x * params.lacunarity + params.xShift;
-        y = y * params.lacunarity + params.yShift;
-        z = z * params.lacunarity + params.zShift;
-        amp = amp * params.gain;
-    }
-
-    return -(sum - 1.0);
+    return -generateRidgedMultifractal4(pos, params);
 }
 
 // ───────────────  Fractal Brownian Motion (3D Simplex) ────────────────
@@ -2007,247 +1999,49 @@ fn generateCellularBM3(pos : vec3<f32>, params : NoiseParams) -> f32 {
     return 1.5 * f3 - 1.0;
 }
 
-/*==============================================================================
-  Voronoi Brownian-Motion FBM helpers & generators
-==============================================================================*/
-fn generateVoronoi(pos: vec3<f32>, params: NoiseParams) -> f32 {
+/* ---- Voronoi and Voronoi Brownian-Motion flavours ---------------------------------- */
+
+// ────────────────────────── 4D Voronoi Generator ──────────────────────────
+fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
   let zoom = max(params.zoom, 1e-6);
-  var sum  : f32 = 0.0;
-  var amp  : f32 = 1.0;
-  var freqLoc : f32 = params.freq / zoom;
 
-  let mode      : u32 = params.voroMode;
-  let edgeK     : f32 = max(params.edgeK, 0.0);
-  let threshold : f32 = max(params.threshold, 0.0);
+  var sum: f32 = 0.0;
+  var amp: f32 = 1.0;
+  var freqLoc: f32 = params.freq / zoom;
 
+  let mode: u32 = params.voroMode;
+  let edgeK: f32 = max(params.edgeK, 0.0);
+  let threshold: f32 = max(params.threshold, 0.0);
+
+  var base: vec4<f32>;
   if (params.toroidal == 1u) {
-    // pos = (U,V,theta) -> pack to periodic 4D and sample
-    let base4 = packPeriodicUV(pos.x, pos.y, pos.z);
-    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-      let P = base4 * freqLoc;
-      let m = voro4D_metrics(P);
-      let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);
-      sum += v * amp;
-      freqLoc *= params.lacunarity;
-      amp     *= params.gain;
-    }
-    return sum;
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time);
+  } else {
+    base = vec4<f32>(
+      (pos.x + params.xShift) / zoom,
+      (pos.y + params.yShift) / zoom,
+      (pos.z + params.zShift) / zoom,
+      params.time
+    );
   }
 
-  // classic 3D Voronoi FBM (octave shifts kept simple)
-  var x = (pos.x + params.xShift) / zoom;
-  var y = (pos.y + params.yShift) / zoom;
-  var z = (pos.z + params.zShift) / zoom;
+  var angle: f32 = params.seedAngle;
 
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-    let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);
-    let m = voro3D_metrics(P);
+    let P = base * freqLoc;
+    let m = voro4D_metrics(P);
     let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);
+
     sum += v * amp;
 
     freqLoc *= params.lacunarity;
-    amp     *= params.gain;
+    amp *= params.gain;
 
-    // apply simple per-octave drift (matches your tile-style)
-    x += params.xShift;
-    y += params.yShift;
-    z += params.zShift;
-  }
-  return sum;
-}
-
-
-// Sample a Voronoi "cell value" similar to the CPU VoronoiNoise3D.noise()
-fn voronoiCellValue3D(p: vec3<f32>) -> f32 {
-    let m = voro3D_metrics(p);
-    return m.cellVal;
-}
-
-// Voronoi FBM that mirrors the CPU VoronoiBrownianMotion.fbm pattern
-fn fbmVoronoi3D(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-
-    // base coordinate: divide by zoom only (CPU style)
-    var x = pos.x / zoom;
-    var y = pos.y / zoom;
-    var z = pos.z / zoom;
-
-    var sum: f32 = 0.0;
-    var amp: f32 = 1.0;
-    var freqLoc: f32 = params.freq;
-
-    var angle: f32 = params.seedAngle; // host should set this to seedN * 2π
-    let angleInc: f32 = 2.0 * PI / f32(max(params.octaves, 1u));
-
-    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-        let samplePos = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);
-        let v = voronoiCellValue3D(samplePos);
-
-        sum = sum + amp * v;
-
-        freqLoc = freqLoc * params.lacunarity;
-        amp = amp * params.gain;
-
-        angle = angle + angleInc;
-        let offsetX = params.xShift * cos(angle);
-        let offsetY = params.yShift * sin(angle);
-        let offsetZ = params.zShift * sin(angle);
-
-        x = x + offsetX;
-        y = y + offsetY;
-        z = z + offsetZ;
-    }
-
-    return sum - 1.0;
-}
-
-/* ---- Voronoi Brownian-Motion flavours ---------------------------------- */
-
-// BM1: CPU VoronoiBrownianMotion.generateNoise
-fn generateVoronoiBM1(p: vec3<f32>, par: NoiseParams) -> f32 {
-    let f1 = fbmVoronoi3D(p, par);
-    return fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);
-}
-
-// BM2: CPU VoronoiBrownianMotion2.generateNoise
-fn generateVoronoiBM2(p: vec3<f32>, par: NoiseParams) -> f32 {
-    let f1 = fbmVoronoi3D(p, par);
-    let f2 = fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);
-    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);
-}
-
-// BM3: CPU VoronoiBrownianMotion3.generateNoise
-fn generateVoronoiBM3(p: vec3<f32>, par: NoiseParams) -> f32 {
-    let f1 = fbmVoronoi3D(p, par);
-    let f2 = fbmVoronoi3D(p + vec3<f32>(f1 * par.zoom), par);
-    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);
-}
-
-/*==============================================================================
-  Single-stage Cellular & Worley s
-==============================================================================*/
-
-fn generateCellular(pos : vec3<f32>, params : NoiseParams) -> f32 {
-    var x = (pos.x + params.xShift) / params.zoom;
-    var y = (pos.y + params.yShift) / params.zoom;
-    var z = (pos.z + params.zShift) / params.zoom;
-
-    var sum     : f32 = 0.0;
-    var amp     : f32 = 1.0;
-    var freqLoc : f32 = params.freq;
-    var angle   : f32 = params.seedAngle;
-
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {
-        var n = cellular3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
-        if (params.turbulence == 1u) { n = abs(n); }
-        n = edgeCut(n, params.threshold);              
-        sum = sum + n * amp;
-
-        freqLoc = freqLoc * params.lacunarity;
-        amp     = amp     * params.gain;
-
-        let c = cos(angle);
-        let s = sin(angle);
-        let nx = x * c - y * s;
-        let ny = x * s + y * c;
-        let nz = y * s + z * c;
-
-        x = nx + params.xShift;
-        y = ny + params.yShift;
-        z = nz + params.zShift;
-        angle = angle + ANGLE_INCREMENT;
-    }
-
-    if (params.turbulence == 1u) { sum = sum - 1.0; }
-    return 2.0 * sum - 1.0;
-}
-
-fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    return -generateCellular(pos, params);
-}
-
-fn generateWorley(pos : vec3<f32>, params : NoiseParams) -> f32 {
-    var x = (pos.x + params.xShift) / params.zoom;
-    var y = (pos.y + params.yShift) / params.zoom;
-    var z = (pos.z + params.zShift) / params.zoom;
-
-    var sum     : f32 = 0.0;
-    var amp     : f32 = 1.0;
-    var freqLoc : f32 = params.freq;
-    var angle   : f32 = params.seedAngle;
-
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {
-        var n = worley3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
-        if (params.turbulence == 1u) { n = abs(n); }
-        n = edgeCut(n, params.threshold);              
-        sum = sum + n * amp;
-
-        freqLoc = freqLoc * params.lacunarity;
-        amp     = amp     * params.gain;
-
-        let c = cos(angle);
-        let s = sin(angle);
-        let nx = x * c - y * s;
-        let ny = x * s + y * c;
-        let nz = y * s + z * c;
-
-        x = nx + params.xShift;
-        y = ny + params.yShift;
-        z = nz + params.zShift;
-        angle = angle + ANGLE_INCREMENT;
-    }
-
-    if (params.turbulence == 1u) { sum = sum - 1.0; }
-    return sum - 1.0;
-}
-
-fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    return -generateWorley(pos, params);
-}
-
-
-// ────────────────────────── 4D Worley FBM ──────────────────────────
-fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
-  let zoom = max(params.zoom, 1e-6);
-
-  // Prepare base coords + starting frequency
-  var base    : vec4<f32>;
-  var freqLoc : f32;
-
-  if (params.toroidal == 1u) {
-    // pos = (U,V,θ); HTML-style uv_periodic packing
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom; // (freq/zoom) == (base/zoom * freq)
-    freqLoc = params.freq;
-  } else {
-    // original non-toroidal semantics (freq baked in pre-loop, then multiplied again)
-    base = vec4<f32>(
-      pos.x / zoom * params.freq + params.xShift,
-      pos.y / zoom * params.freq + params.yShift,
-      pos.z / zoom * params.freq + params.zShift,
-      params.time
-    );
-    freqLoc = params.freq;
-  }
-
-  var sum   : f32 = 0.0;
-  var amp   : f32 = 1.0;
-  var angle : f32 = params.seedAngle;
-
-  // Shared octave loop
-  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-    var v = worley4D(base * freqLoc) * amp;
-    if (params.turbulence == 1u) { v = abs(v); }
-    sum += v;
-
-    freqLoc *= params.lacunarity;
-    amp     *= params.gain;
-
-    // Only non-toroidal path uses octave rotation/offset churn
     if (params.toroidal != 1u) {
       let c = cos(angle);
       let s = sin(angle);
-      let xy = vec2<f32>( base.x * c - base.y * s, base.x * s + base.y * c );
-      let zw = vec2<f32>( base.z * c - base.w * s, base.z * s + base.w * c );
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);
       base = vec4<f32>(
         xy.x + params.xShift,
         xy.y + params.yShift,
@@ -2258,15 +2052,7 @@ fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
     }
   }
 
-  if (params.turbulence == 1u) { sum -= 1.0; }
-  // match JS Worley wrapper (returns 1 - sum)
-  return 1.0 - sum;
-}
-
-
-
-fn generateAntiWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    return -generateWorley4D(pos, params);
+  return sum;
 }
 
 
@@ -2279,7 +2065,7 @@ fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {
   var freqLoc : f32 = params.freq / zoom;
 
   // always use the edge-threshold mode for this tile-noise helper
-  let mode : u32 = VORO_EDGE_THRESH;
+  let mode : u32 = params.voroMode;
   let edgeK : f32 = max(params.edgeK, 0.0);      // kept if you want to tune
   let thresh : f32 = max(params.threshold, 0.0);
 
@@ -2314,6 +2100,747 @@ fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
   return sum;
 }
+
+
+// BM1: f( f(p) )
+fn generateVoronoiBM1(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateVoronoiTileNoise(p, par);
+  return generateVoronoiTileNoise(vec3<f32>(f1 * par.zoom), par);
+}
+
+// BM2: f( p + f(f(p)) )
+fn generateVoronoiBM2(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateVoronoiTileNoise(p, par);
+  let f2 = generateVoronoiTileNoise(vec3<f32>(f1 * par.zoom), par);
+  return generateVoronoiTileNoise(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+// BM3: f( p + f(p + f(p)) )
+fn generateVoronoiBM3(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateVoronoiTileNoise(p, par);
+  let f2 = generateVoronoiTileNoise(p + vec3<f32>(f1 * par.zoom), par);
+  return generateVoronoiTileNoise(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+/* ---- Voronoi Brownian-Motion flavours (4D) ---------------------------------- */
+
+// BM1 4D: f( f(p) )  (scalar feedback into XYZ, keep W/time from params)
+fn generateVoronoiBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateVoronoi4D(p, par);
+  return generateVoronoi4D(vec3<f32>(f1 * par.zoom), par);
+}
+
+// BM2 4D: f( p + f(f(p)) )
+fn generateVoronoiBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateVoronoi4D(p, par);
+  let f2 = generateVoronoi4D(vec3<f32>(f1 * par.zoom), par);
+  return generateVoronoi4D(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+// BM3 4D: f( p + f(p + f(p)) )
+fn generateVoronoiBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateVoronoi4D(p, par);
+  let f2 = generateVoronoi4D(p + vec3<f32>(f1 * par.zoom), par);
+  return generateVoronoi4D(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+/* ---- vector-feedback variants (stronger, less axis-locked) ---------
+   These keep it cheap but reduce the "all axes get same scalar" look by building
+   a 3-vector from 3 decorrelated samples (offsets are constant, no extra params).
+*/
+
+fn _bm4D_vec(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {
+  let a = generateVoronoi4D(p + vec3<f32>(17.13,  3.71,  9.23), par);
+  let b = generateVoronoi4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);
+  let c = generateVoronoi4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);
+  return vec3<f32>(a, b, c);
+}
+
+// BM1 4D (vec): f( vec(f(p)) )
+fn generateVoronoiBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec(p, par);
+  return generateVoronoi4D(v1 * par.zoom, par);
+}
+
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )
+fn generateVoronoiBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec(p, par);
+  let v2 = _bm4D_vec(v1 * par.zoom, par);
+  return generateVoronoi4D(p + v2 * par.zoom, par);
+}
+
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )
+fn generateVoronoiBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec(p, par);
+  let v2 = _bm4D_vec(p + v1 * par.zoom, par);
+  return generateVoronoi4D(p + v2 * par.zoom, par);
+}
+
+// Generic "Voronoi-style" sampler for Cellular/Worley so they can share voro_eval modes.
+
+struct VoroSample {
+  f1Sq    : f32,
+  f2Sq    : f32,
+  cellVal : f32,
+};
+
+fn voro_sample3D(p: vec3<f32>) -> VoroSample {
+  let fx = i32(floor(p.x));
+  let fy = i32(floor(p.y));
+  let fz = i32(floor(p.z));
+
+  var d1: f32 = 1e9;
+  var d2: f32 = 1e9;
+  var cv: f32 = 0.0;
+
+  for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
+    for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+      for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+        let xi = fx + dx;
+        let yi = fy + dy;
+        let zi = fz + dz;
+
+        let rx = rand3u(xi, yi, zi);
+        let ry = rand3u(yi, zi, xi);
+        let rz = rand3u(zi, xi, yi);
+
+        let px = f32(xi) + rx;
+        let py = f32(yi) + ry;
+        let pz = f32(zi) + rz;
+
+        let dxv = px - p.x;
+        let dyv = py - p.y;
+        let dzv = pz - p.z;
+        let dd  = dxv * dxv + dyv * dyv + dzv * dzv;
+
+        if (dd < d1) {
+          d2 = d1;
+          d1 = dd;
+          cv = rand3u(xi, zi, yi);
+        } else if (dd < d2) {
+          d2 = dd;
+        }
+      }
+    }
+  }
+
+  return VoroSample(d1, d2, cv);
+}
+
+fn voro_sample4D(p: vec4<f32>) -> VoroSample {
+  let fx = i32(floor(p.x));
+  let fy = i32(floor(p.y));
+  let fz = i32(floor(p.z));
+  let fw = i32(floor(p.w));
+
+  var d1: f32 = 1e9;
+  var d2: f32 = 1e9;
+  var cv: f32 = 0.0;
+
+  for (var dw: i32 = -1; dw <= 1; dw = dw + 1) {
+    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
+      for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+        for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+          let xi = fx + dx;
+          let yi = fy + dy;
+          let zi = fz + dz;
+          let wi = fw + dw;
+
+          let rx = rand4u(xi, yi, zi, wi);
+          let ry = rand4u(yi, zi, wi, xi);
+          let rz = rand4u(zi, wi, xi, yi);
+          let rw = rand4u(wi, xi, yi, zi);
+
+          let px = f32(xi) + rx;
+          let py = f32(yi) + ry;
+          let pz = f32(zi) + rz;
+          let pw = f32(wi) + rw;
+
+          let dxv = px - p.x;
+          let dyv = py - p.y;
+          let dzv = pz - p.z;
+          let dwv = pw - p.w;
+          let dd  = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;
+
+          if (dd < d1) {
+            d2 = d1;
+            d1 = dd;
+            cv = rand4u(xi, zi, yi, wi);
+          } else if (dd < d2) {
+            d2 = dd;
+          }
+        }
+      }
+    }
+  }
+
+  return VoroSample(d1, d2, cv);
+}
+
+fn cellular4D(p: vec4<f32>) -> f32 {
+  let s = voro_sample4D(p);
+  return voro_edge_dist(s.f1Sq, s.f2Sq);
+}
+
+fn worley4D(p: vec4<f32>) -> f32 {
+  let s = voro_sample4D(p);
+  return sqrt(max(s.f1Sq, 0.0));
+}
+
+// Expects you to pass the same controls you use for Voronoi: params.voroMode, params.edgeK, params.threshold.
+fn generateCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  var x = (pos.x + params.xShift) / params.zoom;
+  var y = (pos.y + params.yShift) / params.zoom;
+  var z = (pos.z + params.zShift) / params.zoom;
+
+  var sum     : f32 = 0.0;
+  var amp     : f32 = 1.0;
+  var freqLoc : f32 = params.freq;
+  var angle   : f32 = params.seedAngle;
+
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    let s = voro_sample3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
+
+    var n = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);
+    if (params.turbulence == 1u) { n = abs(n); }
+    n = clamp(n, 0.0, 1.0);
+
+    sum = sum + n * amp;
+
+    freqLoc = freqLoc * params.lacunarity;
+    amp     = amp     * params.gain;
+
+    let c = cos(angle);
+    let sA = sin(angle);
+    let nx = x * c - y * sA;
+    let ny = x * sA + y * c;
+    let nz = y * sA + z * c;
+
+    x = nx + params.xShift;
+    y = ny + params.yShift;
+    z = nz + params.zShift;
+    angle = angle + ANGLE_INCREMENT;
+  }
+
+  if (params.turbulence == 1u) { sum = sum - 1.0; }
+  return 2.0 * sum - 1.0;
+}
+
+fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 { 
+  return -generateCellular(pos,params);
+}
+
+fn generateWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  var x = (pos.x + params.xShift) / params.zoom;
+  var y = (pos.y + params.yShift) / params.zoom;
+  var z = (pos.z + params.zShift) / params.zoom;
+
+  var sum     : f32 = 0.0;
+  var amp     : f32 = 1.0;
+  var freqLoc : f32 = params.freq;
+  var angle   : f32 = params.seedAngle;
+
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    let s = voro_sample3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
+
+    var n = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);
+    if (params.turbulence == 1u) { n = abs(n); }
+    n = clamp(n, 0.0, 1.0);
+
+    sum = sum + n * amp;
+
+    freqLoc = freqLoc * params.lacunarity;
+    amp     = amp     * params.gain;
+
+    let c = cos(angle);
+    let sA = sin(angle);
+    let nx = x * c - y * sA;
+    let ny = x * sA + y * c;
+    let nz = y * sA + z * c;
+
+    x = nx + params.xShift;
+    y = ny + params.yShift;
+    z = nz + params.zShift;
+    angle = angle + ANGLE_INCREMENT;
+  }
+
+  if (params.turbulence == 1u) { sum = sum - 1.0; }
+  return sum - 1.0;
+}
+
+fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 { 
+  return -generateWorley(pos,params);
+}
+
+fn generateCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  let zoom = max(params.zoom, 1e-6);
+
+  var base    : vec4<f32>;
+  var freqLoc : f32;
+
+  if (params.toroidal == 1u) {
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    freqLoc = params.freq;
+  } else {
+    base = vec4<f32>(
+      pos.x / zoom * params.freq + params.xShift,
+      pos.y / zoom * params.freq + params.yShift,
+      pos.z / zoom * params.freq + params.zShift,
+      params.time
+    );
+    freqLoc = params.freq;
+  }
+
+  var sum   : f32 = 0.0;
+  var amp   : f32 = 1.0;
+  var angle : f32 = params.seedAngle;
+
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    let s = voro_sample4D(base * freqLoc);
+
+    var v = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);
+    if (params.turbulence == 1u) { v = abs(v); }
+    v = clamp(v, 0.0, 1.0);
+
+    sum += v * amp;
+
+    freqLoc *= params.lacunarity;
+    amp     *= params.gain;
+
+    if (params.toroidal != 1u) {
+      let c = cos(angle);
+      let sA = sin(angle);
+      let xy = vec2<f32>( base.x * c - base.y * sA, base.x * sA + base.y * c );
+      let zw = vec2<f32>( base.z * c - base.w * sA, base.z * sA + base.w * c );
+      base = vec4<f32>(
+        xy.x + params.xShift,
+        xy.y + params.yShift,
+        zw.x + params.zShift,
+        zw.y + params.time
+      );
+      angle += ANGLE_INCREMENT;
+    }
+  }
+
+  if (params.turbulence == 1u) { sum -= 1.0; }
+  return 2.0 * sum - 1.0;
+}
+
+fn generateAntiCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  return -generateCellular4D(pos,params);
+}
+
+fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  let zoom = max(params.zoom, 1e-6);
+
+  var base    : vec4<f32>;
+  var freqLoc : f32;
+
+  if (params.toroidal == 1u) {
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    freqLoc = params.freq;
+  } else {
+    base = vec4<f32>(
+      pos.x / zoom * params.freq + params.xShift,
+      pos.y / zoom * params.freq + params.yShift,
+      pos.z / zoom * params.freq + params.zShift,
+      params.time
+    );
+    freqLoc = params.freq;
+  }
+
+  var sum    : f32 = 0.0;
+  var amp    : f32 = 1.0;
+  var ampSum : f32 = 0.0;
+  var angle  : f32 = params.seedAngle;
+
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    let s = voro_sample4D(base * freqLoc);
+
+    var v = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);
+    if (params.turbulence == 1u) { v = abs(v); }
+    v = clamp(v, 0.0, 1.0);
+
+    sum    += v * amp;
+    ampSum += amp;
+
+    freqLoc *= params.lacunarity;
+    amp     *= params.gain;
+
+    if (params.toroidal != 1u) {
+      let c = cos(angle);
+      let sA = sin(angle);
+      let xy = vec2<f32>( base.x * c - base.y * sA, base.x * sA + base.y * c );
+      let zw = vec2<f32>( base.z * c - base.w * sA, base.z * sA + base.w * c );
+      base = vec4<f32>(
+        xy.x + params.xShift,
+        xy.y + params.yShift,
+        zw.x + params.zShift,
+        zw.y + params.time
+      );
+      angle += ANGLE_INCREMENT;
+    }
+  }
+
+  let out = select(0.0, sum / ampSum, ampSum > 0.0);
+
+  if (params.turbulence == 1u) { return clamp(out - 1.0, -1.0, 1.0); }
+  return clamp(1.0 - out, 0.0, 1.0);
+}
+
+fn generateAntiWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  return 1-generateWorley4D(pos,params);
+}
+
+/* ---- Cellular Brownian-Motion flavours (4D) ---------------------------------- */
+
+// BM1 4D: f( f(p) )
+fn generateCellularBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateCellular4D(p, par);
+  return generateCellular4D(vec3<f32>(f1 * par.zoom), par);
+}
+
+// BM2 4D: f( p + f(f(p)) )
+fn generateCellularBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateCellular4D(p, par);
+  let f2 = generateCellular4D(vec3<f32>(f1 * par.zoom), par);
+  return generateCellular4D(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+// BM3 4D: f( p + f(p + f(p)) )
+fn generateCellularBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateCellular4D(p, par);
+  let f2 = generateCellular4D(p + vec3<f32>(f1 * par.zoom), par);
+  return generateCellular4D(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+
+/* ---- Worley Brownian-Motion flavours (4D) ----------------------------------- */
+
+// BM1 4D: f( f(p) )
+fn generateWorleyBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateWorley4D(p, par);
+  return generateWorley4D(vec3<f32>(f1 * par.zoom), par);
+}
+
+// BM2 4D: f( p + f(f(p)) )
+fn generateWorleyBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateWorley4D(p, par);
+  let f2 = generateWorley4D(vec3<f32>(f1 * par.zoom), par);
+  return generateWorley4D(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+// BM3 4D: f( p + f(p + f(p)) )
+fn generateWorleyBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let f1 = generateWorley4D(p, par);
+  let f2 = generateWorley4D(p + vec3<f32>(f1 * par.zoom), par);
+  return generateWorley4D(p + vec3<f32>(f2 * par.zoom), par);
+}
+
+
+/* ---- vector-feedback variants (stronger, less axis-locked) ------------------ */
+
+fn _bm4D_vec_cellular(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {
+  let a = generateCellular4D(p + vec3<f32>(17.13,  3.71,  9.23), par);
+  let b = generateCellular4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);
+  let c = generateCellular4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);
+  return vec3<f32>(a, b, c);
+}
+
+fn _bm4D_vec_worley(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {
+  let a = generateWorley4D(p + vec3<f32>(17.13,  3.71,  9.23), par);
+  let b = generateWorley4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);
+  let c = generateWorley4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);
+  return vec3<f32>(a, b, c);
+}
+
+
+// BM1 4D (vec): f( vec(f(p)) )
+fn generateCellularBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec_cellular(p, par);
+  return generateCellular4D(v1 * par.zoom, par);
+}
+
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )
+fn generateCellularBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec_cellular(p, par);
+  let v2 = _bm4D_vec_cellular(v1 * par.zoom, par);
+  return generateCellular4D(p + v2 * par.zoom, par);
+}
+
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )
+fn generateCellularBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec_cellular(p, par);
+  let v2 = _bm4D_vec_cellular(p + v1 * par.zoom, par);
+  return generateCellular4D(p + v2 * par.zoom, par);
+}
+
+
+// BM1 4D (vec): f( vec(f(p)) )
+fn generateWorleyBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec_worley(p, par);
+  return generateWorley4D(v1 * par.zoom, par);
+}
+
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )
+fn generateWorleyBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec_worley(p, par);
+  let v2 = _bm4D_vec_worley(v1 * par.zoom, par);
+  return generateWorley4D(p + v2 * par.zoom, par);
+}
+
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )
+fn generateWorleyBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let v1 = _bm4D_vec_worley(p, par);
+  let v2 = _bm4D_vec_worley(p + v1 * par.zoom, par);
+  return generateWorley4D(p + v2 * par.zoom, par);
+}
+
+
+// ──────────────────────── 4D Billow Noise Generator ────────────────────────
+fn generateBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  let zoom = max(params.zoom, 1e-6);
+
+  var base: vec4<f32>;
+  if (params.toroidal == 1u) {
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;
+  } else {
+    base = vec4<f32>(
+      (pos.x / zoom) * params.freq + params.xShift,
+      (pos.y / zoom) * params.freq + params.yShift,
+      (pos.z / zoom) * params.freq + params.zShift,
+      params.time
+    );
+  }
+
+  var sum: f32 = 0.0;
+  var amp: f32 = 1.0;
+  var freqLoc: f32 = params.freq;
+  var ampSum: f32 = 0.0;
+  var angle: f32 = params.seedAngle;
+
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    let n = noise4D(base * freqLoc);
+    let b = pow(abs(n), 0.75);
+    sum += b * amp;
+    ampSum += amp;
+
+    freqLoc *= params.lacunarity;
+    amp *= params.gain;
+
+    if (params.toroidal != 1u) {
+      let c = cos(angle);
+      let s = sin(angle);
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);
+      base = vec4<f32>(
+        xy.x + params.xShift,
+        xy.y + params.yShift,
+        zw.x + params.zShift,
+        zw.y + params.time
+      );
+      angle += ANGLE_INCREMENT;
+    }
+  }
+
+  if (ampSum > 0.0) { sum /= ampSum; }
+
+  let k: f32 = 1.2;
+  let cMid = sum - 0.5;
+  let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));
+
+  return clamp(shaped, 0.0, 1.0);
+}
+
+fn generateAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  return 1.0 - generateBillow4D(pos, params);
+}
+
+
+// ────────────────────────── 4D Terrace + Foam + Turbulence ──────────────────────────
+fn generateTerraceNoise4D(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  let base = generatePerlin4D(pos, par);
+  return terrace(base, par.terraceStep);
+}
+
+fn generateFoamNoise4D(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  let base = generateBillow4D(pos, par);
+  return foamify(base);
+}
+
+fn generateTurbulence4D(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  let base = generatePerlin4D(pos, par);
+  return turbulence(base);
+}
+
+// ──────────────────────── 4D "Lanczos-like" Lowpass ────────────────────────
+fn lowpass4D(p: vec4<f32>) -> f32 {
+  let o = vec4<f32>(0.37, 0.21, 0.29, 0.31);
+  let a = noise4D(p);
+  let b = noise4D(p + vec4<f32>(o.x, 0.0, 0.0, 0.0));
+  let c = noise4D(p + vec4<f32>(0.0, o.y, 0.0, 0.0));
+  let d = noise4D(p + vec4<f32>(0.0, 0.0, o.z, 0.0));
+  let e = noise4D(p + vec4<f32>(0.0, 0.0, 0.0, o.w));
+  return (a + b + c + d + e) * 0.2;
+}
+
+fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  let zoom = max(params.zoom, 1e-6);
+
+  var base: vec4<f32>;
+  if (params.toroidal == 1u) {
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;
+  } else {
+    base = vec4<f32>(
+      (pos.x / zoom) * params.freq + params.xShift,
+      (pos.y / zoom) * params.freq + params.yShift,
+      (pos.z / zoom) * params.freq + params.zShift,
+      params.time
+    );
+  }
+
+  var sum: f32 = 0.0;
+  var amp: f32 = 1.0;
+  var maxAmp: f32 = 0.0;
+  var freqLoc: f32 = params.freq;
+  var angle: f32 = params.seedAngle;
+
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    let n = lowpass4D(base * freqLoc);
+    sum += (2.0 * abs(n) - 1.0) * amp;
+    maxAmp += amp;
+
+    freqLoc *= params.lacunarity;
+    amp *= params.gain;
+
+    if (params.toroidal != 1u) {
+      let c = cos(angle);
+      let s = sin(angle);
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);
+      base = vec4<f32>(
+        xy.x + params.xShift,
+        xy.y + params.yShift,
+        zw.x + params.zShift,
+        zw.y + params.time
+      );
+      angle += ANGLE_INCREMENT;
+    }
+  }
+
+  return select(0.0, sum / maxAmp, maxAmp > 0.0);
+}
+
+fn generateLanczosAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  return -generateLanczosBillow4D(pos, params);
+}
+
+
+
+// ────────────────────────── 4D FBM core + generators ──────────────────────────
+fn fbm4D_core(base: vec4<f32>, params: NoiseParams) -> f32 {
+  var p = base;
+
+  var sum: f32 = 0.0;
+  var amp: f32 = 1.0;
+  var maxAmp: f32 = 0.0;
+  var freqLoc: f32 = params.freq;
+
+  var angle: f32 = params.seedAngle;
+  let angleInc: f32 = 2.0 * PI / max(f32(params.octaves), 1.0);
+
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    sum += amp * noise4D(p * freqLoc);
+    maxAmp += amp;
+
+    freqLoc *= params.lacunarity;
+    amp *= params.gain;
+
+    if (params.toroidal != 1u) {
+      angle += angleInc;
+      let c = cos(angle);
+      let s = sin(angle);
+      let xy = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
+      let zw = vec2<f32>(p.z * c - p.w * s, p.z * s + p.w * c);
+      p = vec4<f32>(
+        xy.x + params.xShift,
+        xy.y + params.yShift,
+        zw.x + params.zShift,
+        zw.y + params.time
+      );
+    }
+  }
+
+  return select(0.0, sum / maxAmp, maxAmp > 0.0);
+}
+
+fn fbm4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  let zoom = max(params.zoom, 1e-6);
+
+  if (params.toroidal == 1u) {
+    let base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;
+    return fbm4D_core(base, params);
+  }
+
+  let base = vec4<f32>(
+    (pos.x + params.xShift) / zoom,
+    (pos.y + params.yShift) / zoom,
+    (pos.z + params.zShift) / zoom,
+    params.time
+  );
+  return fbm4D_core(base, params);
+}
+
+fn generateFBM4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
+  let fbm1 = fbm4D(pos, params);
+  let fbm2 = fbm4D_core(vec4<f32>(fbm1, fbm1, fbm1, fbm1), params);
+  return 2.0 * fbm2;
+}
+
+
+/*────────────────────  Domain-warp FBM (4D)  ───────────────────────*/
+
+fn domainWarpFBM4D(p: vec3<f32>, params: NoiseParams, warpAmp: f32, stages: u32) -> f32 {
+  var q = p;
+  for (var i: u32 = 0u; i < stages; i = i + 1u) {
+    let w = fbm4D(q, params) * warpAmp;
+    q = q + vec3<f32>(w, w, w);
+  }
+  return fbm4D(q, params);
+}
+
+fn generateDomainWarpFBM1_4D(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  return domainWarpFBM4D(pos, par, par.warpAmp, 1u);
+}
+
+fn generateDomainWarpFBM2_4D(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  return domainWarpFBM4D(pos, par, par.warpAmp, 2u);
+}
+
+fn _warpVecFrom4D(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {
+  let a = fbm4D(p + vec3<f32>(17.13,  3.71,  9.23), par);
+  let b = fbm4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);
+  let c = fbm4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);
+  return vec3<f32>(a, b, c);
+}
+
+fn domainWarpFBM4D_vec(p: vec3<f32>, params: NoiseParams, warpAmp: f32, stages: u32) -> f32 {
+  var q = p;
+  for (var i: u32 = 0u; i < stages; i = i + 1u) {
+    let v = _warpVecFrom4D(q, params) * warpAmp;
+    q = q + v;
+  }
+  return fbm4D(q, params);
+}
+
+fn generateDomainWarpFBM1_4D_vec(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  return domainWarpFBM4D_vec(pos, par, par.warpAmp, 1u);
+}
+
+fn generateDomainWarpFBM2_4D_vec(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  return domainWarpFBM4D_vec(pos, par, par.warpAmp, 2u);
+}
+
 
 // ─────────────── Lanczos Billow Noise ─────────────────
 fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {
@@ -2364,38 +2891,7 @@ fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {
 
 // ─────────────── Lanczos Anti-Billow Noise ─────────────────
 fn generateLanczosAntiBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {
-    var x       = (pos.x + p.xShift) / p.zoom;
-    var y       = (pos.y + p.yShift) / p.zoom;
-    var z       = (pos.z + p.zShift) / p.zoom;
-    var sum     : f32 = 0.0;
-    var maxAmp  : f32 = 0.0;
-    var amp     : f32 = 1.0;
-    var freqLoc : f32 = p.freq;
-    var angle   : f32 = p.seedAngle;
-
-    for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {
-        let n = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
-        sum = sum + (2.0 * abs(n) - 1.0) * amp;
-        maxAmp = maxAmp + amp;
-
-        freqLoc = freqLoc * p.lacunarity;
-        amp     = amp     * p.gain;
-
-        // simple Z‐axis rotation + tilt into Z
-        let c = cos(angle);
-        let s = sin(angle);
-        var newX = x * c - y * s;
-        var newY = x * s + y * c;
-        var newZ = y * s + z * c;
-
-        x = newX + p.xShift;
-        y = newY + p.yShift;
-        z = newZ + p.zShift;
-
-        angle = angle + ANGLE_INCREMENT;
-    }
-
-    return -sum / maxAmp;
+    return -generateLanczosBillow(pos, p);
 }
 
 
@@ -3817,6 +4313,31 @@ fn computeAntiCellular(@builtin(global_invocation_id) gid: vec3<u32>) {
     let v0 = generateAntiCellular(p, params);
     writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
 }
+// ────────────────────────────────────────────────────────────
+// 22.2) Cellular
+// ────────────────────────────────────────────────────────────
+@compute @workgroup_size(8, 8, 1)
+fn computeCellular4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let fx = i32(frame.originX) + i32(gid.x);
+    let fy = i32(frame.originY) + i32(gid.y);
+    let fz = i32(frame.originZ) + i32(gid.z);
+    let p  = fetchPos(fx, fy, fz);
+    let v0 = generateCellular4D(p, params);
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+/*────────────────────────────────────────────────────────────
+  22.3) AntiCellular
+────────────────────────────────────────────────────────────*/
+@compute @workgroup_size(8, 8, 1)
+fn computeAntiCellular4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let fx = i32(frame.originX) + i32(gid.x);
+    let fy = i32(frame.originY) + i32(gid.y);
+    let fz = i32(frame.originZ) + i32(gid.z);
+    let p  = fetchPos(fx, fy, fz);
+    let v0 = generateAntiCellular4D(p, params);
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
 
 // ────────────────────────────────────────────────────────────
 // 23) Worley
@@ -3881,6 +4402,157 @@ fn computeAntiWorley4D(@builtin(global_invocation_id) gid : vec3<u32>) {
 
     // write into output
     writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Worley 4D BM variants (time as W)
+// ─────────────────────────────────────────────────────────────────────────────
+@compute @workgroup_size(8, 8, 1)
+fn computeWorleyBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateWorleyBM1_4D(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeWorleyBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateWorleyBM2_4D(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeWorleyBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateWorleyBM3_4D(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeWorleyBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateWorleyBM1_4D_vec(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeWorleyBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateWorleyBM2_4D_vec(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeWorleyBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateWorleyBM3_4D_vec(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cellular 4D BM variants (time as W)
+// ─────────────────────────────────────────────────────────────────────────────
+@compute @workgroup_size(8, 8, 1)
+fn computeCellularBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateCellularBM1_4D(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCellularBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateCellularBM2_4D(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCellularBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateCellularBM3_4D(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCellularBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateCellularBM1_4D_vec(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCellularBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateCellularBM2_4D_vec(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeCellularBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  let p = fetchPos(fx, fy, fz);
+  let v0 = generateCellularBM3_4D_vec(p, params);
+
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
 }
 
 // ────────────────────────────────────────────────────────────
@@ -4207,13 +4879,176 @@ fn computeTurbulence(@builtin(global_invocation_id) gid: vec3<u32>){
   writeChannel(fx, fy, fz, generateTurbulence(p, params), options.outputChannel, 0u);
 }
 
+@compute @workgroup_size(8,8,1)
+fn computeBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateBillow4D(p, params), options.outputChannel, 0u);
+}
 
+@compute @workgroup_size(8,8,1)
+fn computeAntiBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateAntiBillow4D(p, params), options.outputChannel, 0u);
+}
 
+@compute @workgroup_size(8,8,1)
+fn computeLanczosBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateLanczosBillow4D(p, params), options.outputChannel, 0u);
+}
 
+@compute @workgroup_size(8,8,1)
+fn computeLanczosAntiBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateLanczosAntiBillow4D(p, params), options.outputChannel, 0u);
+}
 
+@compute @workgroup_size(8,8,1)
+fn computeFBM4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateFBM4D(p, params), options.outputChannel, 0u);
+}
 
+@compute @workgroup_size(8,8,1)
+fn computeVoronoi4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateVoronoi4D(p, params), options.outputChannel, 0u);
+}
 
+@compute @workgroup_size(8, 8, 1)
+fn computeVoronoiBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateVoronoiBM1_4D(p, params), options.outputChannel, 0u);
+}
 
+@compute @workgroup_size(8, 8, 1)
+fn computeVoronoiBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateVoronoiBM2_4D(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeVoronoiBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateVoronoiBM3_4D(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeVoronoiBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateVoronoiBM1_4D_vec(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeVoronoiBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateVoronoiBM2_4D_vec(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeVoronoiBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateVoronoiBM3_4D_vec(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeDomainWarpFBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateDomainWarpFBM1_4D(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeDomainWarpFBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateDomainWarpFBM2_4D(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeDomainWarpFBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateDomainWarpFBM1_4D_vec(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeDomainWarpFBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateDomainWarpFBM2_4D_vec(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeTerraceNoise4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateTerraceNoise4D(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeFoamNoise4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateFoamNoise4D(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeTurbulence4D(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateTurbulence4D(p, params), options.outputChannel, 0u);
+}
 
 
 

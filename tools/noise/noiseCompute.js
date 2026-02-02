@@ -11,6 +11,29 @@
 //  - Frame UBO = 64 bytes (includes originXf, originYf, and a trailing vec2<f32> pad)
 // -----------------------------------------------------------------------------
 
+// voroMode (u32) selects which derived value to return from the same F1/F2 Voronoi sample:
+//
+// 0  VORO_CELL             cell value (granite)
+// 1  VORO_F1               F1 distance (nearest feature)
+// 2  VORO_INTERIOR         gap = F2 - F1
+// 3  VORO_EDGES            clamp(gap * edgeK)  (if edgeK<=0 uses default scale)
+// 4  VORO_EDGE_THRESH      (gap >= threshold) ? gap : 0
+// 5  VORO_FLAT_SHADE       cells=1, edges=0 where edges defined by (gap < threshold) with feather=edgeK
+// 6  VORO_FLAT_SHADE_INV   edges=1, cells=0  where edges defined by (gap < threshold) with feather=edgeK
+//
+// 7  VORO_INTERIOR_SQ       gapSq = F2^2 - F1^2  (legacy cellular3D semantics)
+// 8  VORO_EDGES_SQ          clamp(gapSq * edgeK) (if edgeK<=0 uses default scale)
+// 9  VORO_EDGE_THRESH_SQ    (gapSq >= threshold) ? gapSq : 0
+// 10 VORO_FLAT_SHADE_SQ     cells=1, edges=0 where edges defined by (gapSq < threshold) with feather=edgeK
+// 11 VORO_FLAT_SHADE_INV_SQ edges=1, cells=0  where edges defined by (gapSq < threshold) with feather=edgeK
+//
+// 12 VORO_F1_THRESH        (F1 >= threshold) ? F1 : 0
+// 13 VORO_F1_MASK          smooth mask 0..1 ramp from threshold to threshold+edgeK
+// 14 VORO_F1_MASK_INV      inverted smooth mask
+//
+// 15 VORO_EDGE_RCP         edge falloff = 1 / (1 + gap * edgeK)
+// 16 VORO_EDGE_RCP_SQ      edge falloff = 1 / (1 + gapSq * edgeK)
+
 import noiseWGSL from "./noiseCompute.wgsl";
 import blit2DWGSL from "./noiseBlit.wgsl";
 import blit3DWGSL from "./noiseBlit3D.wgsl";
@@ -75,6 +98,7 @@ export class NoiseComputeBuilder {
       "computeWhiteNoise",
       "computeBlueNoise",
       "computeSimplex",
+      "computeSimplexFBM",
       "computeCurl2D",
       "computeCurlFBM2D",
       "computeDomainWarpFBM1",
@@ -86,6 +110,37 @@ export class NoiseComputeBuilder {
       "computePerlin4D",
       "computeWorley4D",
       "computeAntiWorley4D",
+      "computeCellular4D",
+      "computeAntiCellular4D",
+      "computeBillow4D",
+      "computeAntiBillow4D",
+      "computeLanczosBillow4D",
+      "computeLanczosAntiBillow4D",
+      "computeFBM4D",
+      "computeVoronoi4D",
+      "computeVoronoiBM1_4D",
+      "computeVoronoiBM2_4D",
+      "computeVoronoiBM3_4D",
+      "computeVoronoiBM1_4D_vec",
+      "computeVoronoiBM2_4D_vec",
+      "computeVoronoiBM3_4D_vec",
+
+      "computeWorleyBM1_4D",
+      "computeWorleyBM2_4D",
+      "computeWorleyBM3_4D",
+      "computeWorleyBM1_4D_vec",
+      "computeWorleyBM2_4D_vec",
+      "computeWorleyBM3_4D_vec",
+      "computeCellularBM1_4D",
+      "computeCellularBM2_4D",
+      "computeCellularBM3_4D",
+      "computeCellularBM1_4D_vec",
+      "computeCellularBM2_4D_vec",
+      "computeCellularBM3_4D_vec",
+
+      "computeTerraceNoise4D",
+      "computeFoamNoise4D",
+      "computeTurbulence4D",
       "computeGauss5x5",
       "computeNormal",
       "computeNormal8",
@@ -301,7 +356,7 @@ export class NoiseComputeBuilder {
       const usage = view?.texture?.usage ?? 0;
       if ((usage & GPUTextureUsage.TEXTURE_BINDING) === 0) {
         console.warn(
-          "setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring."
+          "setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.",
         );
         return;
       }
@@ -320,7 +375,7 @@ export class NoiseComputeBuilder {
       const usage = view?.texture?.usage ?? 0;
       if ((usage & GPUTextureUsage.STORAGE_BINDING) === 0) {
         console.warn(
-          "setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring."
+          "setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.",
         );
         return;
       }
@@ -601,7 +656,7 @@ export class NoiseComputeBuilder {
       0,
       data.buffer,
       data.byteOffset,
-      data.byteLength
+      data.byteLength,
     );
     return buf;
   }
@@ -660,7 +715,7 @@ export class NoiseComputeBuilder {
           posBuf = this._buildPosBuffer(
             pair.tileWidth,
             pair.tileHeight,
-            options.customData
+            options.customData,
           );
         }
 
@@ -746,7 +801,7 @@ export class NoiseComputeBuilder {
             throw new Error(
               `_create2DTileBindGroups: createBindGroup failed: ${
                 e?.message || e
-              }`
+              }`,
             );
           }
         }
@@ -787,7 +842,7 @@ export class NoiseComputeBuilder {
     tileH,
     tileD,
     paramsArray,
-    dispatchZ = 1
+    dispatchZ = 1,
   ) {
     let current = bgA;
     let alternate = bgB;
@@ -818,7 +873,7 @@ export class NoiseComputeBuilder {
       pass.dispatchWorkgroups(
         Math.ceil(tileW / 8),
         Math.ceil(tileH / 8),
-        dispatchZ
+        dispatchZ,
       );
 
       // flip ping-pong for next quad
@@ -880,8 +935,8 @@ export class NoiseComputeBuilder {
           ? bgA
           : bgB
         : finalUsed === bgA
-        ? bgA
-        : bgB;
+          ? bgA
+          : bgB;
       const alt = start === bgA ? bgB : bgA;
 
       finalUsed = await this._runPipelines(
@@ -891,7 +946,7 @@ export class NoiseComputeBuilder {
         pair.tileHeight,
         1,
         paramsObj,
-        1
+        1,
       );
 
       lastBGs = { bgA, bgB };
@@ -922,7 +977,7 @@ export class NoiseComputeBuilder {
     const sliceBytes = tw * th * BYTES_PER_VOXEL;
     const tdByBuf = Math.max(
       1,
-      Math.floor((maxBuf * 0.8) / Math.max(1, sliceBytes))
+      Math.floor((maxBuf * 0.8) / Math.max(1, sliceBytes)),
     );
 
     const td = Math.min(D, MAX_3D_TILE, tdByBuf);
@@ -1142,7 +1197,7 @@ export class NoiseComputeBuilder {
         });
       } catch (e) {
         throw new Error(
-          `_getOrCreate3DVolume: createBindGroup failed: ${e?.message || e}`
+          `_getOrCreate3DVolume: createBindGroup failed: ${e?.message || e}`,
         );
       }
     }
@@ -1244,7 +1299,7 @@ export class NoiseComputeBuilder {
         throw new Error(
           `_recreate3DBindGroups: failed to create bind groups: ${
             e?.message || e
-          }`
+          }`,
         );
       }
     }
@@ -1259,7 +1314,7 @@ export class NoiseComputeBuilder {
       D = depth | 0;
     if (!(W > 0 && H > 0 && D > 0))
       throw new Error(
-        `computeToTexture3D: invalid size ${width}x${height}x${depth}`
+        `computeToTexture3D: invalid size ${width}x${height}x${depth}`,
       );
 
     if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
@@ -1299,7 +1354,7 @@ export class NoiseComputeBuilder {
     // ensure valid bind-groups (recreate lazily when invalidated)
     if (!vol)
       throw new Error(
-        "computeToTexture3D: failed to create or retrieve volume"
+        "computeToTexture3D: failed to create or retrieve volume",
       );
     if (vol._bindGroupsDirty || !vol.chunks[0].bgA || !vol.chunks[0].bgB) {
       this._recreate3DBindGroups(vol, worldFull);
@@ -1313,7 +1368,7 @@ export class NoiseComputeBuilder {
       // defensive check: ensure we have valid bindgroups before dispatch
       if (!start || !alt) {
         throw new Error(
-          "computeToTexture3D: missing bind groups (volume not initialized correctly)"
+          "computeToTexture3D: missing bind groups (volume not initialized correctly)",
         );
       }
 
@@ -1324,7 +1379,7 @@ export class NoiseComputeBuilder {
         c.h,
         c.d,
         paramsObj,
-        c.d
+        c.d,
       );
       c.isA = lastBG === c.bgB;
     }
@@ -1512,7 +1567,7 @@ export class NoiseComputeBuilder {
       0,
       u.buffer,
       u.byteOffset,
-      u.byteLength
+      u.byteLength,
     );
 
     const bg = this.device.createBindGroup({
@@ -1557,7 +1612,7 @@ export class NoiseComputeBuilder {
     }
     if (!view3D || !d)
       throw new Error(
-        "renderTexture3DSliceToCanvas: need a 3D view and its depth"
+        "renderTexture3DSliceToCanvas: need a 3D view and its depth",
       );
 
     if (!preserveCanvasSize) {
@@ -1628,7 +1683,7 @@ export class NoiseComputeBuilder {
       } catch (e) {
         console.warn(
           "export2DTextureToPNGBlob: onSubmittedWorkDone before export failed",
-          e
+          e,
         );
       }
     }
@@ -1648,7 +1703,7 @@ export class NoiseComputeBuilder {
       0,
       u.buffer,
       u.byteOffset,
-      u.byteLength
+      u.byteLength,
     );
 
     const bg = this.device.createBindGroup({
@@ -1697,7 +1752,7 @@ export class NoiseComputeBuilder {
         bytesPerRow,
         rowsPerImage: H,
       },
-      { width: W, height: H, depthOrArrayLayers: 1 }
+      { width: W, height: H, depthOrArrayLayers: 1 },
     );
 
     this.queue.submit([encoder.finish()]);
@@ -1788,7 +1843,7 @@ export class NoiseComputeBuilder {
       } catch (e) {
         console.warn(
           "export3DSliceToPNGBlob: onSubmittedWorkDone before export failed",
-          e
+          e,
         );
       }
     }
@@ -1874,7 +1929,7 @@ export class NoiseComputeBuilder {
         bytesPerRow,
         rowsPerImage: H,
       },
-      { width: W, height: H, depthOrArrayLayers: 1 }
+      { width: W, height: H, depthOrArrayLayers: 1 },
     );
 
     this.queue.submit([encoder.finish()]);
@@ -1932,10 +1987,238 @@ export class NoiseComputeBuilder {
 
     return blob;
   }
+
+  // Render a single Z slice from a 3D texture view into an RGBA8 pixel buffer (RGBA order).
+  // zNorm is in [0,1]. channel selects which packed channel to display.
+  async _render3DSliceToRGBA8Pixels(view3D, width, height, zNorm, channel = 0) {
+    if (!view3D)
+      throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");
+
+    const W = Math.max(1, width | 0);
+    const H = Math.max(1, height | 0);
+
+    this.initBlitRender();
+
+    const z = Math.min(Math.max(Number(zNorm) || 0, 0.0), 1.0);
+
+    const format = "bgra8unorm";
+
+    const captureTexture = this.device.createTexture({
+      size: [W, H, 1],
+      format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+
+    const ab = new ArrayBuffer(16);
+    const dv = new DataView(ab);
+    dv.setFloat32(0, z, true);
+    dv.setUint32(4, channel >>> 0, true);
+    dv.setUint32(8, 0, true);
+    dv.setUint32(12, 0, true);
+    this.queue.writeBuffer(this.blit3DUbo, 0, ab);
+
+    const bg = this.device.createBindGroup({
+      layout: this.bgl3D,
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: view3D },
+        { binding: 2, resource: { buffer: this.blit3DUbo } },
+      ],
+    });
+
+    const encoder = this.device.createCommandEncoder();
+
+    const rpass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: captureTexture.createView(),
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+
+    rpass.setPipeline(this.pipeline3D);
+    rpass.setBindGroup(0, bg);
+    rpass.draw(6, 1, 0, 0);
+    rpass.end();
+
+    const bytesPerPixel = 4;
+    const align = 256;
+    const bytesPerRowUnaligned = W * bytesPerPixel;
+    const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+    const bufferSize = bytesPerRow * H;
+
+    const readBuffer = this.device.createBuffer({
+      size: bufferSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    encoder.copyTextureToBuffer(
+      { texture: captureTexture },
+      { buffer: readBuffer, bytesPerRow, rowsPerImage: H },
+      { width: W, height: H, depthOrArrayLayers: 1 },
+    );
+
+    this.queue.submit([encoder.finish()]);
+
+    if (this.queue && this.queue.onSubmittedWorkDone) {
+      await this.queue.onSubmittedWorkDone();
+    }
+
+    await readBuffer.mapAsync(GPUMapMode.READ);
+    const mapped = readBuffer.getMappedRange();
+    const src = new Uint8Array(mapped);
+    const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+
+    let dst = 0;
+    for (let y = 0; y < H; y++) {
+      const rowStart = y * bytesPerRow;
+      for (let x = 0; x < W; x++) {
+        const si = rowStart + x * 4;
+        pixels[dst++] = src[si + 2]; // R
+        pixels[dst++] = src[si + 1]; // G
+        pixels[dst++] = src[si + 0]; // B
+        pixels[dst++] = src[si + 3]; // A
+      }
+    }
+
+    readBuffer.unmap();
+    readBuffer.destroy();
+    captureTexture.destroy();
+
+    return pixels;
+  }
+
+  // Export a full 3D volume as a single PNG tileset.
+  // Tiles are laid out row-major: z=0 is top-left, z increases left->right then top->bottom.
+  // target can be a raw 3D view OR your { views: [...], meta: { tile: { d }}} bundle.
+  // tileWidth/tileHeight are the per-slice render size in pixels (usually TOROIDAL_SIZE).
+  // opts:
+  //  - depth (required if target has no meta)
+  //  - channel (default 0)
+  //  - chunk (default 0, if target is bundle)
+  //  - tilesAcross (default 16)
+  //  - tilesDown (default ceil(depth/tilesAcross))
+  //  - startSlice (default 0)
+  //  - sliceCount (default depth-startSlice)
+  async export3DTilesetToPNGBlob(target, tileWidth, tileHeight, opts = {}) {
+    if (!target)
+      throw new Error("export3DTilesetToPNGBlob: target is required");
+
+    const TW = Math.max(1, tileWidth | 0);
+    const TH = Math.max(1, (tileHeight ?? tileWidth) | 0);
+
+    const {
+      depth,
+      channel = 0,
+      chunk = 0,
+      tilesAcross = 16,
+      tilesDown = null,
+      startSlice = 0,
+      sliceCount = null,
+    } = opts;
+
+    this.initBlitRender();
+
+    if (this.queue && this.queue.onSubmittedWorkDone) {
+      try {
+        await this.queue.onSubmittedWorkDone();
+      } catch (e) {
+        console.warn(
+          "export3DTilesetToPNGBlob: onSubmittedWorkDone before export failed",
+          e,
+        );
+      }
+    }
+
+    let view3D;
+    let d;
+    if (target && target.views && Array.isArray(target.views)) {
+      const idx = Math.max(0, Math.min(chunk | 0, target.views.length - 1));
+      view3D = target.views[idx];
+      d = target.meta?.tile?.d ?? depth;
+    } else {
+      view3D = target;
+      d = depth;
+    }
+    if (!view3D) throw new Error("export3DTilesetToPNGBlob: missing 3D view");
+    if (!d || d <= 0)
+      throw new Error(
+        "export3DTilesetToPNGBlob: depth must be provided and > 0",
+      );
+
+    const across = Math.max(1, tilesAcross | 0);
+    const down =
+      tilesDown !== null && tilesDown !== undefined
+        ? Math.max(1, tilesDown | 0)
+        : Math.ceil(d / across);
+
+    const start = Math.min(Math.max(startSlice | 0, 0), d - 1);
+    const count =
+      sliceCount !== null && sliceCount !== undefined
+        ? Math.max(0, sliceCount | 0)
+        : d - start;
+
+    const outW = TW * across;
+    const outH = TH * down;
+
+    const outPixels = new Uint8ClampedArray(outW * outH * 4);
+
+    const maxZ = Math.min(d, start + count);
+    for (let z = start; z < maxZ; z++) {
+      const rel = z - start;
+      const col = rel % across;
+      const row = (rel / across) | 0;
+
+      if (row >= down) break;
+
+      const zNorm = (z + 0.5) / d;
+      const tilePixels = await this._render3DSliceToRGBA8Pixels(
+        view3D,
+        TW,
+        TH,
+        zNorm,
+        channel,
+      );
+
+      const dstBaseX = col * TW;
+      const dstBaseY = row * TH;
+
+      for (let y = 0; y < TH; y++) {
+        const srcRowStart = y * TW * 4;
+        const dstRowStart = ((dstBaseY + y) * outW + dstBaseX) * 4;
+        outPixels.set(
+          tilePixels.subarray(srcRowStart, srcRowStart + TW * 4),
+          dstRowStart,
+        );
+      }
+    }
+
+    const tmpCanvas = document.createElement("canvas");
+    tmpCanvas.width = outW;
+    tmpCanvas.height = outH;
+    const ctx2d = tmpCanvas.getContext("2d");
+    if (!ctx2d)
+      throw new Error("export3DTilesetToPNGBlob: unable to get 2D context");
+
+    ctx2d.putImageData(new ImageData(outPixels, outW, outH), 0, 0);
+
+    const blob = await new Promise((resolve, reject) => {
+      tmpCanvas.toBlob((b) => {
+        if (b) resolve(b);
+        else
+          reject(new Error("export3DTilesetToPNGBlob: toBlob returned null"));
+      }, "image/png");
+    });
+
+    return blob;
+  }
 }
 
 // -----------------------------------------------------------------------------
-// BaseNoise (unchanged logic)
+// BaseNoise
 // -----------------------------------------------------------------------------
 export class BaseNoise {
   constructor(seed = Date.now()) {

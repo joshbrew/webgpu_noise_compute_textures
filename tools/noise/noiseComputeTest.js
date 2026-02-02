@@ -1,156 +1,157 @@
-// noiseUI.js
+// tools/noise/noiseComputeTest.js
 import html from "./noiseComponent.html";
 import { NoiseComputeBuilder } from "./noiseCompute.js";
 
 document.body.insertAdjacentHTML("afterbegin", html);
 
-const NOISE_LABELS_BY_BIT = {
-  0: "Perlin",
-  1: "Billow",
-  2: "AntiBillow",
-  3: "Ridge",
-  4: "AntiRidge",
-  5: "RidgedMultifractal",
-  6: "RidgedMultifractal2",
-  7: "RidgedMultifractal3",
-  8: "RidgedMultifractal4",
-  9: "AntiRidgedMultifractal",
-  10: "AntiRidgedMultifractal2",
-  11: "AntiRidgedMultifractal3",
-  12: "AntiRidgedMultifractal4",
-  13: "FBM",
-  14: "FBM2",
-  15: "FBM3",
-  16: "CellularBM1",
-  17: "CellularBM2",
-  18: "CellularBM3",
-  19: "VoronoiBM1",
-  20: "VoronoiBM2",
-  21: "VoronoiBM3",
-  22: "CellularPattern",
-  23: "WorleyPattern",
-  24: "AntiCellularPattern",
-  25: "AntiWorleyPattern",
-  26: "LanczosBillow",
-  27: "LanczosAntiBillow",
-  28: "VoronoiTileNoise",
-  29: "VoronoiCircleNoise",
-  30: "VoronoiCircle2",
-  31: "VoronoiFlatShade",
-  32: "VoronoiRipple3D",
-  33: "VoronoiRipple3D2",
-  34: "VoronoiCircularRipple",
-  35: "FVoronoiRipple3D",
-  36: "FVoronoiCircularRipple",
-  37: "RippleNoise",
-  38: "FractalRipples",
-  39: "HexWorms",
-  40: "PerlinWorms",
-  41: "White Noise",
-  42: "Blue Noise",
-  43: "Simplex",
-  44: "Curl2D",
-  45: "CurlFBM2D",
-  46: "DomainWarpFBM1",
-  47: "DomainWarpFBM2",
-  48: "GaborAnisotropic",
-  49: "TerraceNoise",
-  50: "FoamNoise",
-  51: "Turbulence",
-  52: "Perlin4D",
-  53: "Worley4D",
-  54: "AntiWorley4D",
+const UI_EXCLUDE_TRAILING_ENTRY_POINTS = 6;
+
+const LABEL_OVERRIDES_BY_ENTRY = {
+  computeCellular: "CellularPattern",
+  computeWorley: "WorleyPattern",
+  computeAntiCellular: "AntiCellularPattern",
+  computeAntiWorley: "AntiWorleyPattern",
+  computeWhiteNoise: "White Noise",
+  computeBlueNoise: "Blue Noise",
 };
 
-const NOISE_CONSTRAINTS_BY_BIT = {
-  3: {
+const NOISE_CONSTRAINTS_BY_ENTRY = {
+  computeRidge: {
     clamp: { freq: [0.25, 8.0], gain: [0.2, 0.8], octaves: [1, 12] },
   },
-  4: {
+  computeAntiRidge: {
     clamp: { freq: [0.25, 8.0], gain: [0.2, 0.8], octaves: [1, 12] },
   },
-  5: {
+
+  computeRidgedMultifractal: {
     clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
-  6: {
+  computeRidgedMultifractal2: {
     clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
-  7: {
+  computeRidgedMultifractal3: {
     clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
-  8: {
+  computeRidgedMultifractal4: {
     clamp: { freq: [0.25, 8.0], gain: [0.2, 0.9], octaves: [2, 14] },
   },
 
-  13: {
+  computeFBM: {
     clamp: { gain: [0.2, 0.8], octaves: [2, 10] },
   },
-  14: {
+  computeFBM2: {
     clamp: { gain: [0.2, 0.8], octaves: [2, 10] },
   },
-  15: {
+  computeFBM3: {
     clamp: { gain: [0.2, 0.8], octaves: [2, 10] },
   },
 
-  19: {
+  computeVoronoiBM1: {
+    clamp: { threshold: [0.0, 1.0], edgeK: [0.0, 64.0] },
+  },
+  computeVoronoiBM2: {
+    clamp: { threshold: [0.0, 1.0], edgeK: [0.0, 64.0] },
+  },
+  computeVoronoiBM3: {
+    clamp: { threshold: [0.0, 1.0], edgeK: [0.0, 64.0] },
+  },
+  computeCellular: {
     clamp: { threshold: [0.0, 1.0] },
   },
-  20: {
+  computeWorley: {
     clamp: { threshold: [0.0, 1.0] },
   },
-  21: {
+  computeAntiCellular: {
     clamp: { threshold: [0.0, 1.0] },
   },
-  22: {
-    clamp: { threshold: [0.0, 1.0] },
-  },
-  23: {
-    clamp: { threshold: [0.0, 1.0] },
-  },
-  24: {
-    clamp: { threshold: [0.0, 1.0] },
-  },
-  25: {
+  computeAntiWorley: {
     clamp: { threshold: [0.0, 1.0] },
   },
 
-  44: {
+  computeSimplexFBM: {
     force: { turbulence: 1 },
     clamp: { warpAmp: [0.1, 2.0], freq: [0.25, 6.0] },
   },
-  45: {
+  computeCurl2D: {
     force: { turbulence: 1 },
     clamp: { warpAmp: [0.1, 2.0], freq: [0.25, 6.0] },
   },
-  46: {
+  computeCurlFBM2D: {
     force: { turbulence: 1 },
     clamp: { warpAmp: [0.1, 3.0] },
   },
-  47: {
+  computeDomainWarpFBM1: {
+    force: { turbulence: 1 },
+    clamp: { warpAmp: [0.1, 3.0] },
+  },
+  computeDomainWarpFBM2: {
     force: { turbulence: 1 },
     clamp: { warpAmp: [0.1, 3.0] },
   },
 
-  48: {
+  computeGaborAnisotropic: {
     clamp: { gaborRadius: [0.5, 6.0] },
   },
 
-  51: {
+  computeFoamNoise: {
     force: { turbulence: 1 },
     clamp: { gain: [0.5, 0.95] },
   },
 };
 
-const TOROIDAL_VOLUME_CHOICES = [
-  "clearTexture",
-  "computePerlin4D",
-  "computeWorley4D",
-];
-
 const TOROIDAL_SIZE = 128;
 const TOROIDAL_VOLUME_KEY = "toroidalDemo";
 
 const MODE_OVERRIDES = new Map();
+
+let ENTRY_POINTS = [];
+let NOISE_LABELS_BY_BIT = Object.create(null);
+
+function makeNoiseLabelFromEntryPoint(ep) {
+  const key = String(ep || "");
+  const override = LABEL_OVERRIDES_BY_ENTRY[key];
+  if (override) return override;
+
+  let s = key;
+  if (s.startsWith("compute")) s = s.slice(7);
+  return s || key;
+}
+
+function buildNoiseLabelsByBit(entryPoints, excludeTrailing) {
+  const out = Object.create(null);
+  const eps = Array.isArray(entryPoints) ? entryPoints : [];
+  const drop = Math.max(0, excludeTrailing | 0);
+  const n = Math.max(0, eps.length - drop);
+
+  for (let i = 0; i < n; i++) {
+    out[i] = makeNoiseLabelFromEntryPoint(eps[i]);
+  }
+  return out;
+}
+
+function getSortedNoiseBits() {
+  return Object.keys(NOISE_LABELS_BY_BIT)
+    .map((k) => Number(k))
+    .filter((bit) => Number.isInteger(bit) && bit >= 0)
+    .sort((a, b) => a - b);
+}
+
+function getSortedOverrideBits() {
+  const out = [];
+  for (let i = 0; i < ENTRY_POINTS.length; i++) {
+    const ep = ENTRY_POINTS[i];
+    if (typeof ep !== "string" || !ep) continue;
+    if (ep === "clearTexture") continue;
+    out.push(i);
+  }
+  return out;
+}
+
+function getConstraintForBit(bit) {
+  const ep = ENTRY_POINTS[bit];
+  if (!ep) return null;
+  return NOISE_CONSTRAINTS_BY_ENTRY[String(ep)] || null;
+}
 
 function clampField(obj, key, min, max) {
   if (!Object.prototype.hasOwnProperty.call(obj, key)) return;
@@ -163,7 +164,7 @@ function clampField(obj, key, min, max) {
 
 function buildParamsForBit(bit, globalParams) {
   const local = { ...globalParams };
-  const cfg = NOISE_CONSTRAINTS_BY_BIT[bit];
+  const cfg = getConstraintForBit(bit);
 
   if (cfg && cfg.clamp) {
     const c = cfg.clamp;
@@ -175,6 +176,7 @@ function buildParamsForBit(bit, globalParams) {
     if (c.warpAmp) clampField(local, "warpAmp", c.warpAmp[0], c.warpAmp[1]);
     if (c.gaborRadius)
       clampField(local, "gaborRadius", c.gaborRadius[0], c.gaborRadius[1]);
+    if (c.edgeK) clampField(local, "edgeK", c.edgeK[0], c.edgeK[1]);
   }
 
   if (cfg && cfg.force) {
@@ -203,7 +205,15 @@ function readGlobalParamsFromUI() {
     return Number.isFinite(v) ? v : fallback;
   };
 
+  const getU32 = (id, fallback) => {
+    const n = getNum(id, fallback);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.floor(n));
+  };
+
   const seed = Math.max(1, Math.floor(getNum("noise-seed", 1234567890)));
+  const turbEl = document.getElementById("noise-turbulence");
+  const turbulence = turbEl && turbEl.checked ? 1 : 0;
 
   return {
     seed,
@@ -215,25 +225,28 @@ function readGlobalParamsFromUI() {
     xShift: getNum("noise-xShift", 0.0),
     yShift: getNum("noise-yShift", 0.0),
     zShift: getNum("noise-zShift", 0.0),
+
+    turbulence,
+    seedAngle: getNum("noise-seedAngle", 0.0),
+    exp1: getNum("noise-exp1", 1.0),
+    exp2: getNum("noise-exp2", 0.0),
+
     threshold: getNum("noise-threshold", 0.1),
-    turbulence: 0,
-    seedAngle: 0.0,
-    exp1: 1.0,
-    exp2: 0.0,
-    rippleFreq: 10.0,
-    time: 0.0,
-    warpAmp: 0.5,
-    gaborRadius: 4.0,
-    terraceStep: 8.0,
+    rippleFreq: getNum("noise-rippleFreq", 10.0),
+    time: getNum("noise-time", 0.0),
+    warpAmp: getNum("noise-warpAmp", 0.5),
+    gaborRadius: getNum("noise-gaborRadius", 4.0),
+    terraceStep: getNum("noise-terraceStep", 8.0),
+
     toroidal: 0,
-    voroMode: 0,
-    edgeK: 0.0,
+    voroMode: getU32("noise-voroMode", 0),
+    edgeK: getNum("noise-edgeK", 0.0),
   };
 }
 
 function collectSelectedBitsFromUI() {
   const boxes = document.querySelectorAll(
-    'input[type="checkbox"][name="noise-type"]'
+    'input[type="checkbox"][name="noise-type"]',
   );
   const bits = [];
   boxes.forEach((box) => {
@@ -244,6 +257,75 @@ function collectSelectedBitsFromUI() {
   });
   return bits;
 }
+
+function getZSliceIndexFromUI() {
+  const slider = document.getElementById("z-slice");
+  const num = document.getElementById("z-slice-num");
+
+  let idx = 0;
+  if (slider) idx = Number(slider.value);
+  else if (num) idx = Number(num.value);
+
+  if (!Number.isFinite(idx)) idx = 0;
+  idx = Math.min(Math.max(Math.round(idx), 0), TOROIDAL_SIZE - 1);
+
+  if (slider && String(slider.value) !== String(idx))
+    slider.value = String(idx);
+  if (num && String(num.value) !== String(idx)) num.value = String(idx);
+
+  return idx;
+}
+
+function applyCanvasCSS(canvas, cssW, cssH) {
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  canvas.style.display = "block";
+  canvas.style.margin = "0";
+  canvas.style.padding = "0";
+  canvas.style.border = "0";
+  canvas.style.outline = "0";
+  canvas.style.background = "transparent";
+  canvas.style.imageRendering = "crisp-edges";
+  canvas.style.imageRendering = "pixelated";
+}
+
+function ensureCanvasSize(builder, canvas, w, h) {
+  const iw = w | 0;
+  const ih = h | 0;
+
+  applyCanvasCSS(canvas, iw, ih);
+
+  if (canvas.width !== iw || canvas.height !== ih) {
+    canvas.width = iw;
+    canvas.height = ih;
+    if (builder && typeof builder.configureCanvas === "function") {
+      builder.configureCanvas(canvas);
+    }
+    return true;
+  }
+  return false;
+}
+
+function configureMosaicLayout(mosaicRoot, tileW, tileH, count) {
+  const n = Math.max(1, count | 0);
+  const cols = Math.max(1, Math.round(Math.sqrt(n)));
+  const rows = Math.ceil(n / cols);
+
+  mosaicRoot.style.display = "grid";
+  mosaicRoot.style.gridTemplateColumns = `repeat(${cols}, ${tileW}px)`;
+  mosaicRoot.style.gridAutoRows = `${tileH}px`;
+  mosaicRoot.style.gap = "0px";
+  mosaicRoot.style.padding = "0";
+  mosaicRoot.style.margin = "0";
+  mosaicRoot.style.border = "0";
+  mosaicRoot.style.lineHeight = "0";
+  mosaicRoot.style.fontSize = "0";
+  mosaicRoot.style.alignItems = "start";
+  mosaicRoot.style.justifyItems = "start";
+  mosaicRoot.style.placeItems = "start";
+  mosaicRoot.style.overflow = "hidden";
+}
+
 
 function initMainAndMosaicCanvases() {
   let mainCanvas = document.getElementById("noise-canvas");
@@ -261,6 +343,8 @@ function initMainAndMosaicCanvases() {
     throw new Error("Missing main preview canvas (#noise-canvas)");
   }
 
+  applyCanvasCSS(mainCanvas, mainCanvas.width, mainCanvas.height);
+
   const mosaicRoot = document.getElementById("mosaic");
   if (!mosaicRoot) {
     throw new Error("Missing #mosaic container");
@@ -268,25 +352,161 @@ function initMainAndMosaicCanvases() {
 
   const mosaicCanvases = [];
   const existing = mosaicRoot.querySelectorAll("canvas");
+
   if (!existing.length) {
     for (let i = 0; i < 9; i++) {
       const c = document.createElement("canvas");
-      c.width = 256;
-      c.height = 256;
+      c.width = TOROIDAL_SIZE;
+      c.height = TOROIDAL_SIZE;
+      applyCanvasCSS(c, TOROIDAL_SIZE, TOROIDAL_SIZE);
       mosaicRoot.appendChild(c);
       mosaicCanvases.push(c);
     }
   } else {
-    existing.forEach((c) => mosaicCanvases.push(c));
+    existing.forEach((c) => {
+      applyCanvasCSS(c, c.width || TOROIDAL_SIZE, c.height || TOROIDAL_SIZE);
+      mosaicCanvases.push(c);
+    });
   }
+
+  configureMosaicLayout(
+    mosaicRoot,
+    TOROIDAL_SIZE,
+    TOROIDAL_SIZE,
+    mosaicCanvases.length || 9,
+  );
 
   return { mainCanvas, mosaicCanvases };
 }
 
+
 function buildModeLabelList(bits) {
-  if (!bits.length) return "Perlin";
+  if (!bits.length) return NOISE_LABELS_BY_BIT[0] || "Perlin";
   const labels = bits.map((bit) => NOISE_LABELS_BY_BIT[bit] || String(bit));
   return labels.join(", ");
+}
+
+function ensureRoot(id) {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`Missing #${id}`);
+  return el;
+}
+
+function populateNoiseTypeCheckboxes() {
+  const root = ensureRoot("noise-type-list");
+  root.innerHTML = "";
+
+  const bits = getSortedNoiseBits();
+  for (const bit of bits) {
+    const label = document.createElement("label");
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = "noise-type";
+    input.dataset.bit = String(bit);
+    if (bit === 0) input.checked = true;
+
+    label.appendChild(input);
+    label.appendChild(
+      document.createTextNode(" " + (NOISE_LABELS_BY_BIT[bit] || String(bit))),
+    );
+    root.appendChild(label);
+  }
+}
+
+function getToroidalCandidatesFromEntryPoints(entryPoints) {
+  const eps = Array.isArray(entryPoints) ? entryPoints : [];
+  return eps
+    .filter(
+      (ep) => typeof ep === "string" && /4D/.test(ep) && ep !== "clearTexture",
+    )
+    .slice();
+}
+
+function populateToroidalTypeCheckboxes(entryPoints) {
+  const root = ensureRoot("toroidal-type-list");
+  root.innerHTML = "";
+
+  const candidates = getToroidalCandidatesFromEntryPoints(entryPoints);
+
+  const defaults = new Set(["computePerlin4D", "computeWorley4D"]);
+  let anyChecked = false;
+
+  for (const ep of candidates) {
+    const label = document.createElement("label");
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = "toroidal-type";
+    input.dataset.entry = ep;
+
+    const bit = ENTRY_POINTS.indexOf(ep);
+    if (Number.isInteger(bit) && bit >= 0) {
+      input.dataset.bit = String(bit);
+    }
+
+    if (defaults.has(ep)) {
+      input.checked = true;
+      anyChecked = true;
+    }
+
+    label.appendChild(input);
+    label.appendChild(
+      document.createTextNode(" " + makeNoiseLabelFromEntryPoint(ep)),
+    );
+    root.appendChild(label);
+  }
+
+  if (!anyChecked && candidates.length) {
+    const first = root.querySelector(
+      'input[type="checkbox"][name="toroidal-type"]',
+    );
+    if (first) first.checked = true;
+  }
+}
+
+function collectSelectedToroidalModesFromUI() {
+  const boxes = document.querySelectorAll(
+    'input[type="checkbox"][name="toroidal-type"]',
+  );
+  const out = [];
+
+  boxes.forEach((box) => {
+    if (!box.checked) return;
+    const entry = String(box.dataset.entry || "");
+    if (!entry) return;
+
+    let bit = Number(box.dataset.bit);
+    if (!Number.isInteger(bit)) bit = ENTRY_POINTS.indexOf(entry);
+    if (!Number.isInteger(bit)) bit = -1;
+
+    out.push({ bit, entry });
+  });
+
+  if (!out.length) {
+    const fallbacks = ["computePerlin4D", "computeWorley4D"];
+    for (const entry of fallbacks) {
+      if (!ENTRY_POINTS.includes(entry)) continue;
+      const bit = ENTRY_POINTS.indexOf(entry);
+      out.push({ bit, entry });
+    }
+  }
+
+  return out;
+}
+
+function updateMosaicCaption(selectedEntries) {
+  const el = document.getElementById("mosaic-caption");
+  if (!el) return;
+
+  const modes = Array.isArray(selectedEntries) ? selectedEntries : [];
+  const pretty = modes.length
+    ? modes.map((ep) => makeNoiseLabelFromEntryPoint(ep)).join(" + ")
+    : "None";
+
+  el.textContent =
+    `A single toroidal Z slice from a 4D volume. Modes: ${pretty}. ` +
+    `Repeated in X and Y. Use the Z slice control to see different slices.`;
 }
 
 function populateOverrideModeSelect() {
@@ -294,42 +514,61 @@ function populateOverrideModeSelect() {
   if (!select) return;
   select.innerHTML = "";
 
-  const bits = Object.keys(NOISE_LABELS_BY_BIT)
-    .map((k) => Number(k))
-    .filter((bit) => Number.isInteger(bit) && bit >= 0 && bit <= 54)
-    .sort((a, b) => a - b);
-
+  const bits = getSortedOverrideBits();
   for (const bit of bits) {
+    const ep = ENTRY_POINTS[bit];
     const opt = document.createElement("option");
     opt.value = String(bit);
-    opt.textContent = `${bit}: ${NOISE_LABELS_BY_BIT[bit]}`;
+    opt.textContent = `${bit}: ${makeNoiseLabelFromEntryPoint(ep)}`;
     select.appendChild(opt);
   }
 
-  if (bits.length) {
-    select.value = String(bits[0]);
-  }
+  if (bits.length) select.value = String(bits[0]);
 }
 
 function populateOverrideFieldsForBit(bit) {
   const overrides = MODE_OVERRIDES.get(bit) || {};
-  const setVal = (id, key) => {
+
+  const setNum = (id, key) => {
     const el = document.getElementById(id);
     if (!el) return;
     const v = overrides[key];
     el.value = typeof v === "number" && Number.isFinite(v) ? String(v) : "";
   };
 
-  setVal("ov-zoom", "zoom");
-  setVal("ov-freq", "freq");
-  setVal("ov-gain", "gain");
-  setVal("ov-octaves", "octaves");
-  setVal("ov-warp", "warpAmp");
-  setVal("ov-threshold", "threshold");
-  setVal("ov-gabor", "gaborRadius");
-  setVal("ov-xShift", "xShift");
-  setVal("ov-yShift", "yShift");
-  setVal("ov-zShift", "zShift");
+  const setSel = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const v = overrides[key];
+    el.value = typeof v === "number" && Number.isFinite(v) ? String(v) : "";
+  };
+
+  setNum("ov-zoom", "zoom");
+  setNum("ov-freq", "freq");
+  setNum("ov-lacunarity", "lacunarity");
+  setNum("ov-gain", "gain");
+  setNum("ov-octaves", "octaves");
+
+  setSel("ov-turbulence", "turbulence");
+
+  setNum("ov-seedAngle", "seedAngle");
+  setNum("ov-exp1", "exp1");
+  setNum("ov-exp2", "exp2");
+  setNum("ov-rippleFreq", "rippleFreq");
+  setNum("ov-time", "time");
+
+  setNum("ov-warp", "warpAmp");
+  setNum("ov-threshold", "threshold");
+
+  setSel("ov-voroMode", "voroMode");
+  setNum("ov-edgeK", "edgeK");
+
+  setNum("ov-gabor", "gaborRadius");
+  setNum("ov-terraceStep", "terraceStep");
+
+  setNum("ov-xShift", "xShift");
+  setNum("ov-yShift", "yShift");
+  setNum("ov-zShift", "zShift");
 }
 
 function updateOverridesFromFields() {
@@ -348,100 +587,85 @@ function updateOverridesFromFields() {
     return num;
   };
 
+  const readSelNum = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const trimmed = String(el.value).trim();
+    if (!trimmed) return null;
+    const num = Number(trimmed);
+    if (!Number.isFinite(num)) return null;
+    return num;
+  };
+
   const obj = {};
+
   const zoom = readNum("ov-zoom");
   const freq = readNum("ov-freq");
+  const lacunarity = readNum("ov-lacunarity");
   const gain = readNum("ov-gain");
   const octaves = readNum("ov-octaves");
+
+  const turbulence = readSelNum("ov-turbulence");
+
+  const seedAngle = readNum("ov-seedAngle");
+  const exp1 = readNum("ov-exp1");
+  const exp2 = readNum("ov-exp2");
+  const rippleFreq = readNum("ov-rippleFreq");
+  const time = readNum("ov-time");
+
   const warpAmp = readNum("ov-warp");
   const threshold = readNum("ov-threshold");
+
+  const voroMode = readSelNum("ov-voroMode");
+  const edgeK = readNum("ov-edgeK");
+
   const gaborRadius = readNum("ov-gabor");
+  const terraceStep = readNum("ov-terraceStep");
+
   const xShift = readNum("ov-xShift");
   const yShift = readNum("ov-yShift");
   const zShift = readNum("ov-zShift");
 
   if (zoom !== null) obj.zoom = zoom;
   if (freq !== null) obj.freq = freq;
+  if (lacunarity !== null) obj.lacunarity = lacunarity;
   if (gain !== null) obj.gain = gain;
   if (octaves !== null) obj.octaves = octaves;
+
+  if (turbulence !== null) obj.turbulence = Math.max(0, Math.floor(turbulence));
+
+  if (seedAngle !== null) obj.seedAngle = seedAngle;
+  if (exp1 !== null) obj.exp1 = exp1;
+  if (exp2 !== null) obj.exp2 = exp2;
+  if (rippleFreq !== null) obj.rippleFreq = rippleFreq;
+  if (time !== null) obj.time = time;
+
   if (warpAmp !== null) obj.warpAmp = warpAmp;
   if (threshold !== null) obj.threshold = threshold;
+
+  if (voroMode !== null) obj.voroMode = Math.max(0, Math.floor(voroMode));
+  if (edgeK !== null) obj.edgeK = edgeK;
+
   if (gaborRadius !== null) obj.gaborRadius = gaborRadius;
+  if (terraceStep !== null) obj.terraceStep = terraceStep;
+
   if (xShift !== null) obj.xShift = xShift;
   if (yShift !== null) obj.yShift = yShift;
   if (zShift !== null) obj.zShift = zShift;
 
-  if (Object.keys(obj).length) {
-    MODE_OVERRIDES.set(bit, obj);
-  } else {
-    MODE_OVERRIDES.delete(bit);
-  }
+  if (Object.keys(obj).length) MODE_OVERRIDES.set(bit, obj);
+  else MODE_OVERRIDES.delete(bit);
 }
 
-function getZSliceIndexFromUI() {
-  const slider = document.getElementById("z-slice");
-  const num = document.getElementById("z-slice-num");
-
-  let idx = 0;
-  if (slider) {
-    idx = Number(slider.value);
-  } else if (num) {
-    idx = Number(num.value);
-  }
-
-  if (!Number.isFinite(idx)) idx = 0;
-  idx = Math.min(Math.max(Math.round(idx), 0), TOROIDAL_SIZE - 1);
-
-  if (slider && String(slider.value) !== String(idx)) {
-    slider.value = String(idx);
-  }
-  if (num && String(num.value) !== String(idx)) {
-    num.value = String(idx);
-  }
-
-  return idx;
-}
-
-// Download helpers: wait for GPU work to finish, then grab a PNG from the canvas
-async function downloadCanvasPNG(canvas, filename, device) {
-  if (!canvas) return;
-
-  if (device && device.queue && "onSubmittedWorkDone" in device.queue) {
-    try {
-      await device.queue.onSubmittedWorkDone();
-    } catch (e) {
-      console.warn(e);
-    }
-  }
-
-  if (typeof canvas.toBlob === "function") {
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    }, "image/png");
-  } else {
-    const url = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
+function _isEntryPoint4D(ep) {
+  return typeof ep === "string" && /4D/.test(ep);
 }
 
 async function renderMainNoise(builder, mainCanvas) {
   const resW = Number(document.getElementById("res-width")?.value) || 800;
   const resH = Number(document.getElementById("res-height")?.value) || 800;
-  mainCanvas.width = resW;
-  mainCanvas.height = resH;
+
+  ensureCanvasSize(builder, mainCanvas, resW, resH);
 
   const previewMeta = document.getElementById("preview-meta");
   const previewStats = document.getElementById("preview-stats");
@@ -470,7 +694,15 @@ async function renderMainNoise(builder, mainCanvas) {
   });
 
   for (const bit of noiseBits) {
+    const ep = ENTRY_POINTS[bit];
     const params = buildParamsForBit(bit, globalParams);
+
+    if (_isEntryPoint4D(ep)) {
+      params.toroidal = 1;
+    } else {
+      params.toroidal = 0;
+    }
+
     await builder.computeToTexture(resW, resH, params, {
       ...commonOptions,
       noiseChoices: [bit],
@@ -494,10 +726,12 @@ async function renderMainNoise(builder, mainCanvas) {
   const tBlitEnd = performance.now();
 
   if (previewMeta) {
-    previewMeta.textContent = `Height field preview · ${resW}×${resH} · modes: ${buildModeLabelList(
-      noiseBits
-    )}`;
+    const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
+    const tileTag = any4D ? " · toroidal(4D)" : "";
+    previewMeta.textContent =
+      `Height field preview · ${resW}×${resH} · modes: ${buildModeLabelList(noiseBits)}${tileTag}`;
   }
+
   if (previewStats) {
     const computeMs = (tComputeEnd - tComputeStart).toFixed(1);
     const blitMs = (tBlitEnd - tBlitStart).toFixed(1);
@@ -509,16 +743,19 @@ async function renderMainNoise(builder, mainCanvas) {
 
 function renderToroidalSlice(builder, volumeView, mosaicCanvases) {
   if (!volumeView) return;
+
   const depth = TOROIDAL_SIZE;
   const zIndex = getZSliceIndexFromUI();
   const zNorm = (zIndex + 0.5) / depth;
 
-  const count = mosaicCanvases.length || 9;
+  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
+  const count = canvases.length || 9;
 
   for (let i = 0; i < count; i++) {
-    const canvas = mosaicCanvases[i];
-    canvas.width = TOROIDAL_SIZE;
-    canvas.height = TOROIDAL_SIZE;
+    const canvas = canvases[i];
+    if (!canvas) continue;
+
+    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
 
     builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
       depth,
@@ -531,32 +768,65 @@ function renderToroidalSlice(builder, volumeView, mosaicCanvases) {
   }
 }
 
+
 async function renderToroidalDemo(builder, mosaicCanvases, state) {
   const globalParams = readGlobalParamsFromUI();
+  builder.buildPermTable(globalParams.seed | 0);
 
-  const shapeParams = {
+  const baseParams = {
     ...globalParams,
     toroidal: 1,
   };
 
+  const modes = collectSelectedToroidalModesFromUI();
+  updateMosaicCaption(modes.map((m) => m.entry));
+
   const t0 = performance.now();
-  const volumeView = await builder.computeToTexture3D(
+
+  let volumeView = await builder.computeToTexture3D(
     TOROIDAL_SIZE,
     TOROIDAL_SIZE,
     TOROIDAL_SIZE,
-    shapeParams,
+    baseParams,
     {
-      noiseChoices: TOROIDAL_VOLUME_CHOICES,
+      noiseChoices: ["clearTexture"],
       outputChannel: 1,
       id: TOROIDAL_VOLUME_KEY,
-    }
+    },
   );
+
+  for (const m of modes) {
+    const bit = m.bit;
+    const entry = m.entry;
+
+    const params =
+      Number.isInteger(bit) && bit >= 0
+        ? buildParamsForBit(bit, baseParams)
+        : { ...baseParams };
+
+    volumeView = await builder.computeToTexture3D(
+      TOROIDAL_SIZE,
+      TOROIDAL_SIZE,
+      TOROIDAL_SIZE,
+      params,
+      {
+        noiseChoices: [entry],
+        outputChannel: 1,
+        id: TOROIDAL_VOLUME_KEY,
+      },
+    );
+  }
+
   const t1 = performance.now();
 
   state.lastToroidalVolumeView = volumeView;
   state.lastToroidalComputeMs = t1 - t0;
 
-  renderToroidalSlice(builder, volumeView, mosaicCanvases);
+  renderToroidalSlice(
+    builder,
+    volumeView,
+    new Array(9).fill(0).map((_, i) => mosaicCanvases[i]),
+  );
 }
 
 async function initNoiseDemo() {
@@ -578,32 +848,37 @@ async function initNoiseDemo() {
   const device = await adapter.requestDevice();
   const builder = new NoiseComputeBuilder(device, device.queue);
 
+  ENTRY_POINTS = Array.isArray(builder.entryPoints)
+    ? builder.entryPoints.slice()
+    : [];
+  NOISE_LABELS_BY_BIT = buildNoiseLabelsByBit(
+    ENTRY_POINTS,
+    UI_EXCLUDE_TRAILING_ENTRY_POINTS,
+  );
+
+  populateNoiseTypeCheckboxes();
+  populateToroidalTypeCheckboxes(ENTRY_POINTS);
+  populateOverrideModeSelect();
+
   const { mainCanvas, mosaicCanvases } = initMainAndMosaicCanvases();
 
   builder.configureCanvas(mainCanvas);
   mosaicCanvases.forEach((c) => builder.configureCanvas(c));
 
-  populateOverrideModeSelect();
   const overrideModeSelect = document.getElementById("override-mode");
   if (overrideModeSelect) {
     const bit = Number(overrideModeSelect.value);
     if (Number.isInteger(bit)) populateOverrideFieldsForBit(bit);
   }
 
-  const overrideInputs = [
-    "ov-zoom",
-    "ov-freq",
-    "ov-gain",
-    "ov-octaves",
-    "ov-warp",
-    "ov-threshold",
-    "ov-gabor",
-    "ov-xShift",
-    "ov-yShift",
-    "ov-zShift",
-  ];
+  const state = {
+    lastToroidalVolumeView: null,
+    lastToroidalComputeMs: 0,
+  };
 
   let mainRenderPending = false;
+  let toroidalRenderPending = false;
+
   const scheduleMainRender = () => {
     if (mainRenderPending) return;
     mainRenderPending = true;
@@ -616,12 +891,53 @@ async function initNoiseDemo() {
     });
   };
 
+  const scheduleToroidalRender = () => {
+    if (toroidalRenderPending) return;
+    toroidalRenderPending = true;
+    requestAnimationFrame(() => {
+      toroidalRenderPending = false;
+      renderToroidalDemo(builder, mosaicCanvases, state).catch((err) => {
+        console.error(err);
+        if (statsEl) statsEl.textContent = String(err);
+      });
+    });
+  };
+
+  const scheduleAllRender = () => {
+    scheduleMainRender();
+    scheduleToroidalRender();
+  };
+
+  const overrideInputs = [
+    "ov-zoom",
+    "ov-freq",
+    "ov-lacunarity",
+    "ov-gain",
+    "ov-octaves",
+    "ov-turbulence",
+    "ov-seedAngle",
+    "ov-exp1",
+    "ov-exp2",
+    "ov-rippleFreq",
+    "ov-time",
+    "ov-warp",
+    "ov-threshold",
+    "ov-voroMode",
+    "ov-edgeK",
+    "ov-gabor",
+    "ov-terraceStep",
+    "ov-xShift",
+    "ov-yShift",
+    "ov-zShift",
+  ];
+
   overrideInputs.forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("change", () => {
       updateOverridesFromFields();
       scheduleMainRender();
+      scheduleToroidalRender();
     });
   });
 
@@ -643,40 +959,78 @@ async function initNoiseDemo() {
       MODE_OVERRIDES.delete(bit);
       populateOverrideFieldsForBit(bit);
       scheduleMainRender();
+      scheduleToroidalRender();
     });
   }
-
-  const overridesBtn = document.getElementById("noise-overrides-btn");
-  if (overridesBtn) {
-    overridesBtn.addEventListener("click", () => {
-      const group = document.getElementById("overrides-group");
-      if (!group) return;
-      group.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }
-
-  const state = {
-    lastToroidalVolumeView: null,
-    lastToroidalComputeMs: 0,
-  };
 
   const renderBtn = document.getElementById("render-btn");
-  const applyResBtn = document.getElementById("apply-res");
-
   if (renderBtn) {
     renderBtn.addEventListener("click", () => {
-      renderMainNoise(builder, mainCanvas)
-        .then(() => renderToroidalDemo(builder, mosaicCanvases, state))
-        .catch((err) => {
-          console.error(err);
-          if (statsEl) statsEl.textContent = String(err);
-        });
+      scheduleAllRender();
     });
   }
 
+  const applyResBtn = document.getElementById("apply-res");
   if (applyResBtn) {
     applyResBtn.addEventListener("click", () => {
+      scheduleAllRender();
+    });
+  }
+
+  const GLOBAL_PARAM_IDS = [
+    "noise-seed",
+    "noise-zoom",
+    "noise-freq",
+    "noise-octaves",
+    "noise-lacunarity",
+    "noise-gain",
+    "noise-xShift",
+    "noise-yShift",
+    "noise-zShift",
+
+    "noise-voroMode",
+    "noise-threshold",
+    "noise-edgeK",
+    "noise-seedAngle",
+
+    "noise-turbulence",
+    "noise-time",
+    "noise-warpAmp",
+    "noise-gaborRadius",
+    "noise-terraceStep",
+    "noise-exp1",
+    "noise-exp2",
+    "noise-rippleFreq",
+  ];
+
+  GLOBAL_PARAM_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
       scheduleMainRender();
+      scheduleToroidalRender();
+    });
+    el.addEventListener("change", () => {
+      scheduleMainRender();
+      scheduleToroidalRender();
+    });
+  });
+
+  const noiseListRoot = document.getElementById("noise-type-list");
+  if (noiseListRoot) {
+    noiseListRoot.addEventListener("change", (e) => {
+      const t = e.target;
+      if (!t || t.name !== "noise-type") return;
+      scheduleMainRender();
+    });
+  }
+
+  const toroidalListRoot = document.getElementById("toroidal-type-list");
+  if (toroidalListRoot) {
+    toroidalListRoot.addEventListener("change", (e) => {
+      const t = e.target;
+      if (!t || t.name !== "toroidal-type") return;
+      scheduleToroidalRender();
     });
   }
 
@@ -707,34 +1061,6 @@ async function initNoiseDemo() {
     });
   }
 
-  const GLOBAL_PARAM_IDS = [
-    "noise-seed",
-    "noise-zoom",
-    "noise-freq",
-    "noise-octaves",
-    "noise-lacunarity",
-    "noise-gain",
-    "noise-xShift",
-    "noise-yShift",
-    "noise-zShift",
-    "noise-threshold",
-  ];
-
-  GLOBAL_PARAM_IDS.forEach((id) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener("input", scheduleMainRender);
-    el.addEventListener("change", scheduleMainRender);
-  });
-
-  const noiseBoxes = document.querySelectorAll(
-    'input[type="checkbox"][name="noise-type"]'
-  );
-  noiseBoxes.forEach((box) => {
-    box.addEventListener("change", scheduleMainRender);
-  });
-
-  // Download main 2D noise as PNG via GPU readback
   const downloadMainBtn = document.getElementById("download-main");
   if (downloadMainBtn) {
     downloadMainBtn.addEventListener("click", async () => {
@@ -763,7 +1089,6 @@ async function initNoiseDemo() {
     });
   }
 
-  // Download a single tile (toroidal 3D slice) as PNG via GPU readback
   const downloadTileBtn = document.getElementById("download-tile");
   if (downloadTileBtn) {
     downloadTileBtn.addEventListener("click", async () => {
@@ -773,11 +1098,11 @@ async function initNoiseDemo() {
           return;
         }
 
-        let tileCanvas = document.getElementById("tile-canvas");
-        if (!tileCanvas) {
-          tileCanvas =
-            mosaicCanvases && mosaicCanvases.length ? mosaicCanvases[0] : null;
-        }
+        const tileCanvas =
+          (mosaicCanvases && mosaicCanvases.length
+            ? mosaicCanvases[0]
+            : null) || document.getElementById("tile-canvas");
+
         if (!tileCanvas) {
           console.warn("No tile canvas found for export");
           return;
@@ -799,7 +1124,7 @@ async function initNoiseDemo() {
             zNorm,
             channel: 0,
             chunk: 0,
-          }
+          },
         );
 
         const url = URL.createObjectURL(blob);
@@ -816,6 +1141,132 @@ async function initNoiseDemo() {
       }
     });
   }
+
+  function _downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function _safeFilePart(s) {
+    return String(s || "")
+      .trim()
+      .replace(/\s+/g, "_")
+      .replace(/[^a-zA-Z0-9._-]+/g, "")
+      .slice(0, 120);
+  }
+
+  async function exportToroidalTilesetPNG(builder, volumeView, opts) {
+    const tileW = Math.max(1, opts.tileW | 0);
+    const tileH = Math.max(1, opts.tileH | 0);
+    const depth = Math.max(1, opts.depth | 0);
+
+    const cols = Math.max(1, opts.columns | 0);
+    const rows = Math.ceil(depth / cols);
+
+    const channel = Number.isFinite(opts.channel) ? opts.channel | 0 : 0;
+    const chunk = Number.isFinite(opts.chunk) ? opts.chunk | 0 : 0;
+
+    const atlas = document.createElement("canvas");
+    atlas.width = tileW * cols;
+    atlas.height = tileH * rows;
+
+    const ctx = atlas.getContext("2d", { alpha: true });
+    if (!ctx) throw new Error("Failed to create 2D context for atlas canvas");
+    ctx.clearRect(0, 0, atlas.width, atlas.height);
+
+    const tmp = document.createElement("canvas");
+    tmp.width = tileW;
+    tmp.height = tileH;
+
+    builder.configureCanvas(tmp);
+
+    for (let z = 0; z < depth; z++) {
+      const zNorm = (z + 0.5) / depth;
+
+      builder.renderTexture3DSliceToCanvas(volumeView, tmp, {
+        depth,
+        zNorm,
+        channel,
+        chunk,
+        preserveCanvasSize: true,
+        clear: true,
+      });
+
+      if (
+        builder.queue &&
+        typeof builder.queue.onSubmittedWorkDone === "function"
+      ) {
+        await builder.queue.onSubmittedWorkDone();
+      }
+
+      const x = (z % cols) * tileW;
+      const y = Math.floor(z / cols) * tileH;
+      ctx.drawImage(tmp, x, y);
+    }
+
+    const blob = await new Promise((resolve) =>
+      atlas.toBlob(resolve, "image/png"),
+    );
+    if (!blob) throw new Error("Failed to encode atlas PNG");
+    return { blob, cols, rows, width: atlas.width, height: atlas.height };
+  }
+
+  async function saveToroidalTileset(builder, state) {
+    if (!state || !state.lastToroidalVolumeView) {
+      console.warn("No toroidal volume available for tileset export");
+      return;
+    }
+
+    const globalParams = readGlobalParamsFromUI();
+    const modes = collectSelectedToroidalModesFromUI().map((m) => m.entry);
+
+    const cols = 16;
+    const tileW = TOROIDAL_SIZE;
+    const tileH = TOROIDAL_SIZE;
+    const depth = TOROIDAL_SIZE;
+
+    const out = await exportToroidalTilesetPNG(
+      builder,
+      state.lastToroidalVolumeView,
+      {
+        tileW,
+        tileH,
+        depth,
+        columns: cols,
+        channel: 0,
+        chunk: 0,
+      },
+    );
+
+    const modeTag =
+      _safeFilePart(modes.map(makeNoiseLabelFromEntryPoint).join("+")) ||
+      "tileset";
+    const seedTag = _safeFilePart(globalParams.seed);
+    const filename = `noise-tileset_${modeTag}_seed${seedTag}_${tileW}x${tileH}_z${depth}_${out.cols}x${out.rows}.png`;
+
+    _downloadBlob(out.blob, filename);
+  }
+
+  // inside initNoiseDemo(), near the other download button handlers
+  const downloadTilesetBtn = document.getElementById("download-tileset");
+  if (downloadTilesetBtn) {
+    downloadTilesetBtn.addEventListener("click", async () => {
+      try {
+        await saveToroidalTileset(builder, state);
+      } catch (e) {
+        console.error("download-tileset failed:", e);
+        if (statsEl) statsEl.textContent = "Export tileset failed: " + e;
+      }
+    });
+  }
+
+  updateMosaicCaption(collectSelectedToroidalModesFromUI().map((m) => m.entry));
 
   await renderMainNoise(builder, mainCanvas);
   await renderToroidalDemo(builder, mosaicCanvases, state);
