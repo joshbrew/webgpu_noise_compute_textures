@@ -114,34 +114,32 @@ const INV_SQRT2    : f32 = 0.7071067811865476; // 1/\u221A2\r
 const U_SCALE : f32 = 3.0;\r
 const V_SCALE : f32 = 3.0;\r
 const T_SCALE : f32 = 2.0;\r
+const PACK_BIAS : vec4<f32> = vec4<f32>(0.37, 0.21, 0.29, 0.31);\r
 \r
-\r
-// pack like the HTML (x=cosU*uS, y=sinU*uS, z=cosV*vS+cosT*tS, w=sinV*vS+sinT*tS)\r
 fn packPeriodicUV(u: f32, v: f32, theta: f32) -> vec4<f32> {\r
-  let aU = u * TWO_PI;\r
-  let aV = v * TWO_PI;\r
-  let aT = (theta - floor(theta)) * TWO_PI;\r
+  let aU = fract(u) * TWO_PI;\r
+  let aV = fract(v) * TWO_PI;\r
+  let aT = fract(theta) * TWO_PI;\r
 \r
   let x = cos(aU) * U_SCALE;\r
   let y = sin(aU) * U_SCALE;\r
   let z = cos(aV) * V_SCALE + cos(aT) * T_SCALE;\r
   let w = sin(aV) * V_SCALE + sin(aT) * T_SCALE;\r
-  return vec4<f32>(x, y, z, w);\r
+\r
+  return vec4<f32>(x, y, z, w) + PACK_BIAS;\r
 }\r
+\r
 \r
 fn thetaFromDepth(fz: i32) -> f32 {\r
   let uses3D = writeTo3D() || readFrom3D();\r
   if (uses3D) {\r
-    if (frame.fullDepth <= 1u) { return 0.0; }\r
-    // center-of-slice mapping: 0.5/N .. (N-0.5)/N\r
-    return (f32(clampZ(fz)) + 0.5) / f32(frame.fullDepth);\r
+    let d = max(f32(frame.fullDepth), 1.0);\r
+    return (f32(clampZ(fz)) + 0.5) / d; // [0,1)\r
   }\r
   return layerToZ(frame.layerIndex, frame.layers);\r
 }\r
 \r
-fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
-\r
-  // \u2500\u2500 original paths (unchanged) when not in toroidal mode \u2500\u2500\r
+fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
   if (options.useCustomPos == 1u) {\r
     let use3D = writeTo3D() || readFrom3D();\r
     let slice_i = select(frame.layerIndex, clampZ(fz), use3D);\r
@@ -150,6 +148,20 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
     let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
     let idx = slice * frame.fullWidth * frame.fullHeight + u32(cy) * frame.fullWidth + u32(cx);\r
     return posBuf[idx].xyz;\r
+  }\r
+\r
+  if (params.toroidal == 1u) {\r
+    let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);\r
+    let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
+\r
+    let invW = 1.0 / max(f32(frame.fullWidth), 1.0);\r
+    let invH = 1.0 / max(f32(frame.fullHeight), 1.0);\r
+\r
+    let U = (f32(cx) + 0.5) * invW;   // [0,1)\r
+    let V = (f32(cy) + 0.5) * invH;   // [0,1)\r
+    let theta = thetaFromDepth(fz);   // [0,1)\r
+\r
+    return vec3<f32>(U, V, theta);\r
   }\r
 \r
   let invW = 1.0 / max(f32(frame.fullWidth), 1.0);\r
@@ -162,22 +174,10 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
     oy = f32(frame.originY);\r
   }\r
 \r
-  if (params.toroidal == 1u) {\r
-    // center-of-texel UVs (matches the HTML path)\r
-    let U = (ox + f32(fx) + 0.5) * invW;  // [0,1)\r
-    let V = (oy + f32(fy) + 0.5) * invH;  // [0,1)\r
-    let theta = thetaFromDepth(fz);       // derive \u03B8 from depth\r
-\r
-    // return (U,V,\u03B8) \u2014 z carries \u03B8, used by packPeriodicUV in generatePerlin4D\r
-    return vec3<f32>(U, V, theta);\r
-    //this is for 4d noise functions with toroidal implementations\r
-  }\r
-\r
-\r
   let x = (ox + f32(fx)) * invW;\r
   let y = (oy + f32(fy)) * invH;\r
 \r
-  var z : f32;\r
+  var z: f32;\r
   let uses3D = writeTo3D() || readFrom3D();\r
   if (uses3D) {\r
     if (frame.fullDepth <= 1u) { z = 0.0; }\r
@@ -185,8 +185,10 @@ fn fetchPos(fx:i32, fy:i32, fz:i32)->vec3<f32> {\r
   } else {\r
     z = layerToZ(frame.layerIndex, frame.layers);\r
   }\r
+\r
   return vec3<f32>(x, y, z);\r
 }\r
+\r
 \r
 \r
 \r
@@ -534,48 +536,48 @@ fn worley3D(p : vec3<f32>) -> f32 {\r
 \r
 \r
 /* ---------- 4D Worley (cellular) ---------- */\r
-fn worley4D(p: vec4<f32>) -> f32 {\r
-  let fx = i32(floor(p.x));\r
-  let fy = i32(floor(p.y));\r
-  let fz = i32(floor(p.z));\r
-  let fw = i32(floor(p.w));\r
+// fn worley4D(p: vec4<f32>) -> f32 {\r
+//   let fx = i32(floor(p.x));\r
+//   let fy = i32(floor(p.y));\r
+//   let fz = i32(floor(p.z));\r
+//   let fw = i32(floor(p.w));\r
 \r
-  var minDistSq : f32 = 1e9;\r
+//   var minDistSq : f32 = 1e9;\r
 \r
-  // iterate neighbor cells in 4D (3^4 = 81)\r
-  for (var dw = -1; dw <= 1; dw = dw + 1) {\r
-    for (var dz = -1; dz <= 1; dz = dz + 1) {\r
-      for (var dy = -1; dy <= 1; dy = dy + 1) {\r
-        for (var dx = -1; dx <= 1; dx = dx + 1) {\r
-          let xi = fx + dx;\r
-          let yi = fy + dy;\r
-          let zi = fz + dz;\r
-          let wi = fw + dw;\r
+//   // iterate neighbor cells in 4D (3^4 = 81)\r
+//   for (var dw = -1; dw <= 1; dw = dw + 1) {\r
+//     for (var dz = -1; dz <= 1; dz = dz + 1) {\r
+//       for (var dy = -1; dy <= 1; dy = dy + 1) {\r
+//         for (var dx = -1; dx <= 1; dx = dx + 1) {\r
+//           let xi = fx + dx;\r
+//           let yi = fy + dy;\r
+//           let zi = fz + dz;\r
+//           let wi = fw + dw;\r
 \r
-          // jitter within each cell using rotated rand4u calls to decorrelate axes\r
-          let rx = rand4u(xi, yi, zi, wi);\r
-          let ry = rand4u(yi, zi, wi, xi);\r
-          let rz = rand4u(zi, wi, xi, yi);\r
-          let rw = rand4u(wi, xi, yi, zi);\r
+//           // jitter within each cell using rotated rand4u calls to decorrelate axes\r
+//           let rx = rand4u(xi, yi, zi, wi);\r
+//           let ry = rand4u(yi, zi, wi, xi);\r
+//           let rz = rand4u(zi, wi, xi, yi);\r
+//           let rw = rand4u(wi, xi, yi, zi);\r
 \r
-          let px = f32(xi) + rx;\r
-          let py = f32(yi) + ry;\r
-          let pz = f32(zi) + rz;\r
-          let pw = f32(wi) + rw;\r
+//           let px = f32(xi) + rx;\r
+//           let py = f32(yi) + ry;\r
+//           let pz = f32(zi) + rz;\r
+//           let pw = f32(wi) + rw;\r
 \r
-          let dxv = px - p.x;\r
-          let dyv = py - p.y;\r
-          let dzv = pz - p.z;\r
-          let dwv = pw - p.w;\r
-          let d2 = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;\r
-          if (d2 < minDistSq) { minDistSq = d2; }\r
-        }\r
-      }\r
-    }\r
-  }\r
+//           let dxv = px - p.x;\r
+//           let dyv = py - p.y;\r
+//           let dzv = pz - p.z;\r
+//           let dwv = pw - p.w;\r
+//           let d2 = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;\r
+//           if (d2 < minDistSq) { minDistSq = d2; }\r
+//         }\r
+//       }\r
+//     }\r
+//   }\r
 \r
-  return sqrt(minDistSq);\r
-}\r
+//   return sqrt(minDistSq);\r
+// }\r
 \r
 \r
 fn cellular3D(p : vec3<f32>) -> f32 {\r
@@ -953,11 +955,157 @@ fn voronoi2D(pos : vec2<f32>) -> f32 {\r
 struct Voro3DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };\r
 struct Voro4DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };\r
 \r
-const VORO_CELL       : u32 = 0u;\r
-const VORO_F1         : u32 = 1u;\r
-const VORO_INTERIOR   : u32 = 2u;\r
-const VORO_EDGES      : u32 = 3u;\r
-const VORO_EDGE_THRESH: u32 = 4u;\r
+// ----------------- voro_eval: pick output depending on mode -----------------\r
+\r
+\r
+const VORO_CELL            : u32 = 0u;\r
+const VORO_F1              : u32 = 1u;\r
+const VORO_INTERIOR        : u32 = 2u;  // gap = F2 - F1\r
+const VORO_EDGES           : u32 = 3u;  // scaled gap\r
+const VORO_EDGE_THRESH     : u32 = 4u;  // gate gap >= threshold\r
+const VORO_FLAT_SHADE      : u32 = 5u;  // interior = 1, edges = 0 (edges defined by gap < threshold)\r
+const VORO_FLAT_SHADE_INV  : u32 = 6u;  // edges = 1, interior = 0 (gap < threshold)\r
+\r
+// Added: "old cellular3D" compatible squared-gap modes (F2^2 - F1^2)\r
+const VORO_INTERIOR_SQ        : u32 = 7u;  // gapSq = F2^2 - F1^2\r
+const VORO_EDGES_SQ           : u32 = 8u;  // scaled gapSq\r
+const VORO_EDGE_THRESH_SQ     : u32 = 9u;  // gate gapSq >= threshold\r
+const VORO_FLAT_SHADE_SQ      : u32 = 10u; // interior = 1, edges = 0 (gapSq < threshold)\r
+const VORO_FLAT_SHADE_INV_SQ  : u32 = 11u; // edges = 1, interior = 0 (gapSq < threshold)\r
+\r
+// Added: F1 threshold and masks (useful for "radius" gates, bubble masks, etc.)\r
+const VORO_F1_THRESH      : u32 = 12u; // gate F1 >= threshold, returns F1 * gate\r
+const VORO_F1_MASK        : u32 = 13u; // smooth mask: 0 below threshold, 1 above (feather=edgeK)\r
+const VORO_F1_MASK_INV    : u32 = 14u; // inverted mask: 1 below threshold, 0 above (feather=edgeK)\r
+\r
+// Added: softer edge line response (no threshold needed)\r
+const VORO_EDGE_RCP       : u32 = 15u; // 1 / (1 + gap*k)\r
+const VORO_EDGE_RCP_SQ    : u32 = 16u; // 1 / (1 + gapSq*k)\r
+\r
+fn voro_edge_dist(f1Sq: f32, f2Sq: f32) -> f32 {\r
+  let f1 = sqrt(max(f1Sq, 0.0));\r
+  let f2 = sqrt(max(f2Sq, 0.0));\r
+  return max(f2 - f1, 0.0);\r
+}\r
+\r
+// edgeDist is gap (or gapSq for *_SQ modes)\r
+// returns 1 near edges (small edgeDist), 0 in interior\r
+fn voro_edge_mask(edgeDist: f32, threshold: f32, feather: f32) -> f32 {\r
+  let t = max(threshold, 0.0);\r
+  if (t <= 0.0) { return 0.0; }\r
+\r
+  let f = max(feather, 0.0);\r
+  if (f > 0.0) {\r
+    return 1.0 - smoothstep(t, t + f, edgeDist);\r
+  }\r
+  return select(0.0, 1.0, edgeDist < t);\r
+}\r
+\r
+// returns 0 below threshold, 1 above (optionally smoothed)\r
+fn voro_thresh_mask(v: f32, threshold: f32, feather: f32) -> f32 {\r
+  let t = max(threshold, 0.0);\r
+  if (t <= 0.0) { return 0.0; }\r
+\r
+  let f = max(feather, 0.0);\r
+  if (f > 0.0) {\r
+    return smoothstep(t, t + f, v);\r
+  }\r
+  return select(0.0, 1.0, v >= t);\r
+}\r
+\r
+\r
+// f1Sq/f2Sq are squared distances; cellVal in [0,1].\r
+// edgeK is scale (edges modes) or feather (mask modes). freqOrScale unused.\r
+fn voro_eval(\r
+  f1Sq: f32,\r
+  f2Sq: f32,\r
+  cellVal: f32,\r
+  mode: u32,\r
+  edgeK: f32,\r
+  threshold: f32,\r
+  freqOrScale: f32\r
+) -> f32 {\r
+  let f1 = sqrt(max(f1Sq, 0.0));\r
+  let f2 = sqrt(max(f2Sq, 0.0));\r
+  let gap = max(f2 - f1, 0.0);\r
+\r
+  let gapSq = max(f2Sq - f1Sq, 0.0);\r
+\r
+  switch (mode) {\r
+    case VORO_CELL: {\r
+      return cellVal;\r
+    }\r
+    case VORO_F1: {\r
+      return f1;\r
+    }\r
+    case VORO_INTERIOR: {\r
+      return gap;\r
+    }\r
+    case VORO_EDGES: {\r
+      let k = max(edgeK, 0.0);\r
+      return clamp(gap * select(10.0, k, k > 0.0), 0.0, 1.0);\r
+    }\r
+    case VORO_EDGE_THRESH: {\r
+      let t = max(threshold, 0.0);\r
+      let gate = select(0.0, 1.0, gap >= t);\r
+      return gap * gate;\r
+    }\r
+    case VORO_FLAT_SHADE: {\r
+      let edge = voro_edge_mask(gap, threshold, edgeK);\r
+      return 1.0 - edge;\r
+    }\r
+    case VORO_FLAT_SHADE_INV: {\r
+      let edge = voro_edge_mask(gap, threshold, edgeK);\r
+      return edge;\r
+    }\r
+\r
+    case VORO_INTERIOR_SQ: {\r
+      return gapSq;\r
+    }\r
+    case VORO_EDGES_SQ: {\r
+      let k = max(edgeK, 0.0);\r
+      return clamp(gapSq * select(10.0, k, k > 0.0), 0.0, 1.0);\r
+    }\r
+    case VORO_EDGE_THRESH_SQ: {\r
+      let t = max(threshold, 0.0);\r
+      let gate = select(0.0, 1.0, gapSq >= t);\r
+      return gapSq * gate;\r
+    }\r
+    case VORO_FLAT_SHADE_SQ: {\r
+      let edge = voro_edge_mask(gapSq, threshold, edgeK);\r
+      return 1.0 - edge;\r
+    }\r
+    case VORO_FLAT_SHADE_INV_SQ: {\r
+      let edge = voro_edge_mask(gapSq, threshold, edgeK);\r
+      return edge;\r
+    }\r
+\r
+    case VORO_F1_THRESH: {\r
+      let t = max(threshold, 0.0);\r
+      let gate = select(0.0, 1.0, f1 >= t);\r
+      return f1 * gate;\r
+    }\r
+    case VORO_F1_MASK: {\r
+      return voro_thresh_mask(f1, threshold, edgeK);\r
+    }\r
+    case VORO_F1_MASK_INV: {\r
+      return 1.0 - voro_thresh_mask(f1, threshold, edgeK);\r
+    }\r
+\r
+    case VORO_EDGE_RCP: {\r
+      let k = max(edgeK, 0.0);\r
+      return 1.0 / (1.0 + gap * k*10);\r
+    }\r
+    case VORO_EDGE_RCP_SQ: {\r
+      let k = max(edgeK, 0.0);\r
+      return 1.0 / (1.0 + gapSq * k*10);\r
+    }\r
+\r
+    default: {\r
+      return gap;\r
+    }\r
+  }\r
+}\r
 \r
 // ----------------- helpers: metrics -----------------\r
 fn voro3D_metrics(pos: vec3<f32>) -> Voro3DMetrics {\r
@@ -1045,51 +1193,6 @@ fn voro4D_metrics(p: vec4<f32>) -> Voro4DMetrics {\r
   }\r
   return Voro4DMetrics(d1, d2, lab);\r
 }\r
-\r
-\r
-// ----------------- voro_eval: pick output depending on mode -----------------\r
-// f1Sq/f2Sq are squared distances; cellVal in [0,1]. edgeK: softening scale.\r
-// threshold: gate for EDGE_THRESH mode. freqOrScale unused in some modes but kept for potential normalization.\r
-fn voro_eval(f1Sq: f32, f2Sq: f32, cellVal: f32, mode: u32, edgeK: f32, threshold: f32, freqOrScale: f32) -> f32 {\r
-  let f1 = sqrt(max(f1Sq, 0.0));\r
-  let f2 = sqrt(max(f2Sq, 0.0));\r
-  let gap = f2 - f1; // F2 - F1, larger inside cells\r
-\r
-  // simple normalized gap if you want scale invariance: comment/uncomment as needed\r
-  // let normGap = gap * freqOrScale; // (freqOrScale could be ~freq, or 1.0)\r
-\r
-  switch (mode) {\r
-    case VORO_CELL: {\r
-      // piecewise-constant tile color/value\r
-      return cellVal;\r
-    }\r
-    case VORO_F1: {\r
-      // first-nearest distance\r
-      return f1;\r
-    }\r
-    case VORO_INTERIOR: {\r
-      // interior weight: larger in cell interior (proportional to gap)\r
-      return gap;\r
-    }\r
-    case VORO_EDGES: {\r
-      // edges bright, interior dark. Use edgeK to control contrast/width.\r
-      // edgeK==0 -> just use binary of gap>0, larger edgeK -> wider bright edges\r
-      if (edgeK <= 0.0) { return clamp(gap * 10.0, 0.0, 1.0); } // fallback scaling\r
-      return clamp(gap * edgeK, 0.0, 1.0);\r
-    }\r
-    case VORO_EDGE_THRESH: {\r
-      // identical to your voronoiTileRaw: return (F2-F1) if >= threshold else 0.\r
-      let ok = gap >= threshold;\r
-      let gate = select(0.0, 1.0, ok);\r
-      return gap * gate;\r
-    }\r
-    default: {\r
-      // fallback: return interior metric\r
-      return gap;\r
-    }\r
-  }\r
-}\r
-\r
 \r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Cellular 2-D  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
@@ -1743,133 +1846,22 @@ fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-\r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
-    var amp : f32 = 1.0;\r
-\r
-    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
-        amp = amp * params.gain;\r
-\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
-        if (params.exp2 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp2);\r
-        }\r
-        if (params.exp1 != 0.0) {\r
-            n = pow(n, params.exp1);\r
-        }\r
-\r
-        sum = sum - n * amp;\r
-\r
-        x = x + params.xShift;\r
-        y = y + params.yShift;\r
-        z = z + params.zShift;\r
-    }\r
-\r
-    return -sum;\r
+    return -generateRidgedMultifractal(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 2 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-\r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
-    var amp : f32 = 1.0;\r
-    var angle : f32 = params.seedAngle;\r
-\r
-    for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
-        amp = amp * params.gain;\r
-\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
-        if (params.exp2 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp2);\r
-        }\r
-        if (params.exp1 != 0.0) {\r
-            n = pow(n, params.exp1);\r
-        }\r
-\r
-        sum = sum - n * amp;\r
-\r
-        // proper XY rotation\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = z;\r
-\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    return -sum;\r
+    return -generateRidgedMultifractal2(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 3 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-    var sum : f32 = 0.0;\r
-    var amp : f32 = 1.0;\r
-\r
-    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = lanczos3D(vec3<f32>(x, y, z));\r
-        n = max(1e-7, n + 1.0);\r
-        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;\r
-        n = 1.0 - abs(n);\r
-        if (params.exp1 - 1.0 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp1 - 1.0);\r
-        }\r
-\r
-        sum = sum + n * amp;\r
-\r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
-        amp = amp * params.gain;\r
-    }\r
-\r
-    return -(sum - 1.0);\r
+    return -generateRidgedMultifractal3(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise 4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateAntiRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
-    var sum : f32 = 0.0;\r
-    var amp : f32 = 1.0;\r
-\r
-    for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
-        if (params.exp2 != 0.0) {\r
-            n = 1.0 - pow(n, params.exp2);\r
-        }\r
-        if (params.exp1 != 0.0) {\r
-            n = pow(n, params.exp1);\r
-        }\r
-\r
-        sum = sum + n * amp;\r
-\r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
-        amp = amp * params.gain;\r
-    }\r
-\r
-    return -(sum - 1.0);\r
+    return -generateRidgedMultifractal4(pos, params);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Fractal Brownian Motion (3D Simplex) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
@@ -2009,247 +2001,49 @@ fn generateCellularBM3(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
     return 1.5 * f3 - 1.0;\r
 }\r
 \r
-/*==============================================================================\r
-  Voronoi Brownian-Motion FBM helpers & generators\r
-==============================================================================*/\r
-fn generateVoronoi(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+/* ---- Voronoi and Voronoi Brownian-Motion flavours ---------------------------------- */\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Voronoi Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
-  var sum  : f32 = 0.0;\r
-  var amp  : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq / zoom;\r
 \r
-  let mode      : u32 = params.voroMode;\r
-  let edgeK     : f32 = max(params.edgeK, 0.0);\r
-  let threshold : f32 = max(params.threshold, 0.0);\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var freqLoc: f32 = params.freq / zoom;\r
 \r
+  let mode: u32 = params.voroMode;\r
+  let edgeK: f32 = max(params.edgeK, 0.0);\r
+  let threshold: f32 = max(params.threshold, 0.0);\r
+\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    // pos = (U,V,theta) -> pack to periodic 4D and sample\r
-    let base4 = packPeriodicUV(pos.x, pos.y, pos.z);\r
-    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-      let P = base4 * freqLoc;\r
-      let m = voro4D_metrics(P);\r
-      let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);\r
-      sum += v * amp;\r
-      freqLoc *= params.lacunarity;\r
-      amp     *= params.gain;\r
-    }\r
-    return sum;\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time);\r
+  } else {\r
+    base = vec4<f32>(\r
+      (pos.x + params.xShift) / zoom,\r
+      (pos.y + params.yShift) / zoom,\r
+      (pos.z + params.zShift) / zoom,\r
+      params.time\r
+    );\r
   }\r
 \r
-  // classic 3D Voronoi FBM (octave shifts kept simple)\r
-  var x = (pos.x + params.xShift) / zoom;\r
-  var y = (pos.y + params.yShift) / zoom;\r
-  var z = (pos.z + params.zShift) / zoom;\r
+  var angle: f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-    let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
-    let m = voro3D_metrics(P);\r
+    let P = base * freqLoc;\r
+    let m = voro4D_metrics(P);\r
     let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, threshold, freqLoc);\r
+\r
     sum += v * amp;\r
 \r
     freqLoc *= params.lacunarity;\r
-    amp     *= params.gain;\r
+    amp *= params.gain;\r
 \r
-    // apply simple per-octave drift (matches your tile-style)\r
-    x += params.xShift;\r
-    y += params.yShift;\r
-    z += params.zShift;\r
-  }\r
-  return sum;\r
-}\r
-\r
-\r
-// Sample a Voronoi "cell value" similar to the CPU VoronoiNoise3D.noise()\r
-fn voronoiCellValue3D(p: vec3<f32>) -> f32 {\r
-    let m = voro3D_metrics(p);\r
-    return m.cellVal;\r
-}\r
-\r
-// Voronoi FBM that mirrors the CPU VoronoiBrownianMotion.fbm pattern\r
-fn fbmVoronoi3D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    let zoom = max(params.zoom, 1e-6);\r
-\r
-    // base coordinate: divide by zoom only (CPU style)\r
-    var x = pos.x / zoom;\r
-    var y = pos.y / zoom;\r
-    var z = pos.z / zoom;\r
-\r
-    var sum: f32 = 0.0;\r
-    var amp: f32 = 1.0;\r
-    var freqLoc: f32 = params.freq;\r
-\r
-    var angle: f32 = params.seedAngle; // host should set this to seedN * 2\u03C0\r
-    let angleInc: f32 = 2.0 * PI / f32(max(params.octaves, 1u));\r
-\r
-    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let samplePos = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
-        let v = voronoiCellValue3D(samplePos);\r
-\r
-        sum = sum + amp * v;\r
-\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp = amp * params.gain;\r
-\r
-        angle = angle + angleInc;\r
-        let offsetX = params.xShift * cos(angle);\r
-        let offsetY = params.yShift * sin(angle);\r
-        let offsetZ = params.zShift * sin(angle);\r
-\r
-        x = x + offsetX;\r
-        y = y + offsetY;\r
-        z = z + offsetZ;\r
-    }\r
-\r
-    return sum - 1.0;\r
-}\r
-\r
-/* ---- Voronoi Brownian-Motion flavours ---------------------------------- */\r
-\r
-// BM1: CPU VoronoiBrownianMotion.generateNoise\r
-fn generateVoronoiBM1(p: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let f1 = fbmVoronoi3D(p, par);\r
-    return fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);\r
-}\r
-\r
-// BM2: CPU VoronoiBrownianMotion2.generateNoise\r
-fn generateVoronoiBM2(p: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let f1 = fbmVoronoi3D(p, par);\r
-    let f2 = fbmVoronoi3D(vec3<f32>(f1 * par.zoom), par);\r
-    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);\r
-}\r
-\r
-// BM3: CPU VoronoiBrownianMotion3.generateNoise\r
-fn generateVoronoiBM3(p: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let f1 = fbmVoronoi3D(p, par);\r
-    let f2 = fbmVoronoi3D(p + vec3<f32>(f1 * par.zoom), par);\r
-    return fbmVoronoi3D(p + vec3<f32>(f2 * par.zoom), par);\r
-}\r
-\r
-/*==============================================================================\r
-  Single-stage Cellular & Worley s\r
-==============================================================================*/\r
-\r
-fn generateCellular(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom;\r
-    var y = (pos.y + params.yShift) / params.zoom;\r
-    var z = (pos.z + params.zShift) / params.zoom;\r
-\r
-    var sum     : f32 = 0.0;\r
-    var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
-    var angle   : f32 = params.seedAngle;\r
-\r
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n = cellular3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
-        if (params.turbulence == 1u) { n = abs(n); }\r
-        n = edgeCut(n, params.threshold);              \r
-        sum = sum + n * amp;\r
-\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp     = amp     * params.gain;\r
-\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    if (params.turbulence == 1u) { sum = sum - 1.0; }\r
-    return 2.0 * sum - 1.0;\r
-}\r
-\r
-fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    return -generateCellular(pos, params);\r
-}\r
-\r
-fn generateWorley(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom;\r
-    var y = (pos.y + params.yShift) / params.zoom;\r
-    var z = (pos.z + params.zShift) / params.zoom;\r
-\r
-    var sum     : f32 = 0.0;\r
-    var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
-    var angle   : f32 = params.seedAngle;\r
-\r
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n = worley3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
-        if (params.turbulence == 1u) { n = abs(n); }\r
-        n = edgeCut(n, params.threshold);              \r
-        sum = sum + n * amp;\r
-\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp     = amp     * params.gain;\r
-\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    if (params.turbulence == 1u) { sum = sum - 1.0; }\r
-    return sum - 1.0;\r
-}\r
-\r
-fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    return -generateWorley(pos, params);\r
-}\r
-\r
-\r
-// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Worley FBM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
-fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-  let zoom = max(params.zoom, 1e-6);\r
-\r
-  // Prepare base coords + starting frequency\r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
-  if (params.toroidal == 1u) {\r
-    // pos = (U,V,\u03B8); HTML-style uv_periodic packing\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom; // (freq/zoom) == (base/zoom * freq)\r
-    freqLoc = params.freq;\r
-  } else {\r
-    // original non-toroidal semantics (freq baked in pre-loop, then multiplied again)\r
-    base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
-      params.time\r
-    );\r
-    freqLoc = params.freq;\r
-  }\r
-\r
-  var sum   : f32 = 0.0;\r
-  var amp   : f32 = 1.0;\r
-  var angle : f32 = params.seedAngle;\r
-\r
-  // Shared octave loop\r
-  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-    var v = worley4D(base * freqLoc) * amp;\r
-    if (params.turbulence == 1u) { v = abs(v); }\r
-    sum += v;\r
-\r
-    freqLoc *= params.lacunarity;\r
-    amp     *= params.gain;\r
-\r
-    // Only non-toroidal path uses octave rotation/offset churn\r
     if (params.toroidal != 1u) {\r
       let c = cos(angle);\r
       let s = sin(angle);\r
-      let xy = vec2<f32>( base.x * c - base.y * s, base.x * s + base.y * c );\r
-      let zw = vec2<f32>( base.z * c - base.w * s, base.z * s + base.w * c );\r
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);\r
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);\r
       base = vec4<f32>(\r
         xy.x + params.xShift,\r
         xy.y + params.yShift,\r
@@ -2260,15 +2054,7 @@ fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     }\r
   }\r
 \r
-  if (params.turbulence == 1u) { sum -= 1.0; }\r
-  // match JS Worley wrapper (returns 1 - sum)\r
-  return 1.0 - sum;\r
-}\r
-\r
-\r
-\r
-fn generateAntiWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    return -generateWorley4D(pos, params);\r
+  return sum;\r
 }\r
 \r
 \r
@@ -2281,7 +2067,7 @@ fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
   var freqLoc : f32 = params.freq / zoom;\r
 \r
   // always use the edge-threshold mode for this tile-noise helper\r
-  let mode : u32 = VORO_EDGE_THRESH;\r
+  let mode : u32 = params.voroMode;\r
   let edgeK : f32 = max(params.edgeK, 0.0);      // kept if you want to tune\r
   let thresh : f32 = max(params.threshold, 0.0);\r
 \r
@@ -2316,6 +2102,747 @@ fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
   return sum;\r
 }\r
+\r
+\r
+// BM1: f( f(p) )\r
+fn generateVoronoiBM1(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoiTileNoise(p, par);\r
+  return generateVoronoiTileNoise(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2: f( p + f(f(p)) )\r
+fn generateVoronoiBM2(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoiTileNoise(p, par);\r
+  let f2 = generateVoronoiTileNoise(vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoiTileNoise(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3: f( p + f(p + f(p)) )\r
+fn generateVoronoiBM3(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoiTileNoise(p, par);\r
+  let f2 = generateVoronoiTileNoise(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoiTileNoise(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+/* ---- Voronoi Brownian-Motion flavours (4D) ---------------------------------- */\r
+\r
+// BM1 4D: f( f(p) )  (scalar feedback into XYZ, keep W/time from params)\r
+fn generateVoronoiBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoi4D(p, par);\r
+  return generateVoronoi4D(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2 4D: f( p + f(f(p)) )\r
+fn generateVoronoiBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoi4D(p, par);\r
+  let f2 = generateVoronoi4D(vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoi4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3 4D: f( p + f(p + f(p)) )\r
+fn generateVoronoiBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateVoronoi4D(p, par);\r
+  let f2 = generateVoronoi4D(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateVoronoi4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+/* ---- vector-feedback variants (stronger, less axis-locked) ---------\r
+   These keep it cheap but reduce the "all axes get same scalar" look by building\r
+   a 3-vector from 3 decorrelated samples (offsets are constant, no extra params).\r
+*/\r
+\r
+fn _bm4D_vec(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = generateVoronoi4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = generateVoronoi4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = generateVoronoi4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+// BM1 4D (vec): f( vec(f(p)) )\r
+fn generateVoronoiBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec(p, par);\r
+  return generateVoronoi4D(v1 * par.zoom, par);\r
+}\r
+\r
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )\r
+fn generateVoronoiBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec(p, par);\r
+  let v2 = _bm4D_vec(v1 * par.zoom, par);\r
+  return generateVoronoi4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )\r
+fn generateVoronoiBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec(p, par);\r
+  let v2 = _bm4D_vec(p + v1 * par.zoom, par);\r
+  return generateVoronoi4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// Generic "Voronoi-style" sampler for Cellular/Worley so they can share voro_eval modes.\r
+\r
+struct VoroSample {\r
+  f1Sq    : f32,\r
+  f2Sq    : f32,\r
+  cellVal : f32,\r
+};\r
+\r
+fn voro_sample3D(p: vec3<f32>) -> VoroSample {\r
+  let fx = i32(floor(p.x));\r
+  let fy = i32(floor(p.y));\r
+  let fz = i32(floor(p.z));\r
+\r
+  var d1: f32 = 1e9;\r
+  var d2: f32 = 1e9;\r
+  var cv: f32 = 0.0;\r
+\r
+  for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {\r
+    for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {\r
+      for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {\r
+        let xi = fx + dx;\r
+        let yi = fy + dy;\r
+        let zi = fz + dz;\r
+\r
+        let rx = rand3u(xi, yi, zi);\r
+        let ry = rand3u(yi, zi, xi);\r
+        let rz = rand3u(zi, xi, yi);\r
+\r
+        let px = f32(xi) + rx;\r
+        let py = f32(yi) + ry;\r
+        let pz = f32(zi) + rz;\r
+\r
+        let dxv = px - p.x;\r
+        let dyv = py - p.y;\r
+        let dzv = pz - p.z;\r
+        let dd  = dxv * dxv + dyv * dyv + dzv * dzv;\r
+\r
+        if (dd < d1) {\r
+          d2 = d1;\r
+          d1 = dd;\r
+          cv = rand3u(xi, zi, yi);\r
+        } else if (dd < d2) {\r
+          d2 = dd;\r
+        }\r
+      }\r
+    }\r
+  }\r
+\r
+  return VoroSample(d1, d2, cv);\r
+}\r
+\r
+fn voro_sample4D(p: vec4<f32>) -> VoroSample {\r
+  let fx = i32(floor(p.x));\r
+  let fy = i32(floor(p.y));\r
+  let fz = i32(floor(p.z));\r
+  let fw = i32(floor(p.w));\r
+\r
+  var d1: f32 = 1e9;\r
+  var d2: f32 = 1e9;\r
+  var cv: f32 = 0.0;\r
+\r
+  for (var dw: i32 = -1; dw <= 1; dw = dw + 1) {\r
+    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {\r
+      for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {\r
+        for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {\r
+          let xi = fx + dx;\r
+          let yi = fy + dy;\r
+          let zi = fz + dz;\r
+          let wi = fw + dw;\r
+\r
+          let rx = rand4u(xi, yi, zi, wi);\r
+          let ry = rand4u(yi, zi, wi, xi);\r
+          let rz = rand4u(zi, wi, xi, yi);\r
+          let rw = rand4u(wi, xi, yi, zi);\r
+\r
+          let px = f32(xi) + rx;\r
+          let py = f32(yi) + ry;\r
+          let pz = f32(zi) + rz;\r
+          let pw = f32(wi) + rw;\r
+\r
+          let dxv = px - p.x;\r
+          let dyv = py - p.y;\r
+          let dzv = pz - p.z;\r
+          let dwv = pw - p.w;\r
+          let dd  = dxv * dxv + dyv * dyv + dzv * dzv + dwv * dwv;\r
+\r
+          if (dd < d1) {\r
+            d2 = d1;\r
+            d1 = dd;\r
+            cv = rand4u(xi, zi, yi, wi);\r
+          } else if (dd < d2) {\r
+            d2 = dd;\r
+          }\r
+        }\r
+      }\r
+    }\r
+  }\r
+\r
+  return VoroSample(d1, d2, cv);\r
+}\r
+\r
+fn cellular4D(p: vec4<f32>) -> f32 {\r
+  let s = voro_sample4D(p);\r
+  return voro_edge_dist(s.f1Sq, s.f2Sq);\r
+}\r
+\r
+fn worley4D(p: vec4<f32>) -> f32 {\r
+  let s = voro_sample4D(p);\r
+  return sqrt(max(s.f1Sq, 0.0));\r
+}\r
+\r
+// Expects you to pass the same controls you use for Voronoi: params.voroMode, params.edgeK, params.threshold.\r
+fn generateCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  var x = (pos.x + params.xShift) / params.zoom;\r
+  var y = (pos.y + params.yShift) / params.zoom;\r
+  var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = params.freq;\r
+  var angle   : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+\r
+    var n = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { n = abs(n); }\r
+    n = clamp(n, 0.0, 1.0);\r
+\r
+    sum = sum + n * amp;\r
+\r
+    freqLoc = freqLoc * params.lacunarity;\r
+    amp     = amp     * params.gain;\r
+\r
+    let c = cos(angle);\r
+    let sA = sin(angle);\r
+    let nx = x * c - y * sA;\r
+    let ny = x * sA + y * c;\r
+    let nz = y * sA + z * c;\r
+\r
+    x = nx + params.xShift;\r
+    y = ny + params.yShift;\r
+    z = nz + params.zShift;\r
+    angle = angle + ANGLE_INCREMENT;\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum = sum - 1.0; }\r
+  return 2.0 * sum - 1.0;\r
+}\r
+\r
+fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 { \r
+  return -generateCellular(pos,params);\r
+}\r
+\r
+fn generateWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  var x = (pos.x + params.xShift) / params.zoom;\r
+  var y = (pos.y + params.yShift) / params.zoom;\r
+  var z = (pos.z + params.zShift) / params.zoom;\r
+\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = params.freq;\r
+  var angle   : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+\r
+    var n = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { n = abs(n); }\r
+    n = clamp(n, 0.0, 1.0);\r
+\r
+    sum = sum + n * amp;\r
+\r
+    freqLoc = freqLoc * params.lacunarity;\r
+    amp     = amp     * params.gain;\r
+\r
+    let c = cos(angle);\r
+    let sA = sin(angle);\r
+    let nx = x * c - y * sA;\r
+    let ny = x * sA + y * c;\r
+    let nz = y * sA + z * c;\r
+\r
+    x = nx + params.xShift;\r
+    y = ny + params.yShift;\r
+    z = nz + params.zShift;\r
+    angle = angle + ANGLE_INCREMENT;\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum = sum - 1.0; }\r
+  return sum - 1.0;\r
+}\r
+\r
+fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 { \r
+  return -generateWorley(pos,params);\r
+}\r
+\r
+fn generateCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base    : vec4<f32>;\r
+  var freqLoc : f32;\r
+\r
+  if (params.toroidal == 1u) {\r
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
+    freqLoc = params.freq;\r
+  } else {\r
+    base = vec4<f32>(\r
+      pos.x / zoom * params.freq + params.xShift,\r
+      pos.y / zoom * params.freq + params.yShift,\r
+      pos.z / zoom * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+    freqLoc = params.freq;\r
+  }\r
+\r
+  var sum   : f32 = 0.0;\r
+  var amp   : f32 = 1.0;\r
+  var angle : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample4D(base * freqLoc);\r
+\r
+    var v = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { v = abs(v); }\r
+    v = clamp(v, 0.0, 1.0);\r
+\r
+    sum += v * amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp     *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let sA = sin(angle);\r
+      let xy = vec2<f32>( base.x * c - base.y * sA, base.x * sA + base.y * c );\r
+      let zw = vec2<f32>( base.z * c - base.w * sA, base.z * sA + base.w * c );\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  if (params.turbulence == 1u) { sum -= 1.0; }\r
+  return 2.0 * sum - 1.0;\r
+}\r
+\r
+fn generateAntiCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return -generateCellular4D(pos,params);\r
+}\r
+\r
+fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base    : vec4<f32>;\r
+  var freqLoc : f32;\r
+\r
+  if (params.toroidal == 1u) {\r
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
+    freqLoc = params.freq;\r
+  } else {\r
+    base = vec4<f32>(\r
+      pos.x / zoom * params.freq + params.xShift,\r
+      pos.y / zoom * params.freq + params.yShift,\r
+      pos.z / zoom * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+    freqLoc = params.freq;\r
+  }\r
+\r
+  var sum    : f32 = 0.0;\r
+  var amp    : f32 = 1.0;\r
+  var ampSum : f32 = 0.0;\r
+  var angle  : f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let s = voro_sample4D(base * freqLoc);\r
+\r
+    var v = voro_eval(s.f1Sq, s.f2Sq, s.cellVal, params.voroMode, params.edgeK, params.threshold, freqLoc);\r
+    if (params.turbulence == 1u) { v = abs(v); }\r
+    v = clamp(v, 0.0, 1.0);\r
+\r
+    sum    += v * amp;\r
+    ampSum += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp     *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let sA = sin(angle);\r
+      let xy = vec2<f32>( base.x * c - base.y * sA, base.x * sA + base.y * c );\r
+      let zw = vec2<f32>( base.z * c - base.w * sA, base.z * sA + base.w * c );\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  let out = select(0.0, sum / ampSum, ampSum > 0.0);\r
+\r
+  if (params.turbulence == 1u) { return clamp(out - 1.0, -1.0, 1.0); }\r
+  return clamp(1.0 - out, 0.0, 1.0);\r
+}\r
+\r
+fn generateAntiWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return 1-generateWorley4D(pos,params);\r
+}\r
+\r
+/* ---- Cellular Brownian-Motion flavours (4D) ---------------------------------- */\r
+\r
+// BM1 4D: f( f(p) )\r
+fn generateCellularBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateCellular4D(p, par);\r
+  return generateCellular4D(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2 4D: f( p + f(f(p)) )\r
+fn generateCellularBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateCellular4D(p, par);\r
+  let f2 = generateCellular4D(vec3<f32>(f1 * par.zoom), par);\r
+  return generateCellular4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3 4D: f( p + f(p + f(p)) )\r
+fn generateCellularBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateCellular4D(p, par);\r
+  let f2 = generateCellular4D(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateCellular4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+\r
+/* ---- Worley Brownian-Motion flavours (4D) ----------------------------------- */\r
+\r
+// BM1 4D: f( f(p) )\r
+fn generateWorleyBM1_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateWorley4D(p, par);\r
+  return generateWorley4D(vec3<f32>(f1 * par.zoom), par);\r
+}\r
+\r
+// BM2 4D: f( p + f(f(p)) )\r
+fn generateWorleyBM2_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateWorley4D(p, par);\r
+  let f2 = generateWorley4D(vec3<f32>(f1 * par.zoom), par);\r
+  return generateWorley4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+// BM3 4D: f( p + f(p + f(p)) )\r
+fn generateWorleyBM3_4D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let f1 = generateWorley4D(p, par);\r
+  let f2 = generateWorley4D(p + vec3<f32>(f1 * par.zoom), par);\r
+  return generateWorley4D(p + vec3<f32>(f2 * par.zoom), par);\r
+}\r
+\r
+\r
+/* ---- vector-feedback variants (stronger, less axis-locked) ------------------ */\r
+\r
+fn _bm4D_vec_cellular(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = generateCellular4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = generateCellular4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = generateCellular4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+fn _bm4D_vec_worley(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = generateWorley4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = generateWorley4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = generateWorley4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+\r
+// BM1 4D (vec): f( vec(f(p)) )\r
+fn generateCellularBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_cellular(p, par);\r
+  return generateCellular4D(v1 * par.zoom, par);\r
+}\r
+\r
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )\r
+fn generateCellularBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_cellular(p, par);\r
+  let v2 = _bm4D_vec_cellular(v1 * par.zoom, par);\r
+  return generateCellular4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )\r
+fn generateCellularBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_cellular(p, par);\r
+  let v2 = _bm4D_vec_cellular(p + v1 * par.zoom, par);\r
+  return generateCellular4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+\r
+// BM1 4D (vec): f( vec(f(p)) )\r
+fn generateWorleyBM1_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_worley(p, par);\r
+  return generateWorley4D(v1 * par.zoom, par);\r
+}\r
+\r
+// BM2 4D (vec): f( p + vec(f(vec(f(p)))) )\r
+fn generateWorleyBM2_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_worley(p, par);\r
+  let v2 = _bm4D_vec_worley(v1 * par.zoom, par);\r
+  return generateWorley4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+// BM3 4D (vec): f( p + vec(f(p + vec(f(p)))) )\r
+fn generateWorleyBM3_4D_vec(p: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let v1 = _bm4D_vec_worley(p, par);\r
+  let v2 = _bm4D_vec_worley(p + v1 * par.zoom, par);\r
+  return generateWorley4D(p + v2 * par.zoom, par);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Billow Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base: vec4<f32>;\r
+  if (params.toroidal == 1u) {\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
+  } else {\r
+    base = vec4<f32>(\r
+      (pos.x / zoom) * params.freq + params.xShift,\r
+      (pos.y / zoom) * params.freq + params.yShift,\r
+      (pos.z / zoom) * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+  }\r
+\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var freqLoc: f32 = params.freq;\r
+  var ampSum: f32 = 0.0;\r
+  var angle: f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let n = noise4D(base * freqLoc);\r
+    let b = pow(abs(n), 0.75);\r
+    sum += b * amp;\r
+    ampSum += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);\r
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  if (ampSum > 0.0) { sum /= ampSum; }\r
+\r
+  let k: f32 = 1.2;\r
+  let cMid = sum - 0.5;\r
+  let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));\r
+\r
+  return clamp(shaped, 0.0, 1.0);\r
+}\r
+\r
+fn generateAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return 1.0 - generateBillow4D(pos, params);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D Terrace + Foam + Turbulence \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn generateTerraceNoise4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let base = generatePerlin4D(pos, par);\r
+  return terrace(base, par.terraceStep);\r
+}\r
+\r
+fn generateFoamNoise4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let base = generateBillow4D(pos, par);\r
+  return foamify(base);\r
+}\r
+\r
+fn generateTurbulence4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let base = generatePerlin4D(pos, par);\r
+  return turbulence(base);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D "Lanczos-like" Lowpass \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn lowpass4D(p: vec4<f32>) -> f32 {\r
+  let o = vec4<f32>(0.37, 0.21, 0.29, 0.31);\r
+  let a = noise4D(p);\r
+  let b = noise4D(p + vec4<f32>(o.x, 0.0, 0.0, 0.0));\r
+  let c = noise4D(p + vec4<f32>(0.0, o.y, 0.0, 0.0));\r
+  let d = noise4D(p + vec4<f32>(0.0, 0.0, o.z, 0.0));\r
+  let e = noise4D(p + vec4<f32>(0.0, 0.0, 0.0, o.w));\r
+  return (a + b + c + d + e) * 0.2;\r
+}\r
+\r
+fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  var base: vec4<f32>;\r
+  if (params.toroidal == 1u) {\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
+  } else {\r
+    base = vec4<f32>(\r
+      (pos.x / zoom) * params.freq + params.xShift,\r
+      (pos.y / zoom) * params.freq + params.yShift,\r
+      (pos.z / zoom) * params.freq + params.zShift,\r
+      params.time\r
+    );\r
+  }\r
+\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var maxAmp: f32 = 0.0;\r
+  var freqLoc: f32 = params.freq;\r
+  var angle: f32 = params.seedAngle;\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let n = lowpass4D(base * freqLoc);\r
+    sum += (2.0 * abs(n) - 1.0) * amp;\r
+    maxAmp += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>(base.x * c - base.y * s, base.x * s + base.y * c);\r
+      let zw = vec2<f32>(base.z * c - base.w * s, base.z * s + base.w * c);\r
+      base = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+      angle += ANGLE_INCREMENT;\r
+    }\r
+  }\r
+\r
+  return select(0.0, sum / maxAmp, maxAmp > 0.0);\r
+}\r
+\r
+fn generateLanczosAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  return -generateLanczosBillow4D(pos, params);\r
+}\r
+\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 4D FBM core + generators \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+fn fbm4D_core(base: vec4<f32>, params: NoiseParams) -> f32 {\r
+  var p = base;\r
+\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var maxAmp: f32 = 0.0;\r
+  var freqLoc: f32 = params.freq;\r
+\r
+  var angle: f32 = params.seedAngle;\r
+  let angleInc: f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
+\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    sum += amp * noise4D(p * freqLoc);\r
+    maxAmp += amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+\r
+    if (params.toroidal != 1u) {\r
+      angle += angleInc;\r
+      let c = cos(angle);\r
+      let s = sin(angle);\r
+      let xy = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);\r
+      let zw = vec2<f32>(p.z * c - p.w * s, p.z * s + p.w * c);\r
+      p = vec4<f32>(\r
+        xy.x + params.xShift,\r
+        xy.y + params.yShift,\r
+        zw.x + params.zShift,\r
+        zw.y + params.time\r
+      );\r
+    }\r
+  }\r
+\r
+  return select(0.0, sum / maxAmp, maxAmp > 0.0);\r
+}\r
+\r
+fn fbm4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let zoom = max(params.zoom, 1e-6);\r
+\r
+  if (params.toroidal == 1u) {\r
+    let base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
+    return fbm4D_core(base, params);\r
+  }\r
+\r
+  let base = vec4<f32>(\r
+    (pos.x + params.xShift) / zoom,\r
+    (pos.y + params.yShift) / zoom,\r
+    (pos.z + params.zShift) / zoom,\r
+    params.time\r
+  );\r
+  return fbm4D_core(base, params);\r
+}\r
+\r
+fn generateFBM4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let fbm1 = fbm4D(pos, params);\r
+  let fbm2 = fbm4D_core(vec4<f32>(fbm1, fbm1, fbm1, fbm1), params);\r
+  return 2.0 * fbm2;\r
+}\r
+\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Domain-warp FBM (4D)  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+\r
+fn domainWarpFBM4D(p: vec3<f32>, params: NoiseParams, warpAmp: f32, stages: u32) -> f32 {\r
+  var q = p;\r
+  for (var i: u32 = 0u; i < stages; i = i + 1u) {\r
+    let w = fbm4D(q, params) * warpAmp;\r
+    q = q + vec3<f32>(w, w, w);\r
+  }\r
+  return fbm4D(q, params);\r
+}\r
+\r
+fn generateDomainWarpFBM1_4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D(pos, par, par.warpAmp, 1u);\r
+}\r
+\r
+fn generateDomainWarpFBM2_4D(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D(pos, par, par.warpAmp, 2u);\r
+}\r
+\r
+fn _warpVecFrom4D(p: vec3<f32>, par: NoiseParams) -> vec3<f32> {\r
+  let a = fbm4D(p + vec3<f32>(17.13,  3.71,  9.23), par);\r
+  let b = fbm4D(p + vec3<f32>(-5.41, 11.19,  2.07), par);\r
+  let c = fbm4D(p + vec3<f32>( 8.09, -6.77, 13.61), par);\r
+  return vec3<f32>(a, b, c);\r
+}\r
+\r
+fn domainWarpFBM4D_vec(p: vec3<f32>, params: NoiseParams, warpAmp: f32, stages: u32) -> f32 {\r
+  var q = p;\r
+  for (var i: u32 = 0u; i < stages; i = i + 1u) {\r
+    let v = _warpVecFrom4D(q, params) * warpAmp;\r
+    q = q + v;\r
+  }\r
+  return fbm4D(q, params);\r
+}\r
+\r
+fn generateDomainWarpFBM1_4D_vec(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D_vec(pos, par, par.warpAmp, 1u);\r
+}\r
+\r
+fn generateDomainWarpFBM2_4D_vec(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  return domainWarpFBM4D_vec(pos, par, par.warpAmp, 2u);\r
+}\r
+\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Lanczos Billow Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
@@ -2366,38 +2893,7 @@ fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Lanczos Anti-Billow Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateLanczosAntiBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
-    var x       = (pos.x + p.xShift) / p.zoom;\r
-    var y       = (pos.y + p.yShift) / p.zoom;\r
-    var z       = (pos.z + p.zShift) / p.zoom;\r
-    var sum     : f32 = 0.0;\r
-    var maxAmp  : f32 = 0.0;\r
-    var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = p.freq;\r
-    var angle   : f32 = p.seedAngle;\r
-\r
-    for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
-        let n = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
-        sum = sum + (2.0 * abs(n) - 1.0) * amp;\r
-        maxAmp = maxAmp + amp;\r
-\r
-        freqLoc = freqLoc * p.lacunarity;\r
-        amp     = amp     * p.gain;\r
-\r
-        // simple Z\u2010axis rotation + tilt into Z\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        var newX = x * c - y * s;\r
-        var newY = x * s + y * c;\r
-        var newZ = y * s + z * c;\r
-\r
-        x = newX + p.xShift;\r
-        y = newY + p.yShift;\r
-        z = newZ + p.zShift;\r
-\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    return -sum / maxAmp;\r
+    return -generateLanczosBillow(pos, p);\r
 }\r
 \r
 \r
@@ -3819,6 +4315,31 @@ fn computeAntiCellular(@builtin(global_invocation_id) gid: vec3<u32>) {\r
     let v0 = generateAntiCellular(p, params);\r
     writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
 }\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// 22.2) Cellular\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellular4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateCellular4D(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+/*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+  22.3) AntiCellular\r
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeAntiCellular4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+    let fx = i32(frame.originX) + i32(gid.x);\r
+    let fy = i32(frame.originY) + i32(gid.y);\r
+    let fz = i32(frame.originZ) + i32(gid.z);\r
+    let p  = fetchPos(fx, fy, fz);\r
+    let v0 = generateAntiCellular4D(p, params);\r
+    writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 // 23) Worley\r
@@ -3883,6 +4404,157 @@ fn computeAntiWorley4D(@builtin(global_invocation_id) gid : vec3<u32>) {\r
 \r
     // write into output\r
     writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// Worley 4D BM variants (time as W)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM1_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM2_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM3_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM1_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM2_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeWorleyBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateWorleyBM3_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+// Cellular 4D BM variants (time as W)\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM1_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM2_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM3_4D(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM1_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM2_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeCellularBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  let p = fetchPos(fx, fy, fz);\r
+  let v0 = generateCellularBM3_4D_vec(p, params);\r
+\r
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
@@ -4209,13 +4881,176 @@ fn computeTurbulence(@builtin(global_invocation_id) gid: vec3<u32>){\r
   writeChannel(fx, fy, fz, generateTurbulence(p, params), options.outputChannel, 0u);\r
 }\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeAntiBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateAntiBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeLanczosBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateLanczosBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeLanczosAntiBillow4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateLanczosAntiBillow4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeFBM4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateFBM4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8,8,1)\r
+fn computeVoronoi4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoi4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM1_4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM2_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM3_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM3_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM1_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM2_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeVoronoiBM3_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateVoronoiBM3_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM1_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM1_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM2_4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM2_4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM1_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM1_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeDomainWarpFBM2_4D_vec(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateDomainWarpFBM2_4D_vec(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeTerraceNoise4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateTerraceNoise4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeFoamNoise4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateFoamNoise4D(p, params), options.outputChannel, 0u);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeTurbulence4D(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateTurbulence4D(p, params), options.outputChannel, 0u);\r
+}\r
 \r
 \r
 \r
@@ -4487,6 +5322,7 @@ fn computeGauss5x5(\r
         "computeWhiteNoise",
         "computeBlueNoise",
         "computeSimplex",
+        "computeSimplexFBM",
         "computeCurl2D",
         "computeCurlFBM2D",
         "computeDomainWarpFBM1",
@@ -4498,6 +5334,35 @@ fn computeGauss5x5(\r
         "computePerlin4D",
         "computeWorley4D",
         "computeAntiWorley4D",
+        "computeCellular4D",
+        "computeAntiCellular4D",
+        "computeBillow4D",
+        "computeAntiBillow4D",
+        "computeLanczosBillow4D",
+        "computeLanczosAntiBillow4D",
+        "computeFBM4D",
+        "computeVoronoi4D",
+        "computeVoronoiBM1_4D",
+        "computeVoronoiBM2_4D",
+        "computeVoronoiBM3_4D",
+        "computeVoronoiBM1_4D_vec",
+        "computeVoronoiBM2_4D_vec",
+        "computeVoronoiBM3_4D_vec",
+        "computeWorleyBM1_4D",
+        "computeWorleyBM2_4D",
+        "computeWorleyBM3_4D",
+        "computeWorleyBM1_4D_vec",
+        "computeWorleyBM2_4D_vec",
+        "computeWorleyBM3_4D_vec",
+        "computeCellularBM1_4D",
+        "computeCellularBM2_4D",
+        "computeCellularBM3_4D",
+        "computeCellularBM1_4D_vec",
+        "computeCellularBM2_4D_vec",
+        "computeCellularBM3_4D_vec",
+        "computeTerraceNoise4D",
+        "computeFoamNoise4D",
+        "computeTurbulence4D",
         "computeGauss5x5",
         "computeNormal",
         "computeNormal8",
@@ -4508,27 +5373,73 @@ fn computeGauss5x5(\r
       this.shaderModule = device2.createShaderModule({ code: noiseCompute_default });
       this.bindGroupLayout = device2.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 0,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // options
-          { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // params
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // perm table
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // input 2D-array (sampled)
-          { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "2d-array" } },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: "rgba16float",
+              viewDimension: "2d-array"
+            }
+          },
           // output 2D-array (storage)
-          { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // positions
-          { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // frame
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" }
+          },
           // input 3D
-          { binding: 8, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "3d" } }
+          {
+            binding: 8,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: "rgba16float",
+              viewDimension: "3d"
+            }
+          }
           // output 3D
         ]
       });
-      this.pipelineLayout = device2.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] });
+      this.pipelineLayout = device2.createPipelineLayout({
+        bindGroupLayouts: [this.bindGroupLayout]
+      });
       this.pipelines = /* @__PURE__ */ new Map();
       this._texPairs = /* @__PURE__ */ new Map();
       this._tid = null;
@@ -4580,7 +5491,10 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
         });
-        this._dummy2D_sampleView = this._dummy2D_sampleTex.createView({ dimension: "2d-array", arrayLayerCount: 1 });
+        this._dummy2D_sampleView = this._dummy2D_sampleTex.createView({
+          dimension: "2d-array",
+          arrayLayerCount: 1
+        });
       }
       if (!this._dummy2D_writeTex) {
         this._dummy2D_writeTex = this.device.createTexture({
@@ -4588,7 +5502,10 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST
         });
-        this._dummy2D_writeView = this._dummy2D_writeTex.createView({ dimension: "2d-array", arrayLayerCount: 1 });
+        this._dummy2D_writeView = this._dummy2D_writeTex.createView({
+          dimension: "2d-array",
+          arrayLayerCount: 1
+        });
       }
       if (!this._dummy3D_sampleTex) {
         this._dummy3D_sampleTex = this.device.createTexture({
@@ -4597,7 +5514,9 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
         });
-        this._dummy3D_sampleView = this._dummy3D_sampleTex.createView({ dimension: "3d" });
+        this._dummy3D_sampleView = this._dummy3D_sampleTex.createView({
+          dimension: "3d"
+        });
       }
       if (!this._dummy3D_writeTex) {
         this._dummy3D_writeTex = this.device.createTexture({
@@ -4606,7 +5525,9 @@ fn computeGauss5x5(\r
           format: "rgba16float",
           usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST
         });
-        this._dummy3D_writeView = this._dummy3D_writeTex.createView({ dimension: "3d" });
+        this._dummy3D_writeView = this._dummy3D_writeTex.createView({
+          dimension: "3d"
+        });
       }
     }
     // ---------------------------
@@ -4627,7 +5548,9 @@ fn computeGauss5x5(\r
       try {
         const usage = view?.texture?.usage ?? 0;
         if ((usage & GPUTextureUsage.TEXTURE_BINDING) === 0) {
-          console.warn("setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.");
+          console.warn(
+            "setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring."
+          );
           return;
         }
       } catch (e) {
@@ -4642,7 +5565,9 @@ fn computeGauss5x5(\r
       try {
         const usage = view?.texture?.usage ?? 0;
         if ((usage & GPUTextureUsage.STORAGE_BINDING) === 0) {
-          console.warn("setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.");
+          console.warn(
+            "setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring."
+          );
           return;
         }
       } catch (e) {
@@ -4827,12 +5752,13 @@ fn computeGauss5x5(\r
       }
       if (Array.isArray(pair.tiles)) {
         for (const tile of pair.tiles) {
-          if (Array.isArray(tile.frames)) for (const fb of tile.frames) {
-            try {
-              fb.destroy();
-            } catch {
+          if (Array.isArray(tile.frames))
+            for (const fb of tile.frames) {
+              try {
+                fb.destroy();
+              } catch {
+              }
             }
-          }
           if (tile.posBuf && tile.posBuf !== this.nullPosBuffer) {
             try {
               tile.posBuf.destroy();
@@ -4855,7 +5781,8 @@ fn computeGauss5x5(\r
       for (const tid of ids) this.destroyTexturePair(tid);
     }
     setActiveTexture(tid) {
-      if (!this._texPairs.has(tid)) throw new Error("setActiveTexture: invalid id");
+      if (!this._texPairs.has(tid))
+        throw new Error("setActiveTexture: invalid id");
       this._tid = tid;
       const pair = this._texPairs.get(tid);
       this.viewA = pair.viewA;
@@ -4874,7 +5801,13 @@ fn computeGauss5x5(\r
         size: data.byteLength,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
       });
-      this.queue.writeBuffer(buf, 0, data.buffer, data.byteOffset, data.byteLength);
+      this.queue.writeBuffer(
+        buf,
+        0,
+        data.buffer,
+        data.byteOffset,
+        data.byteLength
+      );
       return buf;
     }
     // WGSL Frame struct = 64 bytes
@@ -4917,13 +5850,20 @@ fn computeGauss5x5(\r
           if (existingTile && existingTile.posBuf && !options.customData) {
             posBuf = existingTile.posBuf;
           } else {
-            posBuf = this._buildPosBuffer(pair.tileWidth, pair.tileHeight, options.customData);
+            posBuf = this._buildPosBuffer(
+              pair.tileWidth,
+              pair.tileHeight,
+              options.customData
+            );
           }
           let fb;
           if (existingTile && existingTile.frames && existingTile.frames[0]) {
             fb = existingTile.frames[0];
           } else {
-            fb = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+            fb = this.device.createBuffer({
+              size: 64,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+            });
           }
           const worldFullW = Number.isFinite(options.frameFullWidth) ? options.frameFullWidth >>> 0 : pair.fullWidth;
           const worldFullH = Number.isFinite(options.frameFullHeight) ? options.frameFullHeight >>> 0 : pair.fullHeight;
@@ -4980,7 +5920,9 @@ fn computeGauss5x5(\r
                 ]
               });
             } catch (e) {
-              throw new Error(`_create2DTileBindGroups: createBindGroup failed: ${e?.message || e}`);
+              throw new Error(
+                `_create2DTileBindGroups: createBindGroup failed: ${e?.message || e}`
+              );
             }
           }
           tiles.push({
@@ -5030,7 +5972,11 @@ fn computeGauss5x5(\r
         if (isArr) this.setNoiseParams(paramsArray[i++]);
         pass.setPipeline(pipe);
         pass.setBindGroup(0, current);
-        pass.dispatchWorkgroups(Math.ceil(tileW / 8), Math.ceil(tileH / 8), dispatchZ);
+        pass.dispatchWorkgroups(
+          Math.ceil(tileW / 8),
+          Math.ceil(tileH / 8),
+          dispatchZ
+        );
         [current, alternate] = [alternate, current];
       }
       pass.end();
@@ -5043,7 +5989,8 @@ fn computeGauss5x5(\r
     // ---------------------------
     async computeToTexture(width, height, paramsObj = {}, options = {}) {
       const W = width | 0, H = height | 0;
-      if (!(W > 0 && H > 0)) throw new Error(`computeToTexture: invalid size ${width}x${height}`);
+      if (!(W > 0 && H > 0))
+        throw new Error(`computeToTexture: invalid size ${width}x${height}`);
       if (this._tid == null) this._create2DPair(W, H);
       let pair = this._texPairs.get(this._tid);
       if (!pair || pair.fullWidth !== W || pair.fullHeight !== H) {
@@ -5053,7 +6000,11 @@ fn computeGauss5x5(\r
       }
       if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
       const origOpts = options || {};
-      this.setOptions({ ...origOpts, ioFlags: 0, useCustomPos: origOpts.useCustomPos ?? this.useCustomPos });
+      this.setOptions({
+        ...origOpts,
+        ioFlags: 0,
+        useCustomPos: origOpts.useCustomPos ?? this.useCustomPos
+      });
       if (!pair.tiles || pair.bindGroupDirty || origOpts.customData) {
         this._create2DTileBindGroups(this._tid, options);
       }
@@ -5095,7 +6046,10 @@ fn computeGauss5x5(\r
       const th = Math.min(H, MAX_3D_TILE);
       const maxBuf = this.device?.limits?.maxBufferSize ?? 256 * 1024 * 1024;
       const sliceBytes = tw * th * BYTES_PER_VOXEL;
-      const tdByBuf = Math.max(1, Math.floor(maxBuf * 0.8 / Math.max(1, sliceBytes)));
+      const tdByBuf = Math.max(
+        1,
+        Math.floor(maxBuf * 0.8 / Math.max(1, sliceBytes))
+      );
       const td = Math.min(D, MAX_3D_TILE, tdByBuf);
       const nx = Math.ceil(W / tw);
       const ny = Math.ceil(H / th);
@@ -5132,7 +6086,23 @@ fn computeGauss5x5(\r
             viewB.label = `3D:viewB[${kx},${ky},${kz}]`;
             this._tag.set(viewA, `3D:A[${kx},${ky},${kz}]`);
             this._tag.set(viewB, `3D:B[${kx},${ky},${kz}]`);
-            chunks.push({ texA, texB, viewA, viewB, ox, oy, oz, w: t.tw, h: t.th, d: t.td, isA: true, fb: null, posBuf: null, bgA: null, bgB: null });
+            chunks.push({
+              texA,
+              texB,
+              viewA,
+              viewB,
+              ox,
+              oy,
+              oz,
+              w: t.tw,
+              h: t.th,
+              d: t.td,
+              isA: true,
+              fb: null,
+              posBuf: null,
+              bgA: null,
+              bgB: null
+            });
           }
         }
       }
@@ -5199,7 +6169,10 @@ fn computeGauss5x5(\r
       if (vol) return vol;
       vol = this._create3DChunks(W, H, D);
       for (const c of vol.chunks) {
-        c.fb = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        c.fb = this.device.createBuffer({
+          size: 64,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
         const fw = worldFull && Number.isFinite(worldFull?.w) ? worldFull.w >>> 0 : vol.full.w;
         const fh = worldFull && Number.isFinite(worldFull?.h) ? worldFull.h >>> 0 : vol.full.h;
         const fd = worldFull && Number.isFinite(worldFull?.d) ? worldFull.d >>> 0 : vol.full.d;
@@ -5256,7 +6229,9 @@ fn computeGauss5x5(\r
             ]
           });
         } catch (e) {
-          throw new Error(`_getOrCreate3DVolume: createBindGroup failed: ${e?.message || e}`);
+          throw new Error(
+            `_getOrCreate3DVolume: createBindGroup failed: ${e?.message || e}`
+          );
         }
       }
       vol._bindGroupsDirty = false;
@@ -5271,7 +6246,10 @@ fn computeGauss5x5(\r
       const fd = worldFull && Number.isFinite(worldFull.d) ? worldFull.d >>> 0 : vol.full.d;
       for (const c of vol.chunks) {
         if (!c.fb) {
-          c.fb = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+          c.fb = this.device.createBuffer({
+            size: 64,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+          });
           const scaleX = fw / vol.full.w;
           const scaleY = fh / vol.full.h;
           const originXf = c.ox * scaleX;
@@ -5320,10 +6298,18 @@ fn computeGauss5x5(\r
           { binding: 8, resource: c.viewA }
         ];
         try {
-          c.bgA = this.device.createBindGroup({ layout: this.bindGroupLayout, entries: entriesA });
-          c.bgB = this.device.createBindGroup({ layout: this.bindGroupLayout, entries: entriesB });
+          c.bgA = this.device.createBindGroup({
+            layout: this.bindGroupLayout,
+            entries: entriesA
+          });
+          c.bgB = this.device.createBindGroup({
+            layout: this.bindGroupLayout,
+            entries: entriesB
+          });
         } catch (e) {
-          throw new Error(`_recreate3DBindGroups: failed to create bind groups: ${e?.message || e}`);
+          throw new Error(
+            `_recreate3DBindGroups: failed to create bind groups: ${e?.message || e}`
+          );
         }
       }
       vol._bindGroupsDirty = false;
@@ -5331,10 +6317,17 @@ fn computeGauss5x5(\r
     // replace your computeToTexture3D with this implementation
     async computeToTexture3D(width, height, depth, paramsObj = {}, options = {}) {
       const W = width | 0, H = height | 0, D = depth | 0;
-      if (!(W > 0 && H > 0 && D > 0)) throw new Error(`computeToTexture3D: invalid size ${width}x${height}x${depth}`);
+      if (!(W > 0 && H > 0 && D > 0))
+        throw new Error(
+          `computeToTexture3D: invalid size ${width}x${height}x${depth}`
+        );
       if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
       const origOpts = options || {};
-      this.setOptions({ ...origOpts, ioFlags: 3, useCustomPos: origOpts.useCustomPos ?? this.useCustomPos });
+      this.setOptions({
+        ...origOpts,
+        ioFlags: 3,
+        useCustomPos: origOpts.useCustomPos ?? this.useCustomPos
+      });
       const worldFull = (() => {
         if (options && (Number.isFinite(options.frameFullWidth) || Number.isFinite(options.frameFullHeight) || Number.isFinite(options.frameFullDepth))) {
           return {
@@ -5346,7 +6339,10 @@ fn computeGauss5x5(\r
         return null;
       })();
       const vol = this._getOrCreate3DVolume(W, H, D, options.id, worldFull);
-      if (!vol) throw new Error("computeToTexture3D: failed to create or retrieve volume");
+      if (!vol)
+        throw new Error(
+          "computeToTexture3D: failed to create or retrieve volume"
+        );
       if (vol._bindGroupsDirty || !vol.chunks[0].bgA || !vol.chunks[0].bgB) {
         this._recreate3DBindGroups(vol, worldFull);
       }
@@ -5355,7 +6351,9 @@ fn computeGauss5x5(\r
         const start = c.isA ? c.bgA : c.bgB;
         const alt = c.isA ? c.bgB : c.bgA;
         if (!start || !alt) {
-          throw new Error("computeToTexture3D: missing bind groups (volume not initialized correctly)");
+          throw new Error(
+            "computeToTexture3D: missing bind groups (volume not initialized correctly)"
+          );
         }
         lastBG = await this._runPipelines(
           start,
@@ -5374,7 +6372,12 @@ fn computeGauss5x5(\r
     configureCanvas(canvas) {
       const format = navigator.gpu.getPreferredCanvasFormat && navigator.gpu.getPreferredCanvasFormat() || "bgra8unorm";
       const ctx = canvas.getContext("webgpu");
-      ctx.configure({ device: this.device, format, alphaMode: "opaque", size: [canvas.width, canvas.height] });
+      ctx.configure({
+        device: this.device,
+        format,
+        alphaMode: "opaque",
+        size: [canvas.width, canvas.height]
+      });
       this._ctxMap.set(canvas, { ctx, size: [canvas.width, canvas.height] });
     }
     // ------- blit (2D-array preview + 3D-slice preview) -------
@@ -5391,13 +6394,26 @@ fn computeGauss5x5(\r
         this.bgl2D = this.device.createBindGroupLayout({
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-            { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d-array" } },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+            {
+              binding: 1,
+              visibility: GPUShaderStage.FRAGMENT,
+              texture: { sampleType: "float", viewDimension: "2d-array" }
+            },
+            {
+              binding: 2,
+              visibility: GPUShaderStage.FRAGMENT,
+              buffer: { type: "uniform" }
+            }
           ]
         });
         this.pipeline2D = this.device.createRenderPipeline({
-          layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl2D] }),
-          vertex: { module: this.device.createShaderModule({ code: noiseBlit_default }), entryPoint: "vs_main" },
+          layout: this.device.createPipelineLayout({
+            bindGroupLayouts: [this.bgl2D]
+          }),
+          vertex: {
+            module: this.device.createShaderModule({ code: noiseBlit_default }),
+            entryPoint: "vs_main"
+          },
           fragment: {
             module: this.device.createShaderModule({ code: noiseBlit_default }),
             entryPoint: "fs_main",
@@ -5405,19 +6421,35 @@ fn computeGauss5x5(\r
           },
           primitive: { topology: "triangle-list" }
         });
-        this.blit2DUbo = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.blit2DUbo = this.device.createBuffer({
+          size: 16,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
       }
       if (!this.bgl3D) {
         this.bgl3D = this.device.createBindGroupLayout({
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-            { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "3d" } },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+            {
+              binding: 1,
+              visibility: GPUShaderStage.FRAGMENT,
+              texture: { sampleType: "float", viewDimension: "3d" }
+            },
+            {
+              binding: 2,
+              visibility: GPUShaderStage.FRAGMENT,
+              buffer: { type: "uniform" }
+            }
           ]
         });
         this.pipeline3D = this.device.createRenderPipeline({
-          layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl3D] }),
-          vertex: { module: this.device.createShaderModule({ code: noiseBlit3D_default }), entryPoint: "vs_main" },
+          layout: this.device.createPipelineLayout({
+            bindGroupLayouts: [this.bgl3D]
+          }),
+          vertex: {
+            module: this.device.createShaderModule({ code: noiseBlit3D_default }),
+            entryPoint: "vs_main"
+          },
           fragment: {
             module: this.device.createShaderModule({ code: noiseBlit3D_default }),
             entryPoint: "fs_main",
@@ -5425,7 +6457,10 @@ fn computeGauss5x5(\r
           },
           primitive: { topology: "triangle-list" }
         });
-        this.blit3DUbo = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.blit3DUbo = this.device.createBuffer({
+          size: 16,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
       }
     }
     _renderCommonCanvasSetup(canvas, clear) {
@@ -5441,17 +6476,24 @@ fn computeGauss5x5(\r
         const curW = canvas.width | 0, curH = canvas.height | 0;
         if (entry.size[0] !== curW || entry.size[1] !== curH) {
           entry.size = [curW, curH];
-          entry.ctx.configure({ device: this.device, format, alphaMode: "opaque", size: entry.size });
+          entry.ctx.configure({
+            device: this.device,
+            format,
+            alphaMode: "opaque",
+            size: entry.size
+          });
         }
       }
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{
-          view: entry.ctx.getCurrentTexture().createView(),
-          loadOp: clear ? "clear" : "load",
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          storeOp: "store"
-        }]
+        colorAttachments: [
+          {
+            view: entry.ctx.getCurrentTexture().createView(),
+            loadOp: clear ? "clear" : "load",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            storeOp: "store"
+          }
+        ]
       });
       return { enc, pass, ctxEntry: entry };
     }
@@ -5475,7 +6517,13 @@ fn computeGauss5x5(\r
         }
       }
       const u = new Uint32Array([layer >>> 0, channel >>> 0, 0, 0]);
-      this.queue.writeBuffer(this.blit2DUbo, 0, u.buffer, u.byteOffset, u.byteLength);
+      this.queue.writeBuffer(
+        this.blit2DUbo,
+        0,
+        u.buffer,
+        u.byteOffset,
+        u.byteLength
+      );
       const bg = this.device.createBindGroup({
         layout: this.bgl2D,
         entries: [
@@ -5511,7 +6559,10 @@ fn computeGauss5x5(\r
         view3D = target;
         d = depth;
       }
-      if (!view3D || !d) throw new Error("renderTexture3DSliceToCanvas: need a 3D view and its depth");
+      if (!view3D || !d)
+        throw new Error(
+          "renderTexture3DSliceToCanvas: need a 3D view and its depth"
+        );
       if (!preserveCanvasSize) {
         try {
           const tex = view3D.texture;
@@ -5545,6 +6596,460 @@ fn computeGauss5x5(\r
       pass.draw(6, 1, 0, 0);
       pass.end();
       this.queue.submit([enc.finish()]);
+    }
+    // Capture a 2D-array noise texture (one layer/channel) to a PNG Blob.
+    // textureView: GPUTextureView for the 2D-array rgba16float texture
+    // width/height: desired output resolution in pixels
+    // opts: { layer?: number, channel?: number }
+    async export2DTextureToPNGBlob(textureView, width, height, opts = {}) {
+      if (!textureView) {
+        throw new Error("export2DTextureToPNGBlob: textureView is required");
+      }
+      const W = Math.max(1, width | 0);
+      const H = Math.max(1, height | 0);
+      const layer = opts.layer ?? 0;
+      const channel = opts.channel ?? 0;
+      this.initBlitRender();
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        try {
+          await this.queue.onSubmittedWorkDone();
+        } catch (e) {
+          console.warn(
+            "export2DTextureToPNGBlob: onSubmittedWorkDone before export failed",
+            e
+          );
+        }
+      }
+      const format = "bgra8unorm";
+      const captureTexture = this.device.createTexture({
+        size: [W, H, 1],
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+      });
+      const u = new Uint32Array([layer >>> 0, channel >>> 0, 0, 0]);
+      this.queue.writeBuffer(
+        this.blit2DUbo,
+        0,
+        u.buffer,
+        u.byteOffset,
+        u.byteLength
+      );
+      const bg = this.device.createBindGroup({
+        layout: this.bgl2D,
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: textureView },
+          { binding: 2, resource: { buffer: this.blit2DUbo } }
+        ]
+      });
+      const encoder = this.device.createCommandEncoder();
+      const rpass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: captureTexture.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 }
+          }
+        ]
+      });
+      rpass.setPipeline(this.pipeline2D);
+      rpass.setBindGroup(0, bg);
+      rpass.draw(6, 1, 0, 0);
+      rpass.end();
+      const bytesPerPixel = 4;
+      const align = 256;
+      const bytesPerRowUnaligned = W * bytesPerPixel;
+      const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+      const bufferSize = bytesPerRow * H;
+      const readBuffer = this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+      encoder.copyTextureToBuffer(
+        { texture: captureTexture },
+        {
+          buffer: readBuffer,
+          bytesPerRow,
+          rowsPerImage: H
+        },
+        { width: W, height: H, depthOrArrayLayers: 1 }
+      );
+      this.queue.submit([encoder.finish()]);
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        await this.queue.onSubmittedWorkDone();
+      }
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const src = new Uint8Array(mapped);
+      const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+      const isBGRA = true;
+      let dst = 0;
+      for (let y = 0; y < H; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < W; x++) {
+          const si = rowStart + x * 4;
+          if (isBGRA) {
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 3];
+          } else {
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 3];
+          }
+        }
+      }
+      readBuffer.unmap();
+      readBuffer.destroy();
+      captureTexture.destroy();
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = W;
+      tmpCanvas.height = H;
+      const ctx2d = tmpCanvas.getContext("2d");
+      if (!ctx2d)
+        throw new Error("export2DTextureToPNGBlob: unable to get 2D context");
+      const imageData = new ImageData(pixels, W, H);
+      ctx2d.putImageData(imageData, 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        tmpCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else
+            reject(new Error("export2DTextureToPNGBlob: toBlob returned null"));
+        }, "image/png");
+      });
+      return blob;
+    }
+    // Convenience wrapper: export the currently active 2D pair view
+    // (what getCurrentView() returns) to a PNG Blob.
+    async exportCurrent2DToPNGBlob(width, height, opts = {}) {
+      const view = this.getCurrentView();
+      if (!view) {
+        throw new Error("exportCurrent2DToPNGBlob: no active 2D texture view");
+      }
+      return this.export2DTextureToPNGBlob(view, width, height, opts);
+    }
+    async export3DSliceToPNGBlob(target, width, height, opts = {}) {
+      if (!target) {
+        throw new Error("export3DSliceToPNGBlob: target is required");
+      }
+      const W = Math.max(1, width | 0);
+      const H = Math.max(1, height | 0);
+      const { depth, slice = 0, zNorm = null, channel = 0, chunk = 0 } = opts;
+      if (!depth || depth <= 0) {
+        throw new Error("export3DSliceToPNGBlob: depth must be provided and > 0");
+      }
+      this.initBlitRender();
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        try {
+          await this.queue.onSubmittedWorkDone();
+        } catch (e) {
+          console.warn(
+            "export3DSliceToPNGBlob: onSubmittedWorkDone before export failed",
+            e
+          );
+        }
+      }
+      let view3D;
+      let d;
+      if (target && target.views && Array.isArray(target.views)) {
+        const idx = Math.max(0, Math.min(chunk | 0, target.views.length - 1));
+        view3D = target.views[idx];
+        d = target.meta?.tile?.d ?? depth;
+      } else {
+        view3D = target;
+        d = depth;
+      }
+      if (!view3D || !d) {
+        throw new Error("export3DSliceToPNGBlob: need a 3D view and its depth");
+      }
+      let z = zNorm !== null && zNorm !== void 0 ? zNorm : (Math.min(Math.max(slice, 0), d - 1) + 0.5) / d;
+      z = Math.min(Math.max(z, 0), 1);
+      const format = "bgra8unorm";
+      const captureTexture = this.device.createTexture({
+        size: [W, H, 1],
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+      });
+      const ab = new ArrayBuffer(16);
+      const dv = new DataView(ab);
+      dv.setFloat32(0, z, true);
+      dv.setUint32(4, channel >>> 0, true);
+      dv.setUint32(8, 0, true);
+      dv.setUint32(12, 0, true);
+      this.queue.writeBuffer(this.blit3DUbo, 0, ab);
+      const bg = this.device.createBindGroup({
+        layout: this.bgl3D,
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: view3D },
+          { binding: 2, resource: { buffer: this.blit3DUbo } }
+        ]
+      });
+      const encoder = this.device.createCommandEncoder();
+      const rpass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: captureTexture.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 }
+          }
+        ]
+      });
+      rpass.setPipeline(this.pipeline3D);
+      rpass.setBindGroup(0, bg);
+      rpass.draw(6, 1, 0, 0);
+      rpass.end();
+      const bytesPerPixel = 4;
+      const align = 256;
+      const bytesPerRowUnaligned = W * bytesPerPixel;
+      const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+      const bufferSize = bytesPerRow * H;
+      const readBuffer = this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+      encoder.copyTextureToBuffer(
+        { texture: captureTexture },
+        {
+          buffer: readBuffer,
+          bytesPerRow,
+          rowsPerImage: H
+        },
+        { width: W, height: H, depthOrArrayLayers: 1 }
+      );
+      this.queue.submit([encoder.finish()]);
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        await this.queue.onSubmittedWorkDone();
+      }
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const src = new Uint8Array(mapped);
+      const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+      const isBGRA = true;
+      let dst = 0;
+      for (let y = 0; y < H; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < W; x++) {
+          const si = rowStart + x * 4;
+          if (isBGRA) {
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 3];
+          } else {
+            pixels[dst++] = src[si + 0];
+            pixels[dst++] = src[si + 1];
+            pixels[dst++] = src[si + 2];
+            pixels[dst++] = src[si + 3];
+          }
+        }
+      }
+      readBuffer.unmap();
+      readBuffer.destroy();
+      captureTexture.destroy();
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = W;
+      tmpCanvas.height = H;
+      const ctx2d = tmpCanvas.getContext("2d");
+      if (!ctx2d) {
+        throw new Error("export3DSliceToPNGBlob: unable to get 2D context");
+      }
+      const imageData = new ImageData(pixels, W, H);
+      ctx2d.putImageData(imageData, 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        tmpCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else reject(new Error("export3DSliceToPNGBlob: toBlob returned null"));
+        }, "image/png");
+      });
+      return blob;
+    }
+    // Render a single Z slice from a 3D texture view into an RGBA8 pixel buffer (RGBA order).
+    // zNorm is in [0,1]. channel selects which packed channel to display.
+    async _render3DSliceToRGBA8Pixels(view3D, width, height, zNorm, channel = 0) {
+      if (!view3D)
+        throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");
+      const W = Math.max(1, width | 0);
+      const H = Math.max(1, height | 0);
+      this.initBlitRender();
+      const z = Math.min(Math.max(Number(zNorm) || 0, 0), 1);
+      const format = "bgra8unorm";
+      const captureTexture = this.device.createTexture({
+        size: [W, H, 1],
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+      });
+      const ab = new ArrayBuffer(16);
+      const dv = new DataView(ab);
+      dv.setFloat32(0, z, true);
+      dv.setUint32(4, channel >>> 0, true);
+      dv.setUint32(8, 0, true);
+      dv.setUint32(12, 0, true);
+      this.queue.writeBuffer(this.blit3DUbo, 0, ab);
+      const bg = this.device.createBindGroup({
+        layout: this.bgl3D,
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: view3D },
+          { binding: 2, resource: { buffer: this.blit3DUbo } }
+        ]
+      });
+      const encoder = this.device.createCommandEncoder();
+      const rpass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: captureTexture.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 }
+          }
+        ]
+      });
+      rpass.setPipeline(this.pipeline3D);
+      rpass.setBindGroup(0, bg);
+      rpass.draw(6, 1, 0, 0);
+      rpass.end();
+      const bytesPerPixel = 4;
+      const align = 256;
+      const bytesPerRowUnaligned = W * bytesPerPixel;
+      const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+      const bufferSize = bytesPerRow * H;
+      const readBuffer = this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+      encoder.copyTextureToBuffer(
+        { texture: captureTexture },
+        { buffer: readBuffer, bytesPerRow, rowsPerImage: H },
+        { width: W, height: H, depthOrArrayLayers: 1 }
+      );
+      this.queue.submit([encoder.finish()]);
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        await this.queue.onSubmittedWorkDone();
+      }
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const src = new Uint8Array(mapped);
+      const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+      let dst = 0;
+      for (let y = 0; y < H; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < W; x++) {
+          const si = rowStart + x * 4;
+          pixels[dst++] = src[si + 2];
+          pixels[dst++] = src[si + 1];
+          pixels[dst++] = src[si + 0];
+          pixels[dst++] = src[si + 3];
+        }
+      }
+      readBuffer.unmap();
+      readBuffer.destroy();
+      captureTexture.destroy();
+      return pixels;
+    }
+    // Export a full 3D volume as a single PNG tileset.
+    // Tiles are laid out row-major: z=0 is top-left, z increases left->right then top->bottom.
+    // target can be a raw 3D view OR your { views: [...], meta: { tile: { d }}} bundle.
+    // tileWidth/tileHeight are the per-slice render size in pixels (usually TOROIDAL_SIZE).
+    // opts:
+    //  - depth (required if target has no meta)
+    //  - channel (default 0)
+    //  - chunk (default 0, if target is bundle)
+    //  - tilesAcross (default 16)
+    //  - tilesDown (default ceil(depth/tilesAcross))
+    //  - startSlice (default 0)
+    //  - sliceCount (default depth-startSlice)
+    async export3DTilesetToPNGBlob(target, tileWidth, tileHeight, opts = {}) {
+      if (!target)
+        throw new Error("export3DTilesetToPNGBlob: target is required");
+      const TW = Math.max(1, tileWidth | 0);
+      const TH = Math.max(1, (tileHeight ?? tileWidth) | 0);
+      const {
+        depth,
+        channel = 0,
+        chunk = 0,
+        tilesAcross = 16,
+        tilesDown = null,
+        startSlice = 0,
+        sliceCount = null
+      } = opts;
+      this.initBlitRender();
+      if (this.queue && this.queue.onSubmittedWorkDone) {
+        try {
+          await this.queue.onSubmittedWorkDone();
+        } catch (e) {
+          console.warn(
+            "export3DTilesetToPNGBlob: onSubmittedWorkDone before export failed",
+            e
+          );
+        }
+      }
+      let view3D;
+      let d;
+      if (target && target.views && Array.isArray(target.views)) {
+        const idx = Math.max(0, Math.min(chunk | 0, target.views.length - 1));
+        view3D = target.views[idx];
+        d = target.meta?.tile?.d ?? depth;
+      } else {
+        view3D = target;
+        d = depth;
+      }
+      if (!view3D) throw new Error("export3DTilesetToPNGBlob: missing 3D view");
+      if (!d || d <= 0)
+        throw new Error(
+          "export3DTilesetToPNGBlob: depth must be provided and > 0"
+        );
+      const across = Math.max(1, tilesAcross | 0);
+      const down = tilesDown !== null && tilesDown !== void 0 ? Math.max(1, tilesDown | 0) : Math.ceil(d / across);
+      const start = Math.min(Math.max(startSlice | 0, 0), d - 1);
+      const count = sliceCount !== null && sliceCount !== void 0 ? Math.max(0, sliceCount | 0) : d - start;
+      const outW = TW * across;
+      const outH = TH * down;
+      const outPixels = new Uint8ClampedArray(outW * outH * 4);
+      const maxZ = Math.min(d, start + count);
+      for (let z = start; z < maxZ; z++) {
+        const rel = z - start;
+        const col = rel % across;
+        const row = rel / across | 0;
+        if (row >= down) break;
+        const zNorm = (z + 0.5) / d;
+        const tilePixels = await this._render3DSliceToRGBA8Pixels(
+          view3D,
+          TW,
+          TH,
+          zNorm,
+          channel
+        );
+        const dstBaseX = col * TW;
+        const dstBaseY = row * TH;
+        for (let y = 0; y < TH; y++) {
+          const srcRowStart = y * TW * 4;
+          const dstRowStart = ((dstBaseY + y) * outW + dstBaseX) * 4;
+          outPixels.set(
+            tilePixels.subarray(srcRowStart, srcRowStart + TW * 4),
+            dstRowStart
+          );
+        }
+      }
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = outW;
+      tmpCanvas.height = outH;
+      const ctx2d = tmpCanvas.getContext("2d");
+      if (!ctx2d)
+        throw new Error("export3DTilesetToPNGBlob: unable to get 2D context");
+      ctx2d.putImageData(new ImageData(outPixels, outW, outH), 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        tmpCanvas.toBlob((b) => {
+          if (b) resolve(b);
+          else
+            reject(new Error("export3DTilesetToPNGBlob: toBlob returned null"));
+        }, "image/png");
+      });
+      return blob;
     }
   };
   var BaseNoise = class {
@@ -5605,7 +7110,7 @@ fn computeGauss5x5(\r
   };
 
   // tools/clouds/clouds.wgsl
-  var clouds_default = "const PI  : f32 = 3.141592653589793;\r\nconst EPS : f32 = 1e-6;\r\nconst LN2 : f32 = 0.6931471805599453;\r\nconst INV_LN2 : f32 = 1.4426950408889634;\r\n\r\n// ---------------------- TUNING UNIFORM\r\nstruct CloudTuning {\r\n  // Marching\r\n  maxSteps         : i32,\r\n  _pad0_i          : i32,\r\n  minStep          : f32,\r\n  maxStep          : f32,\r\n\r\n  // Sun marching\r\n  sunSteps         : i32,\r\n  sunStride        : i32,\r\n  sunMinTr         : f32,\r\n  _pad1_f          : f32,\r\n\r\n  // Dither\r\n  phaseJitter      : f32,\r\n  stepJitter       : f32,\r\n  _pad2            : vec2<f32>,\r\n\r\n  // Noise warp\r\n  baseJitterFrac   : f32,\r\n  topJitterFrac    : f32,\r\n  _pad3            : vec2<f32>,\r\n\r\n  // LOD and bounds\r\n  lodBiasWeather   : f32,\r\n  aabbFaceOffset   : f32,\r\n  _pad4            : vec2<f32>,\r\n\r\n  // Weather skipping\r\n  weatherRejectGate: f32,\r\n  weatherRejectMip : f32,\r\n  emptySkipMult    : f32,\r\n  _pad5            : f32,\r\n\r\n  // Near tweaks\r\n  nearFluffDist    : f32,\r\n  nearStepScale    : f32,\r\n  nearLodBias      : f32,\r\n  nearDensityMult  : f32,\r\n  nearDensityRange : f32,\r\n  _pad6            : vec3<f32>,\r\n\r\n  // LOD blending\r\n  lodBlendThreshold: f32,\r\n  _pad7            : vec3<f32>,\r\n\r\n  // Anti-speckle & temporal\r\n  sunDensityGate   : f32,\r\n  fflyRelClamp     : f32,\r\n  fflyAbsFloor     : f32,\r\n  taaRelMin        : f32,\r\n  taaRelMax        : f32,\r\n  taaAbsEps        : f32,\r\n  _pad8            : vec2<f32>,\r\n\r\n  // Far-field calm\r\n  farStart         : f32,\r\n  farFull          : f32,\r\n  farLodPush       : f32,\r\n  farDetailAtten   : f32,\r\n  farStepMult      : f32,\r\n  bnFarScale       : f32,\r\n  farTaaHistoryBoost: f32,\r\n  _pad9            : vec2<f32>,\r\n\r\n  // On-ray smoothing\r\n  raySmoothDens    : f32,\r\n  raySmoothSun     : f32,\r\n  _pad10           : vec2<f32>,\r\n}\r\n@group(0) @binding(10) var<uniform> TUNE : CloudTuning;\r\n\r\n// ---------------------- existing uniforms / resources (preserved layout)\r\nstruct CloudOptions {\r\n  useCustomPos : u32,\r\n  outputChannel: u32,\r\n  writeRGB     : u32,\r\n  _p0          : u32,\r\n  _r0          : f32,\r\n  _r1          : f32,\r\n  _r2          : f32,\r\n  _r3          : f32,\r\n}\r\n@group(0) @binding(0) var<uniform> opt : CloudOptions;\r\n\r\nstruct CloudParams {\r\n  globalCoverage: f32,\r\n  globalDensity : f32,\r\n  cloudAnvilAmount: f32,\r\n  cloudBeer      : f32,\r\n  attenuationClamp: f32,\r\n  inScatterG     : f32,\r\n  silverIntensity: f32,\r\n  silverExponent : f32,\r\n  outScatterG    : f32,\r\n  inVsOut        : f32,\r\n  outScatterAmbientAmt: f32,\r\n  ambientMinimum : f32,\r\n  sunColor       : vec3<f32>,\r\n\r\n  densityDivMin  : f32,\r\n  silverDirectionBias: f32,\r\n  silverHorizonBoost : f32,\r\n  _pad0          : f32,\r\n}\r\n@group(0) @binding(1) var<uniform> C : CloudParams;\r\n\r\nstruct Dummy { _pad: u32, }\r\n@group(0) @binding(2) var<storage, read> unused : Dummy;\r\n\r\nstruct NoiseTransforms {\r\n  shapeOffsetWorld  : vec3<f32>,\r\n  _pad0             : f32,\r\n  detailOffsetWorld : vec3<f32>,\r\n  _pad1             : f32,\r\n  shapeScale        : f32,\r\n  detailScale       : f32,\r\n  _pad2             : vec2<f32>,\r\n}\r\n@group(0) @binding(3) var<uniform> NTransform : NoiseTransforms;\r\n\r\n@group(0) @binding(4) var outTex : texture_storage_2d_array<rgba16float, write>;\r\n@group(0) @binding(5) var<storage, read> posBuf : array<vec4<f32>>;\r\n\r\nstruct Frame {\r\n  fullWidth : u32, fullHeight: u32,\r\n  tileWidth : u32, tileHeight: u32,\r\n  originX   : i32, originY   : i32, originZ: i32,\r\n  fullDepth : u32, tileDepth : u32,\r\n  layerIndex: i32, layers    : u32,\r\n  _pad0     : u32,\r\n  originXf  : f32, originYf : f32, _pad1: f32, _pad2: f32,\r\n}\r\n@group(0) @binding(6) var<uniform> frame : Frame;\r\n\r\n@group(0) @binding(7) var historyOut : texture_storage_2d_array<rgba16float, write>;\r\n\r\nstruct ReprojSettings {\r\n  enabled : u32,\r\n  subsample: u32,\r\n  sampleOffset: u32,\r\n  motionIsNormalized: u32,\r\n  temporalBlend: f32,\r\n  depthTest: u32,\r\n  depthTolerance: f32,\r\n  frameIndex: u32,\r\n  fullWidth: u32,\r\n  fullHeight: u32,\r\n}\r\n@group(0) @binding(8) var<uniform> reproj : ReprojSettings;\r\n\r\nstruct PerfParams {\r\n  lodBiasMul : f32,\r\n  coarseMipBias : f32,\r\n  _pad0: f32,\r\n  _pad1: f32,\r\n}\r\n@group(0) @binding(9) var<uniform> perf : PerfParams;\r\n\r\n@group(1) @binding(0) var weather2D : texture_2d_array<f32>;\r\n@group(1) @binding(1) var samp2D    : sampler;\r\n\r\n@group(1) @binding(2) var shape3D   : texture_3d<f32>;\r\n@group(1) @binding(3) var sampShape : sampler;\r\n\r\n@group(1) @binding(4) var blueTex   : texture_2d_array<f32>;\r\n@group(1) @binding(5) var sampBN    : sampler;\r\n\r\n@group(1) @binding(6) var detail3D  : texture_3d<f32>;\r\n@group(1) @binding(7) var sampDetail: sampler;\r\n\r\nstruct LightInputs { sunDir: vec3<f32>, _0: f32, camPos: vec3<f32>, _1: f32, }\r\n@group(1) @binding(8) var<uniform> L : LightInputs;\r\n\r\nstruct View {\r\n  camPos : vec3<f32>, _v0: f32,\r\n  right  : vec3<f32>, _v1: f32,\r\n  up     : vec3<f32>, _v2: f32,\r\n  fwd    : vec3<f32>, _v3: f32,\r\n  fovY   : f32, aspect: f32, stepBase: f32, stepInc: f32,\r\n  planetRadius: f32, cloudBottom: f32, cloudTop: f32, volumeLayers: f32,\r\n  worldToUV: f32, _a: f32, _b: f32, _c: f32,\r\n}\r\n@group(1) @binding(9) var<uniform> V : View;\r\n\r\nstruct Box {\r\n  center: vec3<f32>, _b0: f32,\r\n  half: vec3<f32>, uvScale: f32,\r\n}\r\n@group(1) @binding(10) var<uniform> B : Box;\r\n\r\n@group(1) @binding(11) var historyPrev : texture_2d_array<f32>;\r\n@group(1) @binding(12) var sampHistory : sampler;\r\n\r\n@group(1) @binding(13) var motionTex : texture_2d<f32>;\r\n@group(1) @binding(14) var sampMotion: sampler;\r\n\r\n@group(1) @binding(15) var depthPrev : texture_2d<f32>;\r\n@group(1) @binding(16) var sampDepth: sampler;\r\n\r\n// Workgroup cache\r\nvar<workgroup> wg_weatherDim : vec2<f32>;\r\nvar<workgroup> wg_blueDim    : vec2<f32>;\r\nvar<workgroup> wg_shapeDim   : vec3<f32>;\r\nvar<workgroup> wg_detailDim  : vec3<f32>;\r\nvar<workgroup> wg_maxMipW    : f32;\r\nvar<workgroup> wg_maxMipS    : f32;\r\nvar<workgroup> wg_maxMipD    : f32;\r\nvar<workgroup> wg_scaleS     : f32;\r\nvar<workgroup> wg_scaleD     : f32;\r\nvar<workgroup> wg_finestWorld: f32;\r\n\r\n// ---------------------- helpers\r\nfn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }\r\nfn mix_f(a: f32, b: f32, t: f32) -> f32 { return a * (1.0 - t) + b * t; }\r\nfn mix_v3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> { return a * (1.0 - t) + b * t; }\r\nfn mix_v4(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> { return a * (1.0 - t) + b * t; }\r\nfn remap(v: f32, a: f32, b: f32, c: f32, d: f32) -> f32 { return c + (v - a) * (d - c) / max(b - a, EPS); }\r\nfn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }\r\n\r\n// tiny hash\r\nfn hash13_i(p: vec3<i32>) -> f32 {\r\n  var h: u32 = 374761393u * u32(p.x) + 668265263u * u32(p.y) + 362437u * u32(p.z);\r\n  h = (h ^ (h >> 13u)) * 1274126177u;\r\n  h = h ^ (h >> 16u);\r\n  return f32(h) * 2.3283064365386963e-10;\r\n}\r\nfn smoothCellHash2D(p: vec2<f32>, freq: f32) -> f32 {\r\n  let uv = p * freq;\r\n  let i  = floor(uv);\r\n  let f  = fract(uv);\r\n  let h00 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y),     0));\r\n  let h10 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y),     0));\r\n  let h01 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y) + 1, 0));\r\n  let h11 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y) + 1, 0));\r\n  let u = f * f * (3.0 - 2.0 * f);\r\n  return mix_f(mix_f(h00, h10, u.x), mix_f(h01, h11, u.x), u.y);\r\n}\r\n\r\n// texture wrappers\r\nfn wrap2D(tex: texture_2d_array<f32>, samp: sampler, uv: vec2<f32>, layer_idx: i32, lod: f32) -> vec4<f32> {\r\n  let d = wg_weatherDim;\r\n  let ep = vec2<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0));\r\n  let u  = uv * (vec2<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, layer_idx, lod);\r\n}\r\nfn wrap3D_shape(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_shapeDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x,1.0), 0.5 / max(d.y,1.0), 0.5 / max(d.z,1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\nfn wrap3D_detail(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_detailDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0), 0.5 / max(d.z, 1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\n\r\n// blue noise\r\nfn sampleBlueScreen(pixI: vec2<i32>) -> f32 {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let bnD = wg_blueDim;\r\n  let uvSS = (vec2<f32>(pixI) + 0.5) / res;\r\n  let uvBN = fract(uvSS * res / bnD);\r\n  return textureSampleLevel(blueTex, sampBN, uvBN, 0i, 0.0).r;\r\n}\r\n\r\n// box helpers\r\nfn boxMin() -> vec3<f32> { return B.center - B.half; }\r\nfn boxMax() -> vec3<f32> { return B.center + B.half; }\r\n\r\n// robust AABB intersect\r\nfn intersectAABB_robust(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {\r\n  let rdSafe = select(sign(rd) * vec3<f32>(EPS), rd, vec3<bool>(abs(rd) > vec3<f32>(EPS)));\r\n  let inv = vec3<f32>(1.0) / rdSafe;\r\n  let t0 = (bmin - ro) * inv;\r\n  let t1 = (bmax - ro) * inv;\r\n  let tmin3 = min(t0, t1);\r\n  let tmax3 = max(t0, t1);\r\n  let tmin = max(max(tmin3.x, tmin3.y), tmin3.z);\r\n  let tmax = min(min(tmax3.x, tmax3.y), tmax3.z);\r\n  return vec2<f32>(tmin, tmax);\r\n}\r\n\r\n// world warp in XZ\r\nfn worldWarpXZ(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> vec2<f32> {\r\n  let norm = max(boxMaxXZ, 1.0);\r\n  let p = pos_xz / norm;\r\n  let warpAmp  = TUNE.baseJitterFrac * boxMaxXZ * 0.5;\r\n  let s1x = smoothCellHash2D(p + vec2<f32>(12.34, 78.9), 4.0);\r\n  let s1y = smoothCellHash2D(p + vec2<f32>(98.7,  6.54), 4.0);\r\n  let s2x = smoothCellHash2D(p * 1.73 + vec2<f32>(3.21, 4.56), 8.28);\r\n  let s2y = smoothCellHash2D(p * 1.91 + vec2<f32>(7.89, 1.23), 8.28);\r\n  let ox = (s1x - 0.5) + 0.5 * (s2x - 0.5);\r\n  let oz = (s1y - 0.5) + 0.5 * (s2y - 0.5);\r\n  let ang = smoothCellHash2D(p * 3.0 + vec2<f32>(9.7, 2.3), 16.0) * 2.0 * PI;\r\n  let rad = (smoothCellHash2D(p * 3.0 + vec2<f32>(1.1, 7.7), 16.0) - 0.5) * (TUNE.baseJitterFrac * 0.4 * boxMaxXZ);\r\n  let rot = vec2<f32>(cos(ang), sin(ang)) * rad;\r\n  let user = vec2<f32>(cos(opt._r3), sin(opt._r3)) * opt._r2 * 0.001;\r\n  return vec2<f32>(ox, oz) * warpAmp + rot * mix_f(0.3, 1.2, ph) + user;\r\n}\r\n\r\n// shape & detail samplers\r\nfn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {\r\n  let scaleS = max(wg_scaleS, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.shapeOffsetWorld.x,\r\n    pos.y + ph * 7.0 + NTransform.shapeOffsetWorld.y,\r\n    pos.z + w.y + NTransform.shapeOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_shape(shape3D, sampShape, pW * scaleS * NTransform.shapeScale, lod);\r\n}\r\n\r\nfn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {\r\n  let scaleD = max(wg_scaleD, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.detailOffsetWorld.x,\r\n    pos.y + NTransform.detailOffsetWorld.y,\r\n    pos.z + w.y + NTransform.detailOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_detail(detail3D, sampDetail, pW * scaleD * NTransform.detailScale, lod).rgb;\r\n}\r\n\r\n\r\n// height shape and density\r\nfn heightShape(ph: f32, wBlue: f32) -> f32 {\r\n  let sr_bottom = saturate(remap(ph, 0.0, 0.07, 0.0, 1.0));\r\n  let stop_h = saturate(wBlue + 0.12);\r\n  let sr_top  = saturate(remap(ph, stop_h * 0.2, stop_h, 1.0, 0.0));\r\n  var base = sr_bottom * sr_top;\r\n  let anvilFactor = saturate(C.cloudAnvilAmount) * saturate(C.globalCoverage);\r\n  let expo = saturate(remap(ph, 0.65, 0.95, 1.0, 1.0 - anvilFactor * 0.9));\r\n  return pow(base, expo);\r\n}\r\nfn computePH(p_world: vec3<f32>, wm: vec4<f32>) -> f32 {\r\n  let boxH = max(B.half.y * 2.0, EPS);\r\n  let jBase = (wm.r * 2.0 - 1.0) * (TUNE.baseJitterFrac * boxH);\r\n  let jTop  = (wm.g * 2.0 - 1.0) * (TUNE.topJitterFrac  * boxH);\r\n  let baseY = (B.center.y - B.half.y) + jBase;\r\n  let topY  = (B.center.y + B.half.y) + jTop;\r\n  return saturate((p_world.y - baseY) / max(topY - baseY, EPS));\r\n}\r\nfn detailMod(ph: f32, d: vec3<f32>) -> f32 {\r\n  let fbm = d.r * 0.625 + d.g * 0.25 + d.b * 0.125;\r\n  return 0.35 * exp(-C.globalCoverage * 0.75) * mix_f(fbm, 1.0 - fbm, saturate(ph * 5.0));\r\n}\r\nfn densityHeight(ph: f32) -> f32 {\r\n  var ret = ph;\r\n  ret *= saturate(remap(ph, 0.0, 0.2, 0.0, 1.0));\r\n  ret *= mix_f(1.0, saturate(remap(sqrt(max(ph,0.0)), 0.4, 0.95, 1.0, 0.2)), saturate(C.cloudAnvilAmount));\r\n  ret *= saturate(remap(ph, 0.9, 1.0, 1.0, 0.0));\r\n  ret *= max(C.globalDensity, 0.0);\r\n  return ret;\r\n}\r\nfn weatherCoverageGate(wm: vec4<f32>) -> f32 {\r\n  let wHi = saturate(remap(C.globalCoverage, 0.0, 1.0, 0.0, 1.0) - 0.5) * wm.g * 2.0;\r\n  let WMc = max(wm.r, wHi);\r\n  return 1.0 - C.globalCoverage * saturate(WMc - opt._r1);\r\n}\r\nfn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f32 {\r\n  let fbm_s = s.g * 0.625 + s.b * 0.25 + s.a * 0.125 - 1.0;\r\n  let SNsample = remap(s.r, fbm_s, 1.0, 0.0, 1.0);\r\n  var SA = saturate(heightShape(ph, 1.0));\r\n  let wVar = fract(wm.r * 1.7 + wm.g * 2.3);\r\n  let bulge = 1.0 + 0.18 * (abs(fract(ph * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;\r\n  SA = saturate(SA * bulge);\r\n  let gate = weatherCoverageGate(wm);\r\n  let SNnd = saturate(remap(SNsample * SA, gate, 1.0, 0.0, 1.0));\r\n  let DN = detailMod(ph, det);\r\n  let core = saturate(remap(SNnd, DN, 1.0, 0.0, 1.0));\r\n  return max(core * densityHeight(ph), 0.0);\r\n}\r\n\r\n// phase and lighting\r\nfn HG(cos_angle: f32, g: f32) -> f32 {\r\n  let gg = clamp(g, -0.999, 0.999);\r\n  let g2 = gg * gg;\r\n  return ((1.0 - g2) / pow(1.0 + g2 - 2.0 * gg * clamp(cos_angle, -1.0, 1.0), 1.5)) / (4.0 * PI);\r\n}\r\n// InOutScatter updated to allow silver/backscatter to use abs(cos) so rim/backscatter is visible\r\nfn InOutScatter(cos_angle: f32) -> f32 {\r\n  let first_hg  = HG(cos_angle, C.inScatterG);\r\n  // use absolute cos for silver so both forward/back directions can contribute\r\n  let second_hg = C.silverIntensity * pow(saturate(abs(cos_angle)), C.silverExponent);\r\n  let in_scatter_hg  = max(first_hg, second_hg);\r\n  let out_scatter_hg = HG(cos_angle, -C.outScatterG);\r\n  return mix_f(in_scatter_hg, out_scatter_hg, C.inVsOut);\r\n}\r\nfn Attenuation(density_to_sun: f32, cos_angle: f32) -> f32 {\r\n  let prim = exp2(- (C.cloudBeer * density_to_sun) * INV_LN2);\r\n  let scnd = exp2(- (C.cloudBeer * C.attenuationClamp) * INV_LN2) * 0.7;\r\n  let checkval = remap(clamp(cos_angle, 0.0, 1.0), 0.0, 1.0, scnd, scnd * 0.5);\r\n  return max(checkval, prim);\r\n}\r\nfn OutScatterAmbient(density: f32, percent_height: f32) -> f32 {\r\n  let depth = C.outScatterAmbientAmt * pow(max(density, 0.0), remap(percent_height, 0.3, 0.9, 0.5, 1.0));\r\n  let vertical = pow(saturate(remap(percent_height, 0.0, 0.3, 0.8, 1.0)), 0.8);\r\n  return 1.0 - saturate(depth * vertical);\r\n}\r\n\r\n// ---------- helper: approximate surface normal from coarse shape mip\r\nfn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {\r\n  let probe = max(wg_finestWorld * 1.25, 1e-3);\r\n  // central differences along X and Z plus a small Y probe to pick vertical slope\r\n  let c = sampleShapeRGBA(pos, ph, lodShape).r;\r\n  let px = sampleShapeRGBA(pos + vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let nx = sampleShapeRGBA(pos - vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let pz = sampleShapeRGBA(pos + vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let nz = sampleShapeRGBA(pos - vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let py = sampleShapeRGBA(pos + vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;\r\n  let gy = (py - c) / probe;\r\n  let gx = (px - nx) * 0.5 / probe;\r\n  let gz = (pz - nz) * 0.5 / probe;\r\n  var n = normalize(vec3<f32>(-gx, -gy, -gz));\r\n  if (length(n) < 1e-4) { return vec3<f32>(0.0, 1.0, 0.0); }\r\n  return n;\r\n}\r\n\r\n// ---------- helper: surface shadow factor (soft) from normal & sun\r\nfn surfaceShadowFactor(n: vec3<f32>, sunDir: vec3<f32>, minLit: f32, exponent: f32) -> f32 {\r\n  let s = saturate(dot(n, sunDir) * 0.5 + 0.5);\r\n  let sPow = pow(s, exponent);\r\n  return mix_f(minLit, 1.0, sPow);\r\n}\r\n\r\nfn CalculateLight(density: f32, density_to_sun: f32, cos_angle: f32, percent_height: f32, bluenoise: f32, dist_along_ray: f32, rimBoost: f32) -> vec3<f32> {\r\n  var attenuation = Attenuation(density_to_sun, cos_angle) * InOutScatter(cos_angle) * OutScatterAmbient(density, percent_height);\r\n  let amb_min = density * C.ambientMinimum * (1.0 - pow(saturate(dist_along_ray / 4000.0), 2.0));\r\n  attenuation = max(amb_min, attenuation);\r\n  attenuation = attenuation + bluenoise * 0.0025;\r\n  attenuation = attenuation * (1.0 + 0.35 * rimBoost);\r\n  return attenuation * C.sunColor;\r\n}\r\n\r\n// sun march\r\nfn sunSingle(p0: vec3<f32>, sunDir: vec3<f32>, weatherLOD: f32, lodShapeBase: f32, lodDetailBase: f32, stepLen: f32) -> f32 {\r\n  var T = 1.0;\r\n  let parity = f32(i32(reproj.frameIndex % 2u));\r\n  var p = p0 + sunDir * (0.5 * stepLen * parity);\r\n  for (var i: i32 = 0; i < TUNE.sunSteps; i = i + 1) {\r\n    let wm   = wrap2D(weather2D, samp2D, weatherUV_local(p), 0i, weatherLOD);\r\n    let ph   = computePH(p, wm);\r\n    let s    = sampleShapeRGBA(p, ph, lodShapeBase  + f32(i) * 0.5);\r\n    let det  = sampleDetailRGB(p, ph, lodDetailBase + f32(i) * 0.5);\r\n    let d    = densityFromSamples(ph, wm, s, det);\r\n    T *= exp2(- (C.cloudBeer * d * stepLen) * INV_LN2);\r\n    if (T < TUNE.sunMinTr) { break; }\r\n    p += sunDir * stepLen;\r\n  }\r\n  return T;\r\n}\r\nfn sunTransmittance(p: vec3<f32>, sunDir: vec3<f32>, weatherLOD: f32, lodShapeBase: f32, lodDetailBase: f32, stepLen: f32) -> f32 {\r\n  return 0.5 * (sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen)\r\n              + sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen));\r\n}\r\n\r\n// weather UV\r\nfn weatherUV_local(pos_world: vec3<f32>) -> vec2<f32> {\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  let aabb = max(bmax - bmin, vec3<f32>(EPS, EPS, EPS));\r\n  let mul = select(opt._r0, 0.2, opt._r0 == 0.0);\r\n  return ((pos_world.xz - bmin.xz) / max(aabb.xz, vec2<f32>(EPS))) * mul;\r\n}\r\n\r\n// quick empty probe\r\nfn weatherProbeEmpty(p_start: vec3<f32>, rd: vec3<f32>, stepLen: f32, nProbes: i32, coarseMip: f32) -> bool {\r\n  var pos = p_start;\r\n  var emptyCount: i32 = 0;\r\n  for (var i: i32 = 0; i < nProbes; i = i + 1) {\r\n    let wm = wrap2D(weather2D, samp2D, weatherUV_local(pos), 0i, coarseMip);\r\n    if (weatherCoverageGate(wm) >= TUNE.weatherRejectGate) { emptyCount = emptyCount + 1; }\r\n    pos = pos + rd * stepLen;\r\n  }\r\n  return (f32(emptyCount) / f32(nProbes)) > 0.66;\r\n}\r\n\r\n// reprojection helpers\r\nfn fullPixFromCurrent(pix: vec2<i32>) -> vec2<i32> {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n  let xf = floor((vec2<f32>(pix) + 0.5) * (fullRes / res));\r\n  return vec2<i32>(i32(clamp(xf.x, 0.0, fullRes.x - 1.0)), i32(clamp(xf.y, 0.0, fullRes.y - 1.0)));\r\n}\r\nfn store_history_full_res_if_owner(pixCurr: vec2<i32>, layer: i32, color: vec4<f32>) {\r\n  if (reproj.enabled == 0u) {\r\n    textureStore(historyOut, fullPixFromCurrent(pixCurr), layer, color);\r\n    return;\r\n  }\r\n  let ss = i32(max(reproj.subsample, 1u));\r\n  let off = i32(reproj.sampleOffset % u32(ss * ss));\r\n  let sx = off % ss;\r\n  let sy = off / ss;\r\n  let fullPix = fullPixFromCurrent(pixCurr);\r\n  if ((fullPix.x % ss) == sx && (fullPix.y % ss) == sy) {\r\n    textureStore(historyOut, fullPix, layer, color);\r\n  }\r\n}\r\n\r\n// fade near AABB faces\r\nfn insideFaceFade(p: vec3<f32>) -> f32 {\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  let dmin = p - bmin;\r\n  let dmax = bmax - p;\r\n  let edge = min(dmin, dmax);\r\n  let closest = min(min(edge.x, edge.y), edge.z);\r\n  let soft = max(0.75 * wg_finestWorld, 0.25);\r\n  return saturate(closest / soft);\r\n}\r\n\r\n// ---------------------- Main compute\r\n@compute @workgroup_size(8,8,1)\r\nfn computeCloud(@builtin(global_invocation_id) gid_in: vec3<u32>,\r\n                @builtin(local_invocation_id) local_id: vec3<u32>) {\r\n\r\n  // workgroup cache\r\n  if (local_id.x == 0u && local_id.y == 0u) {\r\n    let wd = textureDimensions(weather2D, 0);\r\n    wg_weatherDim = vec2<f32>(f32(wd.x), f32(wd.y));\r\n    let bd = textureDimensions(blueTex, 0);\r\n    wg_blueDim = vec2<f32>(f32(bd.x), f32(bd.y));\r\n    let sd = textureDimensions(shape3D);\r\n    wg_shapeDim = vec3<f32>(f32(sd.x), f32(sd.y), f32(sd.z));\r\n    let dd = textureDimensions(detail3D);\r\n    wg_detailDim = vec3<f32>(f32(dd.x), f32(dd.y), f32(dd.z));\r\n    wg_maxMipW = f32(textureNumLevels(weather2D)) - 1.0;\r\n    wg_maxMipS = f32(textureNumLevels(shape3D)) - 1.0;\r\n    wg_maxMipD = f32(textureNumLevels(detail3D)) - 1.0;\r\n\r\n    let scaleS_local = max(V.worldToUV * B.uvScale, EPS);\r\n    wg_scaleS = scaleS_local;\r\n    wg_scaleD = max(scaleS_local * (128.0 / 32.0), EPS);\r\n    wg_finestWorld = min(1.0 / wg_scaleS, 1.0 / wg_scaleD) * 0.6;\r\n  }\r\n  workgroupBarrier();\r\n\r\n  // pixel and guard\r\n  let pixI = vec2<i32>(i32(gid_in.x), i32(gid_in.y)) + vec2<i32>(frame.originX, frame.originY);\r\n  if (pixI.x < 0 || pixI.y < 0 || pixI.x >= i32(frame.fullWidth) || pixI.y >= i32(frame.fullHeight)) { return; }\r\n\r\n  // camera basis\r\n  let camFwd = normalize(V.fwd);\r\n  var basisRight = normalize(V.right);\r\n  if (length(basisRight) < EPS) { basisRight = vec3<f32>(1.0,0.0,0.0); }\r\n  var basisUp = normalize(V.up);\r\n  if (length(basisUp) < EPS) { basisUp = vec3<f32>(0.0,1.0,0.0); }\r\n\r\n  // ray\r\n  let rayRo = V.camPos;\r\n  let ndc = ((vec2<f32>(pixI) + 0.5) / vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight))) * 2.0 - vec2<f32>(1.0, 1.0);\r\n  let tanY = tan(0.5 * V.fovY);\r\n  let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));\r\n  let rayRd = normalize(basisRight * rd_camera.x + basisUp * rd_camera.y - camFwd * rd_camera.z);\r\n\r\n  // intersect volume\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  var ti = intersectAABB_robust(rayRo, rayRd, bmin, bmax);\r\n  if (ti.x > ti.y || ti.y <= 0.0) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n  var t0 = max(ti.x - TUNE.aabbFaceOffset, 0.0);\r\n  var t1 = ti.y + TUNE.aabbFaceOffset;\r\n  if (t0 >= t1) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n\r\n  // precompute weather LOD\r\n  let aabb = max(bmax - bmin, vec3<f32>(EPS, EPS, EPS));\r\n  let mulW = select(opt._r0, 0.2, opt._r0 == 0.0);\r\n  let worldToTex = mulW * vec2<f32>(wg_weatherDim.x / max(aabb.x, EPS), wg_weatherDim.y / max(aabb.z, EPS));\r\n  let fp = max(worldToTex.x, worldToTex.y);\r\n  var weatherLOD_base = clamp(log2(max(fp, 1.0)) + TUNE.lodBiasWeather * max(perf.lodBiasMul, 0.0001), 0.0, wg_maxMipW);\r\n\r\n  // noise and jitter\r\n  let bnPix  = sampleBlueScreen(pixI);\r\n  let rand0 = fract(bnPix + 0.61803398875 * f32(reproj.frameIndex));\r\n\r\n  // step sizing\r\n  let camF = normalize(-rayRd);\r\n  let cosVF  = max(dot(rayRd, camFwd), EPS);\r\n  let finestWorld = wg_finestWorld;\r\n  let voxelBound  = finestWorld / max(abs(dot(rayRd, basisUp)), 0.15);\r\n\r\n  var baseStep = clamp(V.stepBase, TUNE.minStep, TUNE.maxStep);\r\n  baseStep = min(baseStep, voxelBound);\r\n  baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter, rand0 * 2.0 - 1.0);\r\n\r\n  let entryDepth = dot((rayRo + rayRd * t0) - V.camPos, camFwd);\r\n  let nearFactor = saturate(1.0 - entryDepth / TUNE.nearFluffDist);\r\n  let startShrink = mix_f(1.0, TUNE.nearStepScale, nearFactor);\r\n  baseStep = clamp(baseStep * startShrink, TUNE.minStep, TUNE.maxStep);\r\n\r\n  let farF = saturate(remap(entryDepth, TUNE.farStart, TUNE.farFull, 0.0, 1.0));\r\n  baseStep = clamp(baseStep * mix_f(1.0, TUNE.farStepMult, farF), TUNE.minStep, TUNE.maxStep);\r\n\r\n  var t = clamp(t0 + (rand0 * TUNE.phaseJitter) * baseStep, t0, t1);\r\n\r\n  // lighting setup\r\n  let viewDir  = camF;\r\n  let sunDir   = normalize(L.sunDir);\r\n  let cosVS    = dot(viewDir, sunDir);\r\n\r\n  // sun step length\r\n  let halfSpan = 0.5 * max(B.half.y * 2.0, EPS);\r\n  let sunStepLen = min(halfSpan / f32(max(TUNE.sunSteps, 1)), min(1.0/wg_scaleS, 1.0/wg_scaleD) * 0.6 / max(abs(sunDir.y), 0.15));\r\n\r\n  let weatherLOD = min(wg_maxMipW, weatherLOD_base + TUNE.farLodPush * farF);\r\n\r\n  // accumulators\r\n  var Tr  = 1.0;\r\n  var rgb = vec3<f32>(0.0);\r\n  var Tsun_cached = 1.0;\r\n  var iter: i32 = 0;\r\n  var runMeanL : f32 = 0.0;\r\n  var runN     : f32 = 0.0;\r\n  var prevDens : f32 = 0.0;\r\n  var prevTsun : f32 = 1.0;\r\n\r\n  loop {\r\n    if (iter >= TUNE.maxSteps) { break; }\r\n    if (t >= t1 || Tr < 0.001) { break; }\r\n\r\n    let p = rayRo + rayRd * t;\r\n\r\n    // coarse weather skip\r\n    let subsample = f32(max(reproj.subsample, 1u));\r\n    let coarsePenalty = log2(max(subsample, 1.0));\r\n    var coarseMip = max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty));\r\n    coarseMip = min(wg_maxMipW, coarseMip + farF * 1.0);\r\n    if (weatherProbeEmpty(p, rayRd, baseStep * 2.0, 3, coarseMip)) {\r\n      t = min(t + baseStep * TUNE.emptySkipMult, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // quick weather density proxy\r\n    let wm_coarse = wrap2D(weather2D, samp2D, weatherUV_local(p), 0i, min(weatherLOD, max(0.0, wg_maxMipW)));\r\n    let ph_coarse = computePH(p, wm_coarse);\r\n    let quickCoverage = saturate((wm_coarse.r - 0.35) * 2.5);\r\n    if (quickCoverage < 0.01 && (ph_coarse < 0.02)) {\r\n      t = min(t + baseStep * 2.0, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // LOD from step\r\n    let baseLOD  = clamp(log2(max(baseStep / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);\r\n    let nearDepth = max(cosVF * (t - t0), 0.0);\r\n    let nearSmooth = pow(saturate(1.0 - nearDepth / TUNE.nearFluffDist), 0.85);\r\n    let lodBias  = mix_f(0.0, TUNE.nearLodBias, nearSmooth);\r\n    let lodShapeBase  = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipS);\r\n    let lodDetailBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipD);\r\n\r\n    // weather full\r\n    let wm  = wrap2D(weather2D, samp2D, weatherUV_local(p), 0i, weatherLOD);\r\n    let ph  = computePH(p, wm);\r\n\r\n    // mip hysteresis\r\n    let sL  : f32 = floor(lodShapeBase);\r\n    let sF  : f32 = saturate(lodShapeBase - sL);\r\n    let dL  : f32 = floor(lodDetailBase);\r\n    let dF  : f32 = saturate(lodDetailBase - dL);\r\n\r\n    var s   : vec4<f32>;\r\n    if (sF > TUNE.lodBlendThreshold) {\r\n      let s_lo = sampleShapeRGBA(p, ph, sL);\r\n      let s_hi = sampleShapeRGBA(p, ph, min(sL + 1.0, wg_maxMipS));\r\n      s = mix_v4(s_lo, s_hi, sF);\r\n    } else {\r\n      s = sampleShapeRGBA(p, ph, sL);\r\n    }\r\n    var det : vec3<f32>;\r\n    if (dF > TUNE.lodBlendThreshold) {\r\n      let d_lo = sampleDetailRGB(p, ph, dL);\r\n      let d_hi = sampleDetailRGB(p, ph, min(dL + 1.0, wg_maxMipD));\r\n      det = mix_v3(d_lo, d_hi, dF);\r\n    } else {\r\n      det = sampleDetailRGB(p, ph, dL);\r\n    }\r\n    det = mix_v3(det, det * TUNE.farDetailAtten, farF);\r\n\r\n    // density\r\n    var dens = densityFromSamples(ph, wm, s, det);\r\n    dens *= insideFaceFade(p);\r\n    let boost = mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / TUNE.nearDensityRange));\r\n    dens *= boost;\r\n    let densSmoothed = mix_f(dens, prevDens, saturate(TUNE.raySmoothDens));\r\n\r\n    if (densSmoothed > 0.00008) {\r\n      // cached sun\r\n      if ((iter % TUNE.sunStride) == 0) {\r\n        if (densSmoothed * baseStep > TUNE.sunDensityGate) {\r\n          Tsun_cached = sunTransmittance(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepLen);\r\n        } else {\r\n          Tsun_cached = 1.0;\r\n        }\r\n      }\r\n      let TsunSmoothed = mix_f(Tsun_cached, prevTsun, saturate(TUNE.raySmoothSun));\r\n\r\n      // rim factor from coarse gradient every cached update to save taps\r\n      var rimF = 0.0;\r\n\r\n      let bnScaled = mix_f(bnPix, bnPix * TUNE.bnFarScale, farF);\r\n\r\n      // ---------- improved sun-relative shading and silver/backscatter:\r\n      // compute scattering cos using incident light = -sunDir and viewDir\r\n      let cosSL = dot(viewDir, -sunDir);\r\n\r\n      // compute base lighting with phase computed from cosSL (incident vs view)\r\n      let lightBase = CalculateLight(densSmoothed, TsunSmoothed, cosSL, ph, bnScaled, t - t0, rimF);\r\n\r\n      // approximate coarse surface normal from the shape mip (cheap)\r\n      let shapeNormal = approxShapeNormal(p, ph, max(0.0, lodShapeBase));\r\n\r\n      // surface-facing factor\r\n      let minLit = 0.25;      // lower floor so backfacing surfaces still receive ambient scatter\r\n      let shadeExp = 1.15;    // slightly crisper shadow boundary\r\n      let surfShade = surfaceShadowFactor(shapeNormal, sunDir, minLit, shadeExp);\r\n\r\n      // occlusion mixing: avoid full blacking-out by mixing an ambient floor\r\n      let occlusion = mix_f(0.6, 1.0, saturate(TsunSmoothed));\r\n\r\n      // combine orientation + occlusion with base scatter\r\n      var lightCol = lightBase * surfShade * occlusion;\r\n\r\n      // firefly limiter\r\n      let lNow = luminance(lightCol);\r\n      let meanL = select(lNow, runMeanL / max(runN, 1.0), runN > 0.0);\r\n      let allow = max(meanL * (1.0 + TUNE.fflyRelClamp), TUNE.fflyAbsFloor);\r\n      if (lNow > allow) { lightCol *= allow / max(lNow, 1e-6); }\r\n\r\n      // integrate\r\n      let alpha = 1.0 - exp2(- (C.cloudBeer * densSmoothed * baseStep) * INV_LN2);\r\n      rgb += Tr * lightCol * alpha;\r\n      Tr  *= (1.0 - alpha);\r\n      if (Tr < 0.002) { break; }\r\n\r\n      runMeanL += lNow;\r\n      runN     += 1.0;\r\n    }\r\n\r\n    prevDens = densSmoothed;\r\n    prevTsun = Tsun_cached;\r\n\r\n    t = min(t + baseStep, t1);\r\n    iter += 1;\r\n  }\r\n\r\n  // compose\r\n  var newCol: vec4<f32>;\r\n  if (opt.writeRGB == 1u) {\r\n    newCol = vec4<f32>(rgb, 1.0 - Tr);\r\n  } else {\r\n    let a = 1.0 - Tr;\r\n    if (opt.outputChannel == 0u)      { newCol = vec4<f32>(a, 0.0, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 1u) { newCol = vec4<f32>(0.0, a, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 2u) { newCol = vec4<f32>(0.0, 0.0, a, 1.0); }\r\n    else                              { newCol = vec4<f32>(0.0, 0.0, 0.0, a); }\r\n  }\r\n\r\n  // soft fluff + ambient tint\r\n  {\r\n    let a = newCol.a;\r\n    let fluff = clamp(0.28 * a * mix_f(1.0, 1.4, saturate(1.0 - cosVS)), 0.02, 0.50);\r\n    let sunTint = mix_v3(vec3<f32>(0.92, 0.93, 0.96), C.sunColor, saturate(0.5 + 0.5 * cosVS));\r\n    let ambientFill = sunTint * 0.06;\r\n    newCol = vec4<f32>(mix_v3(newCol.rgb, newCol.rgb + ambientFill * a, fluff), smoothstep(0.0, 1.0, a * 1.03));\r\n  }\r\n\r\n  // TAA with variance clamp\r\n  if (reproj.enabled == 1u) {\r\n    let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n    let uv_full = (vec2<f32>(fullPixFromCurrent(pixI)) + 0.5) / fullRes;\r\n\r\n    var motion = textureSampleLevel(motionTex, sampMotion, uv_full, 0.0).rg;\r\n    if (reproj.motionIsNormalized == 0u) { motion = motion / fullRes; }\r\n    let prevUV = uv_full - motion;\r\n\r\n    if (prevUV.x < 0.0 || prevUV.y < 0.0 || prevUV.x > 1.0 || prevUV.y > 1.0) {\r\n      textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n      store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n    } else {\r\n      let prevCol = textureSampleLevel(historyPrev, sampHistory, prevUV, frame.layerIndex, 0.0);\r\n      if (reproj.frameIndex == 0u || prevCol.a < 1e-5 || reproj.temporalBlend <= 0.0001) {\r\n        textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n      } else {\r\n        let motionPix = motion * fullRes;\r\n        let motionMag = length(motionPix);\r\n        let alphaDiff = abs(prevCol.a - newCol.a);\r\n        var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0);\r\n        var tb = clamp(reproj.temporalBlend * stability, 0.0, 0.985);\r\n        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, farF);\r\n\r\n        if (reproj.depthTest == 1u) {\r\n          let prevDepth = textureSampleLevel(depthPrev, sampDepth, prevUV, 0.0).r;\r\n          tb *= select(1.0 - saturate(reproj.depthTolerance), 0.25, prevDepth < 1e-6 || prevDepth > 1.0);\r\n        }\r\n\r\n        let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));\r\n        let rel     = relBase * mix_f(1.0, 0.80, farF);\r\n        let newClampedRGB = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);\r\n        let newClamped = vec4<f32>(newClampedRGB, newCol.a);\r\n\r\n        let blended = mix_v4(newClamped, prevCol, tb);\r\n        textureStore(outTex, pixI, frame.layerIndex, blended);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, blended);\r\n      }\r\n    }\r\n  } else {\r\n    textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n    store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n  }\r\n}\r\n\r\n// ---------------------- Auxiliary\r\nfn clamp_luma_to(val: vec3<f32>, refc: vec3<f32>, rel: f32, abs_eps: f32) -> vec3<f32> {\r\n  let tL = luminance(refc);\r\n  let vL = max(luminance(val), 1e-6);\r\n  let hi = tL * (1.0 + rel) + abs_eps;\r\n  let lo = max(tL * (1.0 - rel) - abs_eps, 0.0);\r\n  if (vL > hi) { return val * (hi / vL); }\r\n  if (vL < lo) { return val * (max(lo, 1e-6) / vL); }\r\n  return val;\r\n}\r\n";
+  var clouds_default = "const PI  : f32 = 3.141592653589793;\r\nconst EPS : f32 = 1e-6;\r\nconst LN2 : f32 = 0.6931471805599453;\r\nconst INV_LN2 : f32 = 1.4426950408889634;\r\n\r\n// ---------------------- TUNING UNIFORM\r\nstruct CloudTuning {\r\n  // Marching\r\n  maxSteps         : i32,\r\n  _pad0_i          : i32,\r\n  minStep          : f32,\r\n  maxStep          : f32,\r\n\r\n  // Sun marching\r\n  sunSteps         : i32,\r\n  sunStride        : i32,\r\n  sunMinTr         : f32,\r\n  _pad1_f          : f32,\r\n\r\n  // Dither\r\n  phaseJitter      : f32,\r\n  stepJitter       : f32,\r\n  _pad2            : vec2<f32>,\r\n\r\n  // Noise warp\r\n  baseJitterFrac   : f32,\r\n  topJitterFrac    : f32,\r\n  _pad3            : vec2<f32>,\r\n\r\n  // LOD and bounds\r\n  lodBiasWeather   : f32,\r\n  aabbFaceOffset   : f32,\r\n  _pad4            : vec2<f32>,\r\n\r\n  // Weather skipping\r\n  weatherRejectGate: f32,\r\n  weatherRejectMip : f32,\r\n  emptySkipMult    : f32,\r\n  _pad5            : f32,\r\n\r\n  // Near tweaks\r\n  nearFluffDist    : f32,\r\n  nearStepScale    : f32,\r\n  nearLodBias      : f32,\r\n  nearDensityMult  : f32,\r\n  nearDensityRange : f32,\r\n  _pad6            : vec3<f32>,\r\n\r\n  // LOD blending\r\n  lodBlendThreshold: f32,\r\n  _pad7            : vec3<f32>,\r\n\r\n  // Anti-speckle & temporal\r\n  sunDensityGate   : f32,\r\n  fflyRelClamp     : f32,\r\n  fflyAbsFloor     : f32,\r\n  taaRelMin        : f32,\r\n  taaRelMax        : f32,\r\n  taaAbsEps        : f32,\r\n  _pad8            : vec2<f32>,\r\n\r\n  // Far-field calm\r\n  farStart         : f32,\r\n  farFull          : f32,\r\n  farLodPush       : f32,\r\n  farDetailAtten   : f32,\r\n  farStepMult      : f32,\r\n  bnFarScale       : f32,\r\n  farTaaHistoryBoost: f32,\r\n  _pad9            : vec2<f32>,\r\n\r\n  // On-ray smoothing\r\n  raySmoothDens    : f32,\r\n  raySmoothSun     : f32,\r\n  _pad10           : vec2<f32>,\r\n}\r\n@group(0) @binding(10) var<uniform> TUNE : CloudTuning;\r\n\r\n// ---------------------- existing uniforms / resources (preserved layout)\r\nstruct CloudOptions {\r\n  useCustomPos : u32,\r\n  outputChannel: u32,\r\n  writeRGB     : u32,\r\n  _p0          : u32,\r\n  _r0          : f32,\r\n  _r1          : f32,\r\n  _r2          : f32,\r\n  _r3          : f32,\r\n}\r\n@group(0) @binding(0) var<uniform> opt : CloudOptions;\r\n\r\nstruct CloudParams {\r\n  globalCoverage: f32,\r\n  globalDensity : f32,\r\n  cloudAnvilAmount: f32,\r\n  cloudBeer      : f32,\r\n  attenuationClamp: f32,\r\n  inScatterG     : f32,\r\n  silverIntensity: f32,\r\n  silverExponent : f32,\r\n  outScatterG    : f32,\r\n  inVsOut        : f32,\r\n  outScatterAmbientAmt: f32,\r\n  ambientMinimum : f32,\r\n  sunColor       : vec3<f32>,\r\n\r\n  densityDivMin  : f32,\r\n  silverDirectionBias: f32,\r\n  silverHorizonBoost : f32,\r\n  _pad0          : f32,\r\n}\r\n@group(0) @binding(1) var<uniform> C : CloudParams;\r\n\r\nstruct Dummy { _pad: u32, }\r\n@group(0) @binding(2) var<storage, read> unused : Dummy;\r\n\r\nstruct NoiseTransforms {\r\n  shapeOffsetWorld  : vec3<f32>,\r\n  _pad0             : f32,\r\n  detailOffsetWorld : vec3<f32>,\r\n  _pad1             : f32,\r\n  shapeScale        : f32,\r\n  detailScale       : f32,\r\n  _pad2             : vec2<f32>,\r\n}\r\n@group(0) @binding(3) var<uniform> NTransform : NoiseTransforms;\r\n\r\n@group(0) @binding(4) var outTex : texture_storage_2d_array<rgba16float, write>;\r\n@group(0) @binding(5) var<storage, read> posBuf : array<vec4<f32>>;\r\n\r\nstruct Frame {\r\n  fullWidth : u32, fullHeight: u32,\r\n  tileWidth : u32, tileHeight: u32,\r\n  originX   : i32, originY   : i32, originZ: i32,\r\n  fullDepth : u32, tileDepth : u32,\r\n  layerIndex: i32, layers    : u32,\r\n  _pad0     : u32,\r\n  originXf  : f32, originYf : f32, _pad1: f32, _pad2: f32,\r\n}\r\n@group(0) @binding(6) var<uniform> frame : Frame;\r\n\r\n@group(0) @binding(7) var historyOut : texture_storage_2d_array<rgba16float, write>;\r\n\r\nstruct ReprojSettings {\r\n  enabled : u32,\r\n  subsample: u32,\r\n  sampleOffset: u32,\r\n  motionIsNormalized: u32,\r\n  temporalBlend: f32,\r\n  depthTest: u32,\r\n  depthTolerance: f32,\r\n  frameIndex: u32,\r\n  fullWidth: u32,\r\n  fullHeight: u32,\r\n}\r\n@group(0) @binding(8) var<uniform> reproj : ReprojSettings;\r\n\r\nstruct PerfParams {\r\n  lodBiasMul : f32,\r\n  coarseMipBias : f32,\r\n  _pad0: f32,\r\n  _pad1: f32,\r\n}\r\n@group(0) @binding(9) var<uniform> perf : PerfParams;\r\n\r\n@group(1) @binding(0) var weather2D : texture_2d_array<f32>;\r\n@group(1) @binding(1) var samp2D    : sampler;\r\n\r\n@group(1) @binding(2) var shape3D   : texture_3d<f32>;\r\n@group(1) @binding(3) var sampShape : sampler;\r\n\r\n@group(1) @binding(4) var blueTex   : texture_2d_array<f32>;\r\n@group(1) @binding(5) var sampBN    : sampler;\r\n\r\n@group(1) @binding(6) var detail3D  : texture_3d<f32>;\r\n@group(1) @binding(7) var sampDetail: sampler;\r\n\r\nstruct LightInputs { sunDir: vec3<f32>, _0: f32, camPos: vec3<f32>, _1: f32, }\r\n@group(1) @binding(8) var<uniform> L : LightInputs;\r\n\r\nstruct View {\r\n  camPos : vec3<f32>, _v0: f32,\r\n  right  : vec3<f32>, _v1: f32,\r\n  up     : vec3<f32>, _v2: f32,\r\n  fwd    : vec3<f32>, _v3: f32,\r\n  fovY   : f32, aspect: f32, stepBase: f32, stepInc: f32,\r\n  planetRadius: f32, cloudBottom: f32, cloudTop: f32, volumeLayers: f32,\r\n  worldToUV: f32, _a: f32, _b: f32, _c: f32,\r\n}\r\n@group(1) @binding(9) var<uniform> V : View;\r\n\r\nstruct Box {\r\n  center: vec3<f32>, _b0: f32,\r\n  half: vec3<f32>, uvScale: f32,\r\n}\r\n@group(1) @binding(10) var<uniform> B : Box;\r\n\r\n@group(1) @binding(11) var historyPrev : texture_2d_array<f32>;\r\n@group(1) @binding(12) var sampHistory : sampler;\r\n\r\n@group(1) @binding(13) var motionTex : texture_2d<f32>;\r\n@group(1) @binding(14) var sampMotion: sampler;\r\n\r\n@group(1) @binding(15) var depthPrev : texture_2d<f32>;\r\n@group(1) @binding(16) var sampDepth: sampler;\r\n\r\n// Workgroup cache\r\nvar<workgroup> wg_weatherDim : vec2<f32>;\r\nvar<workgroup> wg_blueDim    : vec2<f32>;\r\nvar<workgroup> wg_shapeDim   : vec3<f32>;\r\nvar<workgroup> wg_detailDim  : vec3<f32>;\r\nvar<workgroup> wg_maxMipW    : f32;\r\nvar<workgroup> wg_maxMipS    : f32;\r\nvar<workgroup> wg_maxMipD    : f32;\r\nvar<workgroup> wg_scaleS     : f32;\r\nvar<workgroup> wg_scaleD     : f32;\r\nvar<workgroup> wg_finestWorld: f32;\r\n\r\n// ---------------------- helpers\r\nfn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }\r\nfn mix_f(a: f32, b: f32, t: f32) -> f32 { return a * (1.0 - t) + b * t; }\r\nfn mix_v3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> { return a * (1.0 - t) + b * t; }\r\nfn mix_v4(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> { return a * (1.0 - t) + b * t; }\r\nfn remap(v: f32, a: f32, b: f32, c: f32, d: f32) -> f32 { return c + (v - a) * (d - c) / max(b - a, EPS); }\r\nfn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }\r\n\r\nfn clamp_luma_to(val: vec3<f32>, refc: vec3<f32>, rel: f32, abs_eps: f32) -> vec3<f32> {\r\n  let tL = luminance(refc);\r\n  let vL = max(luminance(val), 1e-6);\r\n  let hi = tL * (1.0 + rel) + abs_eps;\r\n  let lo = max(tL * (1.0 - rel) - abs_eps, 0.0);\r\n  if (vL > hi) { return val * (hi / vL); }\r\n  if (vL < lo) { return val * (max(lo, 1e-6) / vL); }\r\n  return val;\r\n}\r\n\r\n// tiny hash\r\nfn hash13_i(p: vec3<i32>) -> f32 {\r\n  var h: u32 = 374761393u * u32(p.x) + 668265263u * u32(p.y) + 362437u * u32(p.z);\r\n  h = (h ^ (h >> 13u)) * 1274126177u;\r\n  h = h ^ (h >> 16u);\r\n  return f32(h) * 2.3283064365386963e-10;\r\n}\r\nfn smoothCellHash2D(p: vec2<f32>, freq: f32) -> f32 {\r\n  let uv = p * freq;\r\n  let i  = floor(uv);\r\n  let f  = fract(uv);\r\n  let h00 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y),     0));\r\n  let h10 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y),     0));\r\n  let h01 = hash13_i(vec3<i32>(i32(i.x),     i32(i.y) + 1, 0));\r\n  let h11 = hash13_i(vec3<i32>(i32(i.x) + 1, i32(i.y) + 1, 0));\r\n  let u = f * f * (3.0 - 2.0 * f);\r\n  return mix_f(mix_f(h00, h10, u.x), mix_f(h01, h11, u.x), u.y);\r\n}\r\n\r\n// texture wrappers\r\nfn wrap2D(tex: texture_2d_array<f32>, samp: sampler, uv: vec2<f32>, layer_idx: i32, lod: f32) -> vec4<f32> {\r\n  let d = wg_weatherDim;\r\n  let ep = vec2<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0));\r\n  let u  = uv * (vec2<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, layer_idx, lod);\r\n}\r\nfn wrap3D_shape(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_shapeDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x,1.0), 0.5 / max(d.y,1.0), 0.5 / max(d.z,1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\nfn wrap3D_detail(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {\r\n  let d = wg_detailDim;\r\n  let ep = vec3<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0), 0.5 / max(d.z, 1.0));\r\n  let u  = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;\r\n  return textureSampleLevel(tex, samp, u, lod);\r\n}\r\n\r\n// blue noise\r\nfn sampleBlueScreen(pixI: vec2<i32>) -> f32 {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let bnD = wg_blueDim;\r\n  let uvSS = (vec2<f32>(pixI) + 0.5) / res;\r\n  let uvBN = fract(uvSS * res / bnD);\r\n  return textureSampleLevel(blueTex, sampBN, uvBN, 0i, 0.0).r;\r\n}\r\n\r\n// box helpers\r\nfn boxMin() -> vec3<f32> { return B.center - B.half; }\r\nfn boxMax() -> vec3<f32> { return B.center + B.half; }\r\n\r\n// robust AABB intersect\r\nfn intersectAABB_robust(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {\r\n  let rdSafe = select(vec3<f32>(EPS), rd, vec3<bool>(abs(rd) > vec3<f32>(EPS)));\r\n  let inv = vec3<f32>(1.0) / rdSafe;\r\n  let t0 = (bmin - ro) * inv;\r\n  let t1 = (bmax - ro) * inv;\r\n  let tmin3 = min(t0, t1);\r\n  let tmax3 = max(t0, t1);\r\n  let tmin = max(max(tmin3.x, tmin3.y), tmin3.z);\r\n  let tmax = min(min(tmax3.x, tmax3.y), tmax3.z);\r\n  return vec2<f32>(tmin, tmax);\r\n}\r\n\r\n// world warp in XZ\r\nfn worldWarpXZ(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> vec2<f32> {\r\n  let norm = max(boxMaxXZ, 1.0);\r\n  let p = pos_xz / norm;\r\n\r\n  let warpAmp  = TUNE.baseJitterFrac * boxMaxXZ * 0.5;\r\n\r\n  let s1x = smoothCellHash2D(p + vec2<f32>(12.34, 78.9), 4.0);\r\n  let s1y = smoothCellHash2D(p + vec2<f32>(98.7,  6.54), 4.0);\r\n  let s2x = smoothCellHash2D(p * 1.73 + vec2<f32>(3.21, 4.56), 8.28);\r\n  let s2y = smoothCellHash2D(p * 1.91 + vec2<f32>(7.89, 1.23), 8.28);\r\n\r\n  let ox = (s1x - 0.5) + 0.5 * (s2x - 0.5);\r\n  let oz = (s1y - 0.5) + 0.5 * (s2y - 0.5);\r\n\r\n  let ang = smoothCellHash2D(p * 3.0 + vec2<f32>(9.7, 2.3), 16.0) * 2.0 * PI;\r\n  let rad = (smoothCellHash2D(p * 3.0 + vec2<f32>(1.1, 7.7), 16.0) - 0.5) * (TUNE.baseJitterFrac * 0.4 * boxMaxXZ);\r\n  let rot = vec2<f32>(cos(ang), sin(ang)) * rad;\r\n\r\n  let user = vec2<f32>(cos(opt._r3), sin(opt._r3)) * opt._r2 * 0.001;\r\n\r\n  return vec2<f32>(ox, oz) * warpAmp + rot * mix_f(0.3, 1.2, ph) + user;\r\n}\r\n\r\n// shape & detail samplers\r\nfn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {\r\n  let scaleS = max(wg_scaleS, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.shapeOffsetWorld.x,\r\n    pos.y + ph * 7.0 + NTransform.shapeOffsetWorld.y,\r\n    pos.z + w.y + NTransform.shapeOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_shape(shape3D, sampShape, pW * scaleS * NTransform.shapeScale, lod);\r\n}\r\n\r\nfn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {\r\n  let scaleD = max(wg_scaleD, EPS);\r\n  let boxMaxXZ = max(B.half.x, B.half.z);\r\n\r\n  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);\r\n\r\n  let pW = vec3<f32>(\r\n    pos.x + w.x + NTransform.detailOffsetWorld.x,\r\n    pos.y + NTransform.detailOffsetWorld.y,\r\n    pos.z + w.y + NTransform.detailOffsetWorld.z\r\n  );\r\n\r\n  return wrap3D_detail(detail3D, sampDetail, pW * scaleD * NTransform.detailScale, lod).rgb;\r\n}\r\n\r\n// height shape and density\r\nfn heightShape(ph: f32, wBlue: f32) -> f32 {\r\n  let sr_bottom = saturate(remap(ph, 0.0, 0.07, 0.0, 1.0));\r\n  let stop_h = saturate(wBlue + 0.12);\r\n  let sr_top  = saturate(remap(ph, stop_h * 0.2, stop_h, 1.0, 0.0));\r\n  var base = sr_bottom * sr_top;\r\n  let anvilFactor = saturate(C.cloudAnvilAmount) * saturate(C.globalCoverage);\r\n  let expo = saturate(remap(ph, 0.65, 0.95, 1.0, 1.0 - anvilFactor * 0.9));\r\n  return pow(base, expo);\r\n}\r\nfn computePH(p_world: vec3<f32>, wm: vec4<f32>) -> f32 {\r\n  let boxH = max(B.half.y * 2.0, EPS);\r\n  let jBase = (wm.r * 2.0 - 1.0) * (TUNE.baseJitterFrac * boxH);\r\n  let jTop  = (wm.g * 2.0 - 1.0) * (TUNE.topJitterFrac  * boxH);\r\n  let baseY = (B.center.y - B.half.y) + jBase;\r\n  let topY  = (B.center.y + B.half.y) + jTop;\r\n  return saturate((p_world.y - baseY) / max(topY - baseY, EPS));\r\n}\r\nfn detailMod(ph: f32, d: vec3<f32>) -> f32 {\r\n  let fbm = d.r * 0.625 + d.g * 0.25 + d.b * 0.125;\r\n  return 0.35 * exp(-C.globalCoverage * 0.75) * mix_f(fbm, 1.0 - fbm, saturate(ph * 5.0));\r\n}\r\nfn densityHeight(ph: f32) -> f32 {\r\n  var ret = ph;\r\n  ret *= saturate(remap(ph, 0.0, 0.2, 0.0, 1.0));\r\n  ret *= mix_f(1.0, saturate(remap(sqrt(max(ph,0.0)), 0.4, 0.95, 1.0, 0.2)), saturate(C.cloudAnvilAmount));\r\n  ret *= saturate(remap(ph, 0.9, 1.0, 1.0, 0.0));\r\n  ret *= max(C.globalDensity, 0.0);\r\n  return ret;\r\n}\r\nfn weatherCoverageGate(wm: vec4<f32>) -> f32 {\r\n  let wHi = saturate(remap(C.globalCoverage, 0.0, 1.0, 0.0, 1.0) - 0.5) * wm.g * 2.0;\r\n  let WMc = max(wm.r, wHi);\r\n  return 1.0 - C.globalCoverage * saturate(WMc - opt._r1);\r\n}\r\nfn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f32 {\r\n  let fbm_s = s.g * 0.625 + s.b * 0.25 + s.a * 0.125 - 1.0;\r\n  let SNsample = remap(s.r, fbm_s, 1.0, 0.0, 1.0);\r\n\r\n  var SA = saturate(heightShape(ph, 1.0));\r\n  let wVar = fract(wm.r * 1.7 + wm.g * 2.3);\r\n  let bulge = 1.0 + 0.18 * (abs(fract(ph * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;\r\n  SA = saturate(SA * bulge);\r\n\r\n  let gate = weatherCoverageGate(wm);\r\n  let SNnd = saturate(remap(SNsample * SA, gate, 1.0, 0.0, 1.0));\r\n  let DN = detailMod(ph, det);\r\n  let core = saturate(remap(SNnd, DN, 1.0, 0.0, 1.0));\r\n  return max(core * densityHeight(ph), 0.0);\r\n}\r\n\r\n// scattering and lighting\r\nfn HG(cos_angle: f32, g: f32) -> f32 {\r\n  let gg = clamp(g, -0.999, 0.999);\r\n  let g2 = gg * gg;\r\n  let ca = clamp(cos_angle, -1.0, 1.0);\r\n  let denom = pow(max(1.0 + g2 - 2.0 * gg * ca, 1e-6), 1.5);\r\n  return (1.0 - g2) / denom;\r\n}\r\n\r\nfn InOutScatter(cos_angle: f32) -> f32 {\r\n  let ca = clamp(cos_angle, -1.0, 1.0);\r\n\r\n  let in_hg  = HG(ca,  C.inScatterG);\r\n  let out_hg = HG(ca, -C.outScatterG);\r\n\r\n  let absCa = saturate(abs(ca));\r\n  let silverBase = pow(absCa, max(C.silverExponent, 0.0));\r\n\r\n  let horizon = pow(saturate(1.0 - absCa), 2.0);\r\n  let silverH = mix_f(silverBase, max(silverBase, horizon), saturate(C.silverHorizonBoost));\r\n\r\n  let dir01 = saturate(ca * 0.5 + 0.5);\r\n  let bias01 = saturate(C.silverDirectionBias * 0.5 + 0.5);\r\n  let dirPref = mix_f(1.0 - dir01, dir01, bias01) * 2.0;\r\n\r\n  let silver = C.silverIntensity * silverH * dirPref;\r\n\r\n  let in_scatter  = in_hg + silver;\r\n  let out_scatter = out_hg;\r\n\r\n  return mix_f(in_scatter, out_scatter, saturate(C.inVsOut));\r\n}\r\n\r\nfn Attenuation(Tsun: f32, cos_angle: f32) -> f32 {\r\n  let beer = max(C.cloudBeer, EPS);\r\n  let Tprim = clamp(Tsun, 0.0, 1.0);\r\n\r\n  let ca01 = saturate(cos_angle * 0.5 + 0.5);\r\n  let clampScale = mix_f(1.15, 0.70, ca01);\r\n  let clampOD = max(C.attenuationClamp, 0.0) * clampScale;\r\n\r\n  let Tfloor = exp2(- (beer * clampOD) * INV_LN2);\r\n  return max(Tprim, Tfloor);\r\n}\r\n\r\nfn OutScatterAmbient(density: f32, percent_height: f32) -> f32 {\r\n  let d = max(density, 0.0);\r\n  let ph = saturate(percent_height);\r\n\r\n  let h = mix_f(0.35, 1.0, ph);\r\n  let vertical = pow(saturate(remap(ph, 0.0, 0.3, 0.8, 1.0)), 0.8);\r\n\r\n  let depth = C.outScatterAmbientAmt * d * h;\r\n  return exp2(- (depth * vertical) * INV_LN2);\r\n}\r\n\r\nfn surfaceShadowFactor(n: vec3<f32>, sunDir: vec3<f32>, minLit: f32, exponent: f32) -> f32 {\r\n  let s = saturate(dot(n, sunDir) * 0.5 + 0.5);\r\n  return mix_f(minLit, 1.0, pow(s, exponent));\r\n}\r\n\r\nfn CalculateLight(\r\n  density: f32,\r\n  Tsun: f32,\r\n  cos_angle: f32,\r\n  percent_height: f32,\r\n  bluenoise: f32,\r\n  dist_along_ray: f32,\r\n  rimBoost: f32\r\n) -> vec3<f32> {\r\n  let scatter = InOutScatter(cos_angle);\r\n  let attenT  = Attenuation(Tsun, cos_angle);\r\n  let ambT    = OutScatterAmbient(density, percent_height);\r\n\r\n  var atten = attenT * scatter * ambT;\r\n\r\n  let amb = density * C.ambientMinimum * (1.0 - pow(saturate(dist_along_ray / 4000.0), 2.0));\r\n  atten = atten + amb * (1.0 - saturate(atten));\r\n\r\n  atten = atten + bluenoise * 0.0025;\r\n  atten = atten * (1.0 + 0.35 * rimBoost);\r\n\r\n  return atten * C.sunColor;\r\n}\r\n\r\n// ---------- helper: approximate surface normal from coarse shape mip\r\nfn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {\r\n  let probe = max(wg_finestWorld * 1.25, 1e-3);\r\n\r\n  let c  = sampleShapeRGBA(pos, ph, lodShape).r;\r\n  let px = sampleShapeRGBA(pos + vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let nx = sampleShapeRGBA(pos - vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;\r\n  let pz = sampleShapeRGBA(pos + vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let nz = sampleShapeRGBA(pos - vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;\r\n  let py = sampleShapeRGBA(pos + vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;\r\n\r\n  let gy = (py - c) / probe;\r\n  let gx = (px - nx) * 0.5 / probe;\r\n  let gz = (pz - nz) * 0.5 / probe;\r\n\r\n  var n = normalize(vec3<f32>(-gx, -gy, -gz));\r\n  if (length(n) < 1e-4) { return vec3<f32>(0.0, 1.0, 0.0); }\r\n  return n;\r\n}\r\n\r\n// weather UV (precomputed parameters)\r\nfn weatherUV_from(pos_world: vec3<f32>, bmin_xz: vec2<f32>, invAabb_xz: vec2<f32>, mul: f32) -> vec2<f32> {\r\n  return (pos_world.xz - bmin_xz) * invAabb_xz * mul;\r\n}\r\n\r\n// sun march\r\nfn sunSingle(\r\n  p0: vec3<f32>,\r\n  sunDir: vec3<f32>,\r\n  weatherLOD: f32,\r\n  lodShapeBase: f32,\r\n  lodDetailBase: f32,\r\n  stepLen: f32,\r\n  bmin_xz: vec2<f32>,\r\n  invAabb_xz: vec2<f32>,\r\n  mulW: f32\r\n) -> f32 {\r\n  var T = 1.0;\r\n  let parity = f32(i32(reproj.frameIndex % 2u));\r\n  var p = p0 + sunDir * (0.5 * stepLen * parity);\r\n\r\n  for (var i: i32 = 0; i < TUNE.sunSteps; i = i + 1) {\r\n    let uv = weatherUV_from(p, bmin_xz, invAabb_xz, mulW);\r\n    let wm = wrap2D(weather2D, samp2D, uv, 0i, weatherLOD);\r\n\r\n    let ph  = computePH(p, wm);\r\n    let s   = sampleShapeRGBA(p, ph, lodShapeBase  + f32(i) * 0.5);\r\n    let det = sampleDetailRGB(p, ph, lodDetailBase + f32(i) * 0.5);\r\n    let d   = densityFromSamples(ph, wm, s, det);\r\n\r\n    T *= exp2(- (C.cloudBeer * d * stepLen) * INV_LN2);\r\n    if (T < TUNE.sunMinTr) { break; }\r\n    p += sunDir * stepLen;\r\n  }\r\n\r\n  return T;\r\n}\r\n\r\nfn sunTransmittance(\r\n  p: vec3<f32>,\r\n  sunDir: vec3<f32>,\r\n  weatherLOD: f32,\r\n  lodShapeBase: f32,\r\n  lodDetailBase: f32,\r\n  stepLen: f32,\r\n  bmin_xz: vec2<f32>,\r\n  invAabb_xz: vec2<f32>,\r\n  mulW: f32\r\n) -> f32 {\r\n  return 0.5 * (\r\n    sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen, bmin_xz, invAabb_xz, mulW) +\r\n    sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen, bmin_xz, invAabb_xz, mulW)\r\n  );\r\n}\r\n\r\n// quick empty probe\r\nfn weatherProbeEmpty(\r\n  p_start: vec3<f32>,\r\n  rd: vec3<f32>,\r\n  stepLen: f32,\r\n  nProbes: i32,\r\n  coarseMip: f32,\r\n  bmin_xz: vec2<f32>,\r\n  invAabb_xz: vec2<f32>,\r\n  mulW: f32\r\n) -> bool {\r\n  var pos = p_start;\r\n  var emptyCount: i32 = 0;\r\n\r\n  for (var i: i32 = 0; i < nProbes; i = i + 1) {\r\n    let uv = weatherUV_from(pos, bmin_xz, invAabb_xz, mulW);\r\n    let wm = wrap2D(weather2D, samp2D, uv, 0i, coarseMip);\r\n    if (weatherCoverageGate(wm) >= TUNE.weatherRejectGate) { emptyCount = emptyCount + 1; }\r\n    pos = pos + rd * stepLen;\r\n  }\r\n\r\n  return (f32(emptyCount) / f32(nProbes)) > 0.66;\r\n}\r\n\r\n// reprojection helpers\r\nfn fullPixFromCurrent(pix: vec2<i32>) -> vec2<i32> {\r\n  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n  let xf = floor((vec2<f32>(pix) + 0.5) * (fullRes / res));\r\n  return vec2<i32>(\r\n    i32(clamp(xf.x, 0.0, fullRes.x - 1.0)),\r\n    i32(clamp(xf.y, 0.0, fullRes.y - 1.0))\r\n  );\r\n}\r\nfn store_history_full_res_if_owner(pixCurr: vec2<i32>, layer: i32, color: vec4<f32>) {\r\n  if (reproj.enabled == 0u) {\r\n    textureStore(historyOut, fullPixFromCurrent(pixCurr), layer, color);\r\n    return;\r\n  }\r\n\r\n  let ss = i32(max(reproj.subsample, 1u));\r\n  let off = i32(reproj.sampleOffset % u32(ss * ss));\r\n  let sx = off % ss;\r\n  let sy = off / ss;\r\n\r\n  let fullPix = fullPixFromCurrent(pixCurr);\r\n  if ((fullPix.x % ss) == sx && (fullPix.y % ss) == sy) {\r\n    textureStore(historyOut, fullPix, layer, color);\r\n  }\r\n}\r\n\r\n// fade near AABB faces\r\nfn insideFaceFade(p: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> f32 {\r\n  let dmin = p - bmin;\r\n  let dmax = bmax - p;\r\n  let edge = min(dmin, dmax);\r\n  let closest = min(min(edge.x, edge.y), edge.z);\r\n  let soft = max(0.75 * wg_finestWorld, 0.25);\r\n  return saturate(closest / soft);\r\n}\r\n\r\n// ---------------------- Main compute\r\n@compute @workgroup_size(8,8,1)\r\nfn computeCloud(\r\n  @builtin(global_invocation_id) gid_in: vec3<u32>,\r\n  @builtin(local_invocation_id) local_id: vec3<u32>\r\n) {\r\n  // workgroup cache\r\n  if (local_id.x == 0u && local_id.y == 0u) {\r\n    let wd = textureDimensions(weather2D, 0);\r\n    wg_weatherDim = vec2<f32>(f32(wd.x), f32(wd.y));\r\n\r\n    let bd = textureDimensions(blueTex, 0);\r\n    wg_blueDim = vec2<f32>(f32(bd.x), f32(bd.y));\r\n\r\n    let sd = textureDimensions(shape3D);\r\n    wg_shapeDim = vec3<f32>(f32(sd.x), f32(sd.y), f32(sd.z));\r\n\r\n    let dd = textureDimensions(detail3D);\r\n    wg_detailDim = vec3<f32>(f32(dd.x), f32(dd.y), f32(dd.z));\r\n\r\n    wg_maxMipW = f32(textureNumLevels(weather2D)) - 1.0;\r\n    wg_maxMipS = f32(textureNumLevels(shape3D)) - 1.0;\r\n    wg_maxMipD = f32(textureNumLevels(detail3D)) - 1.0;\r\n\r\n    let scaleS_local = max(V.worldToUV * B.uvScale, EPS);\r\n    wg_scaleS = scaleS_local;\r\n    wg_scaleD = max(scaleS_local * (128.0 / 32.0), EPS);\r\n    wg_finestWorld = min(1.0 / wg_scaleS, 1.0 / wg_scaleD) * 0.6;\r\n  }\r\n  workgroupBarrier();\r\n\r\n  // pixel and guard\r\n  let pixI = vec2<i32>(i32(gid_in.x), i32(gid_in.y)) + vec2<i32>(frame.originX, frame.originY);\r\n  if (pixI.x < 0 || pixI.y < 0 || pixI.x >= i32(frame.fullWidth) || pixI.y >= i32(frame.fullHeight)) {\r\n    return;\r\n  }\r\n\r\n  let fullResF = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));\r\n  let uvPix = (vec2<f32>(pixI) + 0.5) / fullResF;\r\n\r\n  // camera basis\r\n  let camFwd = normalize(V.fwd);\r\n\r\n  var basisRight = normalize(V.right);\r\n  if (length(basisRight) < EPS) { basisRight = vec3<f32>(1.0, 0.0, 0.0); }\r\n\r\n  var basisUp = normalize(V.up);\r\n  if (length(basisUp) < EPS) { basisUp = vec3<f32>(0.0, 1.0, 0.0); }\r\n\r\n  // ray\r\n  var rayRo = V.camPos;\r\n  if (opt.useCustomPos == 1u) {\r\n    let idx = u32(pixI.x) + u32(pixI.y) * frame.fullWidth;\r\n    rayRo = posBuf[idx].xyz;\r\n  }\r\n\r\n  let ndc = uvPix * 2.0 - vec2<f32>(1.0, 1.0);\r\n  let tanY = tan(0.5 * V.fovY);\r\n\r\n  let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));\r\n  let rayRd = normalize(basisRight * rd_camera.x + basisUp * rd_camera.y - camFwd * rd_camera.z);\r\n\r\n  // intersect volume\r\n  let bmin = boxMin();\r\n  let bmax = boxMax();\r\n  let ti = intersectAABB_robust(rayRo, rayRd, bmin, bmax);\r\n\r\n  if (ti.x > ti.y || ti.y <= 0.0) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n\r\n  var t0 = max(ti.x - TUNE.aabbFaceOffset, 0.0);\r\n  var t1 = ti.y + TUNE.aabbFaceOffset;\r\n  if (t0 >= t1) {\r\n    textureStore(outTex, pixI, frame.layerIndex, vec4<f32>(0.0));\r\n    if (reproj.enabled == 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, vec4<f32>(0.0)); }\r\n    return;\r\n  }\r\n\r\n  // precompute weather mapping and LOD\r\n  let aabb = max(bmax - bmin, vec3<f32>(EPS, EPS, EPS));\r\n  let bmin_xz = bmin.xz;\r\n  let invAabb_xz = vec2<f32>(1.0, 1.0) / max(aabb.xz, vec2<f32>(EPS));\r\n\r\n  let mulW = select(opt._r0, 0.2, opt._r0 == 0.0);\r\n\r\n  let worldToTex = mulW * vec2<f32>(\r\n    wg_weatherDim.x / max(aabb.x, EPS),\r\n    wg_weatherDim.y / max(aabb.z, EPS)\r\n  );\r\n  let fp = max(worldToTex.x, worldToTex.y);\r\n  let weatherLOD_base = clamp(\r\n    log2(max(fp, 1.0)) + TUNE.lodBiasWeather * max(perf.lodBiasMul, 0.0001),\r\n    0.0,\r\n    wg_maxMipW\r\n  );\r\n\r\n  // noise and jitter\r\n  let bnPix  = sampleBlueScreen(pixI);\r\n  let rand0  = fract(bnPix + 0.61803398875 * f32(reproj.frameIndex));\r\n\r\n  // step sizing\r\n  let viewDir = normalize(-rayRd);\r\n  let cosVF   = max(dot(rayRd, camFwd), EPS);\r\n\r\n  let voxelBound = wg_finestWorld / max(abs(dot(rayRd, basisUp)), 0.15);\r\n\r\n  var baseStep = clamp(V.stepBase, TUNE.minStep, TUNE.maxStep);\r\n  baseStep = min(baseStep, voxelBound);\r\n  baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter, rand0 * 2.0 - 1.0);\r\n\r\n  let entryDepth = dot((rayRo + rayRd * t0) - V.camPos, camFwd);\r\n  let nearFactor = saturate(1.0 - entryDepth / TUNE.nearFluffDist);\r\n  baseStep = clamp(baseStep * mix_f(1.0, TUNE.nearStepScale, nearFactor), TUNE.minStep, TUNE.maxStep);\r\n\r\n  let farF = saturate(remap(entryDepth, TUNE.farStart, TUNE.farFull, 0.0, 1.0));\r\n  baseStep = clamp(baseStep * mix_f(1.0, TUNE.farStepMult, farF), TUNE.minStep, TUNE.maxStep);\r\n\r\n  var t = clamp(t0 + (rand0 * TUNE.phaseJitter) * baseStep, t0, t1);\r\n\r\n  // lighting setup\r\n  let sunDir = normalize(L.sunDir);\r\n  let cosVS  = dot(viewDir, sunDir);\r\n\r\n  // sun step length\r\n  let halfSpan = 0.5 * max(B.half.y * 2.0, EPS);\r\n  let sunStepLen = min(\r\n    halfSpan / f32(max(TUNE.sunSteps, 1)),\r\n    min(1.0 / wg_scaleS, 1.0 / wg_scaleD) * 0.6 / max(abs(sunDir.y), 0.15)\r\n  );\r\n\r\n  let weatherLOD = min(wg_maxMipW, weatherLOD_base + TUNE.farLodPush * farF);\r\n\r\n  // accumulators\r\n  var Tr  = 1.0;\r\n  var rgb = vec3<f32>(0.0);\r\n\r\n  var Tsun_cached = 1.0;\r\n  var prevDens : f32 = 0.0;\r\n  var prevTsun : f32 = 1.0;\r\n\r\n  var shapeN_cached = vec3<f32>(0.0, 1.0, 0.0);\r\n  var rim_cached : f32 = 0.0;\r\n\r\n  var runMeanL : f32 = 0.0;\r\n  var runN     : f32 = 0.0;\r\n\r\n  var iter: i32 = 0;\r\n\r\n  loop {\r\n    if (iter >= TUNE.maxSteps) { break; }\r\n    if (t >= t1 || Tr < 0.001) { break; }\r\n\r\n    let p = rayRo + rayRd * t;\r\n\r\n    // coarse weather skip\r\n    let subsample = f32(max(reproj.subsample, 1u));\r\n    let coarsePenalty = log2(max(subsample, 1.0));\r\n    var coarseMip = max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty));\r\n    coarseMip = min(wg_maxMipW, coarseMip + farF * 1.0);\r\n\r\n    if (weatherProbeEmpty(p, rayRd, baseStep * 2.0, 3, coarseMip, bmin_xz, invAabb_xz, mulW)) {\r\n      t = min(t + baseStep * TUNE.emptySkipMult, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // quick weather density proxy\r\n    let uv_coarse = weatherUV_from(p, bmin_xz, invAabb_xz, mulW);\r\n    let wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, min(weatherLOD, max(0.0, wg_maxMipW)));\r\n    let ph_coarse = computePH(p, wm_coarse);\r\n    let quickCoverage = saturate((wm_coarse.r - 0.35) * 2.5);\r\n    if (quickCoverage < 0.01 && (ph_coarse < 0.02)) {\r\n      t = min(t + baseStep * 2.0, t1);\r\n      iter += 1;\r\n      continue;\r\n    }\r\n\r\n    // LOD from step\r\n    let baseLOD  = clamp(log2(max(baseStep / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);\r\n    let nearDepth = max(cosVF * (t - t0), 0.0);\r\n    let nearSmooth = pow(saturate(1.0 - nearDepth / TUNE.nearFluffDist), 0.85);\r\n\r\n    let lodBias  = mix_f(0.0, TUNE.nearLodBias, nearSmooth);\r\n    let lodShapeBase  = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipS);\r\n    let lodDetailBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipD);\r\n\r\n    // weather full\r\n    let uv = weatherUV_from(p, bmin_xz, invAabb_xz, mulW);\r\n    let wm = wrap2D(weather2D, samp2D, uv, 0i, weatherLOD);\r\n    let ph = computePH(p, wm);\r\n\r\n    // mip hysteresis\r\n    let sL : f32 = floor(lodShapeBase);\r\n    let sF : f32 = saturate(lodShapeBase - sL);\r\n    let dL : f32 = floor(lodDetailBase);\r\n    let dF : f32 = saturate(lodDetailBase - dL);\r\n\r\n    var s : vec4<f32>;\r\n    if (sF > TUNE.lodBlendThreshold) {\r\n      let s_lo = sampleShapeRGBA(p, ph, sL);\r\n      let s_hi = sampleShapeRGBA(p, ph, min(sL + 1.0, wg_maxMipS));\r\n      s = mix_v4(s_lo, s_hi, sF);\r\n    } else {\r\n      s = sampleShapeRGBA(p, ph, sL);\r\n    }\r\n\r\n    var det : vec3<f32>;\r\n    if (dF > TUNE.lodBlendThreshold) {\r\n      let d_lo = sampleDetailRGB(p, ph, dL);\r\n      let d_hi = sampleDetailRGB(p, ph, min(dL + 1.0, wg_maxMipD));\r\n      det = mix_v3(d_lo, d_hi, dF);\r\n    } else {\r\n      det = sampleDetailRGB(p, ph, dL);\r\n    }\r\n    det = mix_v3(det, det * TUNE.farDetailAtten, farF);\r\n\r\n    // density\r\n    var dens = densityFromSamples(ph, wm, s, det);\r\n    dens *= insideFaceFade(p, bmin, bmax);\r\n    dens *= mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / TUNE.nearDensityRange));\r\n\r\n    let densSmoothed = mix_f(dens, prevDens, saturate(TUNE.raySmoothDens));\r\n\r\n    if (densSmoothed > 0.00008) {\r\n      if ((iter % TUNE.sunStride) == 0) {\r\n        if (densSmoothed * baseStep > TUNE.sunDensityGate) {\r\n          Tsun_cached = sunTransmittance(\r\n            p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepLen,\r\n            bmin_xz, invAabb_xz, mulW\r\n          );\r\n        } else {\r\n          Tsun_cached = 1.0;\r\n        }\r\n\r\n        shapeN_cached = approxShapeNormal(p, ph, max(0.0, lodShapeBase));\r\n        rim_cached = pow(1.0 - saturate(dot(shapeN_cached, viewDir)), 2.0);\r\n      }\r\n\r\n      let TsunSmoothed = mix_f(Tsun_cached, prevTsun, saturate(TUNE.raySmoothSun));\r\n      let bnScaled = mix_f(bnPix, bnPix * TUNE.bnFarScale, farF);\r\n\r\n      let lightBase = CalculateLight(densSmoothed, TsunSmoothed, cosVS, ph, bnScaled, t - t0, rim_cached);\r\n\r\n      let surfShade = surfaceShadowFactor(shapeN_cached, sunDir, 0.25, 1.15);\r\n      let occlusion = mix_f(0.6, 1.0, saturate(TsunSmoothed));\r\n\r\n      var lightCol = lightBase * surfShade * occlusion;\r\n\r\n      let lNow = luminance(lightCol);\r\n      let meanL = select(lNow, runMeanL / max(runN, 1.0), runN > 0.0);\r\n      let allow = max(meanL * (1.0 + TUNE.fflyRelClamp), TUNE.fflyAbsFloor);\r\n      if (lNow > allow) { lightCol *= allow / max(lNow, 1e-6); }\r\n\r\n      let beer = max(C.cloudBeer, EPS);\r\n      let absorb = exp2(- (beer * densSmoothed * baseStep) * INV_LN2);\r\n      let alpha = 1.0 - absorb;\r\n\r\n      rgb += Tr * lightCol * alpha;\r\n      Tr  *= absorb;\r\n\r\n      runMeanL += lNow;\r\n      runN     += 1.0;\r\n\r\n      if (Tr < 0.002) { break; }\r\n    }\r\n\r\n    prevDens = densSmoothed;\r\n    prevTsun = Tsun_cached;\r\n\r\n    t = min(t + baseStep, t1);\r\n    iter += 1;\r\n  }\r\n\r\n  // compose\r\n  var newCol: vec4<f32>;\r\n  if (opt.writeRGB == 1u) {\r\n    newCol = vec4<f32>(rgb, 1.0 - Tr);\r\n  } else {\r\n    let a = 1.0 - Tr;\r\n    if (opt.outputChannel == 0u)      { newCol = vec4<f32>(a, 0.0, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 1u) { newCol = vec4<f32>(0.0, a, 0.0, 1.0); }\r\n    else if (opt.outputChannel == 2u) { newCol = vec4<f32>(0.0, 0.0, a, 1.0); }\r\n    else                              { newCol = vec4<f32>(0.0, 0.0, 0.0, a); }\r\n  }\r\n\r\n  // soft fluff + ambient tint\r\n  {\r\n    let a = newCol.a;\r\n    let fluff = clamp(0.28 * a * mix_f(1.0, 1.4, saturate(1.0 - cosVS)), 0.02, 0.50);\r\n    let sunTint = mix_v3(vec3<f32>(0.92, 0.93, 0.96), C.sunColor, saturate(0.5 + 0.5 * cosVS));\r\n    let ambientFill = sunTint * 0.06;\r\n    newCol = vec4<f32>(mix_v3(newCol.rgb, newCol.rgb + ambientFill * a, fluff), smoothstep(0.0, 1.0, a * 1.03));\r\n  }\r\n\r\n  // TAA with variance clamp\r\n  if (reproj.enabled == 1u) {\r\n    let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));\r\n    let uv_full = (vec2<f32>(fullPixFromCurrent(pixI)) + 0.5) / fullRes;\r\n\r\n    var motion = textureSampleLevel(motionTex, sampMotion, uv_full, 0.0).rg;\r\n    if (reproj.motionIsNormalized == 0u) { motion = motion / fullRes; }\r\n    let prevUV = uv_full - motion;\r\n\r\n    if (prevUV.x < 0.0 || prevUV.y < 0.0 || prevUV.x > 1.0 || prevUV.y > 1.0) {\r\n      textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n      store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n    } else {\r\n      let prevCol = textureSampleLevel(historyPrev, sampHistory, prevUV, frame.layerIndex, 0.0);\r\n      if (reproj.frameIndex == 0u || prevCol.a < 1e-5 || reproj.temporalBlend <= 0.0001) {\r\n        textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n      } else {\r\n        let motionPix = motion * fullRes;\r\n        let motionMag = length(motionPix);\r\n        let alphaDiff = abs(prevCol.a - newCol.a);\r\n\r\n        var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0);\r\n        var tb = clamp(reproj.temporalBlend * stability, 0.0, 0.985);\r\n        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, farF);\r\n\r\n        if (reproj.depthTest == 1u) {\r\n          let prevDepth = textureSampleLevel(depthPrev, sampDepth, prevUV, 0.0).r;\r\n          tb *= select(1.0 - saturate(reproj.depthTolerance), 0.25, prevDepth < 1e-6 || prevDepth > 1.0);\r\n        }\r\n\r\n        let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));\r\n        let rel     = relBase * mix_f(1.0, 0.80, farF);\r\n\r\n        let newClampedRGB = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);\r\n        let newClamped = vec4<f32>(newClampedRGB, newCol.a);\r\n\r\n        let blended = mix_v4(newClamped, prevCol, tb);\r\n        textureStore(outTex, pixI, frame.layerIndex, blended);\r\n        store_history_full_res_if_owner(pixI, frame.layerIndex, blended);\r\n      }\r\n    }\r\n  } else {\r\n    textureStore(outTex, pixI, frame.layerIndex, newCol);\r\n    store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);\r\n  }\r\n}\r\n";
 
   // tools/clouds/cloudsRender.wgsl
   var cloudsRender_default = `// cloudsRender.wgsl \u2014 preview: world-space camera + directional sun,\r
@@ -5879,9 +7384,23 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._initBuffers();
       this.setOptions();
       this.setParams();
-      this.setTileScaling({ shapeOffsetWorld: [0, 0], detailOffsetWorld: [0, 0] });
+      this.setTileScaling({
+        shapeOffsetWorld: [0, 0],
+        detailOffsetWorld: [0, 0]
+      });
       this.setSamplingOpts({ useManualWrap: 0, weatherLayer: 0 });
-      this.setReprojSettings({ enabled: 0, subsample: 1, sampleOffset: 0, motionIsNormalized: 0, temporalBlend: 0, depthTest: 0, depthTolerance: 0, frameIndex: 0, fullWidth: 0, fullHeight: 0 });
+      this.setReprojSettings({
+        enabled: 0,
+        subsample: 1,
+        sampleOffset: 0,
+        motionIsNormalized: 0,
+        temporalBlend: 0,
+        depthTest: 0,
+        depthTolerance: 0,
+        frameIndex: 0,
+        fullWidth: 0,
+        fullHeight: 0
+      });
       this.setPerfParams();
       this.setSunByAngles();
       this.setBox();
@@ -5923,104 +7442,334 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.module = d.createShaderModule({ code: clouds_default });
       this.bgl0 = d.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 0,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // options
-          { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // params
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // dummy storage
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // offsets
-          { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: this.outFormat, viewDimension: "2d-array" } },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: this.outFormat,
+              viewDimension: "2d-array"
+            }
+          },
           // out
-          { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "read-only-storage" }
+          },
           // pos
-          { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // frame
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: this.outFormat, viewDimension: "2d-array" } },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.COMPUTE,
+            storageTexture: {
+              access: "write-only",
+              format: this.outFormat,
+              viewDimension: "2d-array"
+            }
+          },
           // historyOut or dummy
-          { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 8,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // reproj
-          { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 9,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // perf
-          { binding: 10, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }
+          {
+            binding: 10,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          }
           // tuning
         ]
       });
       this.bgl1 = d.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 0,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // weather
-          { binding: 1, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" }
+          },
           // shape3D
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // blue
-          { binding: 5, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 6, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "3d" }
+          },
           // detail3D
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 8,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // light
-          { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 9,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // view
-          { binding: 10, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          {
+            binding: 10,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: { type: "uniform" }
+          },
           // box
-          { binding: 11, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+          {
+            binding: 11,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d-array" }
+          },
           // historyPrev
-          { binding: 12, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 13, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d" } },
+          {
+            binding: 12,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 13,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d" }
+          },
           // motion
-          { binding: 14, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
-          { binding: 15, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d" } },
+          {
+            binding: 14,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 15,
+            visibility: GPUShaderStage.COMPUTE,
+            texture: { sampleType: "float", viewDimension: "2d" }
+          },
           // depthPrev
-          { binding: 16, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } }
+          {
+            binding: 16,
+            visibility: GPUShaderStage.COMPUTE,
+            sampler: { type: "filtering" }
+          }
         ]
       });
       this.pipeline = d.createComputePipeline({
-        layout: d.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1] }),
+        layout: d.createPipelineLayout({
+          bindGroupLayouts: [this.bgl0, this.bgl1]
+        }),
         compute: { module: this.module, entryPoint: "computeCloud" }
       });
-      this._samp2D = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat" });
-      this._sampShape = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat", addressModeW: "repeat" });
-      this._sampDetail = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat", addressModeW: "repeat" });
-      this._sampBN = d.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "repeat" });
-      const tex2Desc = { size: [1, 1, 1], format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST };
+      this._samp2D = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat"
+      });
+      this._sampShape = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat",
+        addressModeW: "repeat"
+      });
+      this._sampDetail = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat",
+        addressModeW: "repeat"
+      });
+      this._sampBN = d.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat"
+      });
+      const tex2Desc = {
+        size: [1, 1, 1],
+        format: "r8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+      };
       this._dummy2DMotion = d.createTexture(tex2Desc);
-      this._dummy2DMotionView = this._dummy2DMotion.createView({ dimension: "2d" });
+      this._dummy2DMotionView = this._dummy2DMotion.createView({
+        dimension: "2d"
+      });
       this._dummy2DDepth = d.createTexture(tex2Desc);
       this._dummy2DDepthView = this._dummy2DDepth.createView({ dimension: "2d" });
-      this.queue.writeTexture({ texture: this._dummy2DMotion }, new Uint8Array([128]), { bytesPerRow: 1 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
-      this.queue.writeTexture({ texture: this._dummy2DDepth }, new Uint8Array([128]), { bytesPerRow: 1 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
-      const histDesc = { size: [1, 1, 1], format: this.outFormat, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING };
+      this.queue.writeTexture(
+        { texture: this._dummy2DMotion },
+        new Uint8Array([128]),
+        { bytesPerRow: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      this.queue.writeTexture(
+        { texture: this._dummy2DDepth },
+        new Uint8Array([128]),
+        { bytesPerRow: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      const histDesc = {
+        size: [1, 1, 1],
+        format: this.outFormat,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING
+      };
       this._dummyHistoryPrev = d.createTexture(histDesc);
-      this._dummyHistoryPrevView = this._dummyHistoryPrev.createView({ dimension: "2d-array", arrayLayerCount: 1 });
+      this._dummyHistoryPrevView = this._dummyHistoryPrev.createView({
+        dimension: "2d-array",
+        arrayLayerCount: 1
+      });
       this._dummyHistoryOut = d.createTexture(histDesc);
-      this._dummyHistoryOutView = this._dummyHistoryOut.createView({ dimension: "2d-array", arrayLayerCount: 1 });
-      this.queue.writeTexture({ texture: this._dummyHistoryPrev }, new Float32Array([0, 0, 0, 0]), { bytesPerRow: 4 * 4 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
-      this.queue.writeTexture({ texture: this._dummyHistoryOut }, new Float32Array([0, 0, 0, 0]), { bytesPerRow: 4 * 4 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
+      this._dummyHistoryOutView = this._dummyHistoryOut.createView({
+        dimension: "2d-array",
+        arrayLayerCount: 1
+      });
+      this.queue.writeTexture(
+        { texture: this._dummyHistoryPrev },
+        new Float32Array([0, 0, 0, 0]),
+        { bytesPerRow: 4 * 4 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      this.queue.writeTexture(
+        { texture: this._dummyHistoryOut },
+        new Float32Array([0, 0, 0, 0]),
+        { bytesPerRow: 4 * 4 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
     }
     _initBuffers() {
       const d = this.device;
-      this.optionsBuffer = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-      this.paramsBuffer = d.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-      this.offsetsBuffer = d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.dummyBuffer = d.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-      this.posBuffer = d.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-      this.frameBuffer = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.lightBuffer = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-      this.viewBuffer = d.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.boxBuffer = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.samplingBuffer = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.reprojBuffer = d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.perfBuffer = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.tuningBuffer = d.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.renderParams = d.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      this.optionsBuffer = d.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      });
+      this.paramsBuffer = d.createBuffer({
+        size: 96,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      });
+      this.offsetsBuffer = d.createBuffer({
+        size: 48,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.dummyBuffer = d.createBuffer({
+        size: 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      });
+      this.posBuffer = d.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      });
+      this.frameBuffer = d.createBuffer({
+        size: 64,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.lightBuffer = d.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      });
+      this.viewBuffer = d.createBuffer({
+        size: 128,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.boxBuffer = d.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.samplingBuffer = d.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.reprojBuffer = d.createBuffer({
+        size: 48,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.perfBuffer = d.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.tuningBuffer = d.createBuffer({
+        size: 256,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      this.renderParams = d.createBuffer({
+        size: 128,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
       this.queue.writeBuffer(this.dummyBuffer, 0, new Uint8Array(4));
     }
     // -------------------- UBO setters --------------------
-    setOptions({ useCustomPos = false, outputChannel = 0, writeRGB = true, debugForceFog = 0, temporalSeed = 0, windDisp = 0, windAngleRad = 0 } = {}) {
+    setOptions({
+      useCustomPos = false,
+      outputChannel = 0,
+      writeRGB = true,
+      debugForceFog = 0,
+      temporalSeed = 0,
+      windDisp = 0,
+      windAngleRad = 0
+    } = {}) {
       const dv = this._dvOptions;
       dv.setUint32(0, useCustomPos ? 1 : 0, true);
       dv.setUint32(4, outputChannel >>> 0, true);
@@ -6123,15 +7872,32 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._writeIfChanged("sampling", this.samplingBuffer, this._abSampling);
     }
     setWeatherLayer(layer = 0) {
-      this.setSamplingOpts({ useManualWrap: this._dvSampling.getUint32(0, true), weatherLayer: layer });
+      this.setSamplingOpts({
+        useManualWrap: this._dvSampling.getUint32(0, true),
+        weatherLayer: layer
+      });
     }
     setManualWrap(on = true) {
-      this.setSamplingOpts({ useManualWrap: on ? 1 : 0, weatherLayer: this.getWeatherLayer() });
+      this.setSamplingOpts({
+        useManualWrap: on ? 1 : 0,
+        weatherLayer: this.getWeatherLayer()
+      });
     }
     getWeatherLayer() {
       return this._dvSampling.getUint32(4, true) || 0;
     }
-    setReprojSettings({ enabled = 0, subsample = 1, sampleOffset = 0, motionIsNormalized = 0, temporalBlend = 0, depthTest = 0, depthTolerance = 0, frameIndex = 0, fullWidth = 0, fullHeight = 0 } = {}) {
+    setReprojSettings({
+      enabled = 0,
+      subsample = 1,
+      sampleOffset = 0,
+      motionIsNormalized = 0,
+      temporalBlend = 0,
+      depthTest = 0,
+      depthTolerance = 0,
+      frameIndex = 0,
+      fullWidth = 0,
+      fullHeight = 0
+    } = {}) {
       const dv = this._dvReproj;
       dv.setUint32(0, enabled >>> 0, true);
       dv.setUint32(4, subsample >>> 0, true);
@@ -6182,9 +7948,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._writeIfChanged("light", this.lightBuffer, this._abLight);
       this._bg1Dirty = true;
     }
-    setSunByAngles({ azimuthDeg = 45, elevationDeg = 35, camPos = [0, 0, 2] } = {}) {
+    setSunByAngles({
+      azimuthDeg = 45,
+      elevationDeg = 35,
+      camPos = [0, 0, 2]
+    } = {}) {
       const az = azimuthDeg * Math.PI / 180, el = elevationDeg * Math.PI / 180;
-      const sd = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
+      const sd = [
+        Math.cos(el) * Math.sin(az),
+        Math.sin(el),
+        Math.cos(el) * Math.cos(az)
+      ];
       this.setLight({ sunDir: sd, camPos });
     }
     setBox({ center = [0, 0, 0], half = [1, 0.6, 1], uvScale = 1.5 } = {}) {
@@ -6200,7 +7974,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._writeIfChanged("box", this.boxBuffer, this._abBox);
       this._bg1Dirty = true;
     }
-    setFrame({ fullWidth = 0, fullHeight = 0, tileWidth = 0, tileHeight = 0, originX = 0, originY = 0, originZ = 0, fullDepth = 1, tileDepth = 1, layerIndex = 0, layers = 1, originXf = 0, originYf = 0 } = {}) {
+    setFrame({
+      fullWidth = 0,
+      fullHeight = 0,
+      tileWidth = 0,
+      tileHeight = 0,
+      originX = 0,
+      originY = 0,
+      originZ = 0,
+      fullDepth = 1,
+      tileDepth = 1,
+      layerIndex = 0,
+      layers = 1,
+      originXf = 0,
+      originYf = 0
+    } = {}) {
       const dv = this._dvFrame;
       dv.setUint32(0, fullWidth >>> 0, true);
       dv.setUint32(4, fullHeight >>> 0, true);
@@ -6230,7 +8018,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._dvFrame.setInt32(36, i | 0, true);
       this._writeIfChanged("frame", this.frameBuffer, this._abFrame);
     }
-    setViewFromCamera({ camPos = [0, 0, 3], right = [1, 0, 0], up = [0, 1, 0], fwd = [0, 0, 1], fovYDeg = 60, aspect = 1, planetRadius = 0, cloudBottom = -1, cloudTop = 1, worldToUV = 1, stepBase = 0.02, stepInc = 0.04, volumeLayers = 1 } = {}) {
+    setViewFromCamera({
+      camPos = [0, 0, 3],
+      right = [1, 0, 0],
+      up = [0, 1, 0],
+      fwd = [0, 0, 1],
+      fovYDeg = 60,
+      aspect = 1,
+      planetRadius = 0,
+      cloudBottom = -1,
+      cloudTop = 1,
+      worldToUV = 1,
+      stepBase = 0.02,
+      stepInc = 0.04,
+      volumeLayers = 1
+    } = {}) {
       const dv = this._dvView;
       const norm2 = (v) => {
         const L = Math.hypot(v[0], v[1], v[2]) || 1;
@@ -6238,8 +8040,16 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       };
       const f = norm2(fwd);
       const u0 = norm2(up);
-      const r = norm2([u0[1] * f[2] - u0[2] * f[1], u0[2] * f[0] - u0[0] * f[2], u0[0] * f[1] - u0[1] * f[0]]);
-      const u = [f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]];
+      const r = norm2([
+        u0[1] * f[2] - u0[2] * f[1],
+        u0[2] * f[0] - u0[0] * f[2],
+        u0[0] * f[1] - u0[1] * f[0]
+      ]);
+      const u = [
+        f[1] * r[2] - f[2] * r[1],
+        f[2] * r[0] - f[0] * r[2],
+        f[0] * r[1] - f[1] * r[0]
+      ];
       const floats = [
         camPos[0],
         camPos[1],
@@ -6274,7 +8084,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         0,
         0
       ];
-      for (let i = 0; i < floats.length; i++) dv.setFloat32(i * 4, floats[i], true);
+      for (let i = 0; i < floats.length; i++)
+        dv.setFloat32(i * 4, floats[i], true);
       this._writeIfChanged("view", this.viewBuffer, this._abView);
       this._bg1Dirty = true;
     }
@@ -6446,43 +8257,65 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._bg0Dirty = true;
     }
     // -------------------- input maps and history hooks --------------------
-    setInputMaps({ weatherView, shape3DView, detail3DView, blueTex, blueView, motionView: motionView2, depthPrevView, historyPrevView: historyPrevView2 } = {}) {
-      let changed = false;
+    setInputMaps({
+      weatherView,
+      shape3DView,
+      detail3DView,
+      blueTex,
+      blueView,
+      motionView: motionView2,
+      depthPrevView,
+      historyPrevView: historyPrevView2,
+      historyOutView: historyOutView2
+    } = {}) {
+      let bg1Changed = false;
+      let bg0Changed = false;
       if (typeof weatherView !== "undefined" && weatherView !== this.weatherView) {
         this.weatherView = weatherView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof shape3DView !== "undefined" && shape3DView !== this.shape3DView) {
         this.shape3DView = shape3DView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof detail3DView !== "undefined" && detail3DView !== this.detail3DView) {
         this.detail3DView = detail3DView;
-        changed = true;
-      }
-      if (typeof blueView !== "undefined" && blueView !== this.blueView) {
-        this.blueView = blueView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof blueTex !== "undefined" && blueTex !== this.blueTex) {
-        this.blueTex = blueTex;
+        if (this._ownsBlue && this.blueTex && this.blueTex !== blueTex) {
+          try {
+            this.blueTex.destroy();
+          } catch (_) {
+          }
+        }
+        this.blueTex = blueTex || null;
         this._ownsBlue = false;
-        this.blueView = null;
-        changed = true;
+        if (typeof blueView === "undefined") this.blueView = null;
+        bg1Changed = true;
+      }
+      if (typeof blueView !== "undefined" && blueView !== this.blueView) {
+        this.blueView = blueView || null;
+        bg1Changed = true;
       }
       if (typeof motionView2 !== "undefined" && motionView2 !== this.motionView) {
         this.motionView = motionView2;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof depthPrevView !== "undefined" && depthPrevView !== this.depthPrevView) {
         this.depthPrevView = depthPrevView;
-        changed = true;
+        bg1Changed = true;
       }
       if (typeof historyPrevView2 !== "undefined" && historyPrevView2 !== this.historyPrevView) {
         this.historyPrevView = historyPrevView2;
-        changed = true;
+        bg1Changed = true;
       }
-      if (changed) this._bg1Dirty = true;
+      if (typeof historyOutView2 !== "undefined" && historyOutView2 !== this.historyOutView) {
+        this.historyOutView = historyOutView2;
+        bg0Changed = true;
+      }
+      if (bg1Changed) this._bg1Dirty = true;
+      if (bg0Changed) this._bg0Dirty = true;
     }
     setHistoryPrevView(view) {
       if (view !== this.historyPrevView) {
@@ -6497,7 +8330,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     // -------------------- outputs --------------------
     createOutputTexture(width, height, layers = 1, format = "rgba16float") {
       if (this.outTexture && this.width === width && this.height === height && this.layers === layers && this.outFormat === format) {
-        this.setFrame({ fullWidth: width, fullHeight: height, tileWidth: width, tileHeight: height, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+        this.setFrame({
+          fullWidth: width,
+          fullHeight: height,
+          tileWidth: width,
+          tileHeight: height,
+          originX: 0,
+          originY: 0,
+          layerIndex: 0,
+          originXf: 0,
+          originYf: 0
+        });
         this._reprojFullW = width;
         this._reprojFullH = height;
         const curFW = this._dvReproj.getUint32(32, true) || 0, curFH = this._dvReproj.getUint32(36, true) || 0;
@@ -6509,10 +8352,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         }
         return this.outView;
       }
-      if (this.outTexture) try {
-        this.outTexture.destroy();
-      } catch (_) {
-      }
+      if (this.outTexture)
+        try {
+          this.outTexture.destroy();
+        } catch (_) {
+        }
       this.outTexture = null;
       this.outView = null;
       this.outFormat = format;
@@ -6521,7 +8365,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         format: this.outFormat,
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
       });
-      this.outView = this.outTexture.createView({ dimension: "2d-array", arrayLayerCount: layers });
+      this.outView = this.outTexture.createView({
+        dimension: "2d-array",
+        arrayLayerCount: layers
+      });
       this.width = width;
       this.height = height;
       this.layers = layers;
@@ -6530,7 +8377,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
       this._dvReproj.setUint32(36, this._reprojFullH >>> 0, true);
       this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
-      this.setFrame({ fullWidth: width, fullHeight: height, tileWidth: width, tileHeight: height, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+      this.setFrame({
+        fullWidth: width,
+        fullHeight: height,
+        tileWidth: width,
+        tileHeight: height,
+        originX: 0,
+        originY: 0,
+        layerIndex: 0,
+        originXf: 0,
+        originYf: 0
+      });
       this._bg0Dirty = true;
       this._bg1Dirty = true;
       this._renderBgCache = /* @__PURE__ */ new WeakMap();
@@ -6547,7 +8404,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this.width = width;
         this.height = height;
         this.layers = layers;
-        this.setFrame({ fullWidth: width, fullHeight: height, tileWidth: width, tileHeight: height, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+        this.setFrame({
+          fullWidth: width,
+          fullHeight: height,
+          tileWidth: width,
+          tileHeight: height,
+          originX: 0,
+          originY: 0,
+          layerIndex: 0,
+          originXf: 0,
+          originYf: 0
+        });
         this._reprojFullW = width;
         this._reprojFullH = height;
         this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
@@ -6604,16 +8471,32 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     _ensureBlueView() {
       if (this.blueView) return this.blueView;
       if (!this.blueTex) {
-        const tex = this.device.createTexture({ size: [1, 1, 1], format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-        this.queue.writeTexture({ texture: tex }, new Uint8Array([128]), { bytesPerRow: 1 }, { width: 1, height: 1, depthOrArrayLayers: 1 });
+        const tex = this.device.createTexture({
+          size: [1, 1, 1],
+          format: "r8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+        });
+        this.queue.writeTexture(
+          { texture: tex },
+          new Uint8Array([128]),
+          { bytesPerRow: 1 },
+          { width: 1, height: 1, depthOrArrayLayers: 1 }
+        );
         this.blueTex = tex;
         this._ownsBlue = true;
       }
-      this.blueView = this.blueTex.createView({ dimension: "2d-array", baseArrayLayer: 0, arrayLayerCount: 1 });
+      this.blueView = this.blueTex.createView({
+        dimension: "2d-array",
+        baseArrayLayer: 0,
+        arrayLayerCount: 1
+      });
       return this.blueView;
     }
     _createBg0ForKey() {
-      if (!this.outView) throw new Error("No output view: call createOutputTexture or setOutputView first");
+      if (!this.outView)
+        throw new Error(
+          "No output view: call createOutputTexture or setOutputView first"
+        );
       const canUseExplicitHistoryOut = this.historyOutView && this._getResId(this.historyOutView) !== this._getResId(this.outView);
       const historyOutForBind = canUseExplicitHistoryOut ? this.historyOutView : this._dummyHistoryOutView;
       return this.device.createBindGroup({
@@ -6634,9 +8517,18 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       });
     }
     _createBg1ForKey() {
-      if (!this.weatherView) throw new Error("Missing weatherView (texture_2d_array view). Call setInputMaps().");
-      if (!this.shape3DView) throw new Error("Missing shape3DView (texture_3d view). Call setInputMaps().");
-      if (!this.detail3DView) throw new Error("Missing detail3DView (texture_3d view). Call setInputMaps().");
+      if (!this.weatherView)
+        throw new Error(
+          "Missing weatherView (texture_2d_array view). Call setInputMaps()."
+        );
+      if (!this.shape3DView)
+        throw new Error(
+          "Missing shape3DView (texture_3d view). Call setInputMaps()."
+        );
+      if (!this.detail3DView)
+        throw new Error(
+          "Missing detail3DView (texture_3d view). Call setInputMaps()."
+        );
       const blueView = this.blueView || this._ensureBlueView();
       const motionView2 = this.motionView || this._dummy2DMotionView;
       const depthView2 = this.depthPrevView || this._dummy2DDepthView;
@@ -6666,7 +8558,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     _makeBindGroups() {
       const k0 = this._buildBg0Key();
-      if (!this._bg0Dirty && this._bg0Cache.has(k0)) this._currentBg0 = this._bg0Cache.get(k0);
+      if (!this._bg0Dirty && this._bg0Cache.has(k0))
+        this._currentBg0 = this._bg0Cache.get(k0);
       else {
         if (this._bg0Cache.has(k0) && this._bg0Dirty) {
           const idx = this._bg0Keys.indexOf(k0);
@@ -6684,7 +8577,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         }
       }
       const k1 = this._buildBg1Key();
-      if (!this._bg1Dirty && this._bg1Cache.has(k1)) this._currentBg1 = this._bg1Cache.get(k1);
+      if (!this._bg1Dirty && this._bg1Cache.has(k1))
+        this._currentBg1 = this._bg1Cache.get(k1);
       else {
         if (this._bg1Cache.has(k1) && this._bg1Dirty) {
           const idx = this._bg1Keys.indexOf(k1);
@@ -6755,7 +8649,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     // -------------------- dispatch helpers (coarse integrated) --------------------
     async dispatchRect({ x, y, w, h, wait = false, coarseFactor = 1 } = {}) {
-      if (!this.outView) throw new Error("dispatchRect: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error("dispatchRect: createOutputTexture/setOutputView first.");
       const cf = Math.max(1, coarseFactor | 0);
       if (cf < 2) return await this.dispatchRectNoCoarse({ x, y, w, h, wait });
       const cW = Math.max(1, Math.ceil((w || this.width) / cf));
@@ -6770,7 +8665,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.width = cW;
       this.height = cH;
       this.outFormat = this._coarseTexture?.format || savedFormat;
-      this.setFrame({ fullWidth: cW, fullHeight: cH, tileWidth: cW, tileHeight: cH, originX: baseX, originY: baseY, layerIndex: this._dvFrame.getInt32(36, true) | 0, originXf: 0, originYf: 0 });
+      this.setFrame({
+        fullWidth: cW,
+        fullHeight: cH,
+        tileWidth: cW,
+        tileHeight: cH,
+        originX: baseX,
+        originY: baseY,
+        layerIndex: this._dvFrame.getInt32(36, true) | 0,
+        originXf: 0,
+        originYf: 0
+      });
       const curFW = this._dvReproj.getUint32(32, true) || 0, curFH = this._dvReproj.getUint32(36, true) || 0;
       if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
         this._dvReproj.setUint32(32, savedFullW >>> 0, true);
@@ -6784,20 +8689,53 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.width = savedWidth;
       this.height = savedHeight;
       this.outFormat = savedFormat;
-      this.setFrame({ fullWidth: savedWidth, fullHeight: savedHeight, tileWidth: w || savedWidth, tileHeight: h || savedHeight, originX: x || 0, originY: y || 0, layerIndex: this._dvFrame.getInt32(36, true) | 0, originXf: 0, originYf: 0 });
-      await this._upsampleCoarseToOut({ srcX: baseX, srcY: baseY, srcW: cW, srcH: cH, dstX: x || 0, dstY: y || 0, dstW: w || this.width, dstH: h || this.height, wait });
+      this.setFrame({
+        fullWidth: savedWidth,
+        fullHeight: savedHeight,
+        tileWidth: w || savedWidth,
+        tileHeight: h || savedHeight,
+        originX: x || 0,
+        originY: y || 0,
+        layerIndex: this._dvFrame.getInt32(36, true) | 0,
+        originXf: 0,
+        originYf: 0
+      });
+      await this._upsampleCoarseToOut({
+        srcX: baseX,
+        srcY: baseY,
+        srcW: cW,
+        srcH: cH,
+        dstX: x || 0,
+        dstY: y || 0,
+        dstW: w || this.width,
+        dstH: h || this.height,
+        wait
+      });
       this._lastHadWork = true;
       return this.outView;
     }
     async dispatchRectNoCoarse({ x, y, w, h, wait = false } = {}) {
-      if (!this.outView) throw new Error("dispatchRectNoCoarse: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error(
+          "dispatchRectNoCoarse: createOutputTexture/setOutputView first."
+        );
       const baseX = Math.max(0, Math.floor(x || 0)), baseY = Math.max(0, Math.floor(y || 0));
       const tw = Math.max(0, Math.floor(w || 0)), th = Math.max(0, Math.floor(h || 0));
       if (tw === 0 || th === 0) {
         this._lastHadWork = false;
         return this.outView;
       }
-      this.setFrame({ fullWidth: this.width, fullHeight: this.height, tileWidth: tw, tileHeight: th, originX: baseX, originY: baseY, layerIndex: this._dvFrame.getInt32(36, true) | 0, originXf: 0, originYf: 0 });
+      this.setFrame({
+        fullWidth: this.width,
+        fullHeight: this.height,
+        tileWidth: tw,
+        tileHeight: th,
+        originX: baseX,
+        originY: baseY,
+        layerIndex: this._dvFrame.getInt32(36, true) | 0,
+        originXf: 0,
+        originYf: 0
+      });
       if (!this._reprojFullW) {
         this._dvReproj.setUint32(32, this.width >>> 0, true);
         this._dvReproj.setUint32(36, this.height >>> 0, true);
@@ -6809,23 +8747,66 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return this.outView;
     }
     async dispatchForBox({ padPx = 8, wait = false, coarseFactor = 1 } = {}) {
-      if (!this.outView) throw new Error("dispatchForBox: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error(
+          "dispatchForBox: createOutputTexture/setOutputView first."
+        );
       const view = {
-        camPos: [this._dvView.getFloat32(0, true), this._dvView.getFloat32(4, true), this._dvView.getFloat32(8, true)],
-        right: [this._dvView.getFloat32(16, true), this._dvView.getFloat32(20, true), this._dvView.getFloat32(24, true)],
-        up: [this._dvView.getFloat32(32, true), this._dvView.getFloat32(36, true), this._dvView.getFloat32(40, true)],
-        fwd: [this._dvView.getFloat32(48, true), this._dvView.getFloat32(52, true), this._dvView.getFloat32(56, true)],
+        camPos: [
+          this._dvView.getFloat32(0, true),
+          this._dvView.getFloat32(4, true),
+          this._dvView.getFloat32(8, true)
+        ],
+        right: [
+          this._dvView.getFloat32(16, true),
+          this._dvView.getFloat32(20, true),
+          this._dvView.getFloat32(24, true)
+        ],
+        up: [
+          this._dvView.getFloat32(32, true),
+          this._dvView.getFloat32(36, true),
+          this._dvView.getFloat32(40, true)
+        ],
+        fwd: [
+          this._dvView.getFloat32(48, true),
+          this._dvView.getFloat32(52, true),
+          this._dvView.getFloat32(56, true)
+        ],
         fovYRad: this._dvView.getFloat32(64, true),
         aspect: this._dvView.getFloat32(68, true)
       };
-      const box = { center: [this._dvBox.getFloat32(0, true), this._dvBox.getFloat32(4, true), this._dvBox.getFloat32(8, true)], half: [this._dvBox.getFloat32(16, true), this._dvBox.getFloat32(20, true), this._dvBox.getFloat32(24, true)] };
-      const rect = this._computeAABBScreenRect(view, box, this.width, this.height, padPx);
+      const box = {
+        center: [
+          this._dvBox.getFloat32(0, true),
+          this._dvBox.getFloat32(4, true),
+          this._dvBox.getFloat32(8, true)
+        ],
+        half: [
+          this._dvBox.getFloat32(16, true),
+          this._dvBox.getFloat32(20, true),
+          this._dvBox.getFloat32(24, true)
+        ]
+      };
+      const rect = this._computeAABBScreenRect(
+        view,
+        box,
+        this.width,
+        this.height,
+        padPx
+      );
       if (!rect.visible) {
         this._lastHadWork = false;
         return null;
       }
       const cf = Math.max(1, coarseFactor | 0);
-      return await this.dispatchRect({ x: rect.x, y: rect.y, w: rect.w, h: rect.h, wait, coarseFactor: cf });
+      return await this.dispatchRect({
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+        wait,
+        coarseFactor: cf
+      });
     }
     async dispatch({ wait = false, coarseFactor = 1 } = {}) {
       const cf = Math.max(1, coarseFactor | 0);
@@ -6840,7 +8821,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this.width = cW;
         this.height = cH;
         this.outFormat = this._coarseTexture?.format || savedFormat;
-        this.setFrame({ fullWidth: cW, fullHeight: cH, tileWidth: cW, tileHeight: cH, originX: 0, originY: 0, layerIndex: 0, originXf: 0, originYf: 0 });
+        this.setFrame({
+          fullWidth: cW,
+          fullHeight: cH,
+          tileWidth: cW,
+          tileHeight: cH,
+          originX: 0,
+          originY: 0,
+          layerIndex: 0,
+          originXf: 0,
+          originYf: 0
+        });
         const curFW = this._dvReproj.getUint32(32, true) || 0, curFH = this._dvReproj.getUint32(36, true) || 0;
         if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
           this._dvReproj.setUint32(32, savedFullW >>> 0, true);
@@ -6854,7 +8845,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this.width = savedWidth;
         this.height = savedHeight;
         this.outFormat = savedFormat;
-        await this._upsampleCoarseToOut({ srcX: 0, srcY: 0, srcW: cW, srcH: cH, dstX: 0, dstY: 0, dstW: this.width, dstH: this.height, wait });
+        await this._upsampleCoarseToOut({
+          srcX: 0,
+          srcY: 0,
+          srcW: cW,
+          srcH: cH,
+          dstX: 0,
+          dstY: 0,
+          dstW: this.width,
+          dstH: this.height,
+          wait
+        });
         this._lastHadWork = true;
         return this.outView;
       }
@@ -6863,7 +8864,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return this.outView;
     }
     async dispatchAllLayers({ wait = false } = {}) {
-      if (!this.outView) throw new Error("Nothing to dispatch: createOutputTexture/setOutputView first.");
+      if (!this.outView)
+        throw new Error(
+          "Nothing to dispatch: createOutputTexture/setOutputView first."
+        );
       this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
       this._writeIfChanged("params", this.paramsBuffer, this._abParams);
       this._writeIfChanged("offsets", this.offsetsBuffer, this._abOffsets);
@@ -6882,7 +8886,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         pass.end();
       }
       this.queue.submit([enc.finish()]);
-      if (wait && typeof this.queue.onSubmittedWorkDone === "function") await this.queue.onSubmittedWorkDone();
+      if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+        await this.queue.onSubmittedWorkDone();
       this._lastHadWork = true;
       return this.outView;
     }
@@ -6903,7 +8908,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
       pass.end();
       this.queue.submit([enc.finish()]);
-      if (wait && typeof this.queue.onSubmittedWorkDone === "function") await this.queue.onSubmittedWorkDone();
+      if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+        await this.queue.onSubmittedWorkDone();
     }
     // -------------------- render / preview blit --------------------
     _ensureRenderPipeline(format = "bgra8unorm") {
@@ -6911,9 +8917,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const mod = this.device.createShaderModule({ code: cloudsRender_default });
       const bgl = this.device.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
-          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "2d-array" } },
-          { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { viewDimension: "2d-array" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
         ]
       });
       const pipe = this.device.createRenderPipeline({
@@ -6922,7 +8940,12 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] },
         primitive: { topology: "triangle-list" }
       });
-      const samp = this.device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+      const samp = this.device.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge"
+      });
       this._render = { pipe, bgl, samp, format };
       return this._render;
     }
@@ -6934,7 +8957,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       }
       const key = this._getResId(this.outView) + "|" + this._getResId(samp) + "|" + this._getResId(this.renderParams);
       if (map.has(key)) return map.get(key);
-      const bg = this.device.createBindGroup({ layout: bgl, entries: [{ binding: 0, resource: samp }, { binding: 1, resource: this.outView }, { binding: 2, resource: { buffer: this.renderParams, offset: 0, size: 128 } }] });
+      const bg = this.device.createBindGroup({
+        layout: bgl,
+        entries: [
+          { binding: 0, resource: samp },
+          { binding: 1, resource: this.outView },
+          {
+            binding: 2,
+            resource: { buffer: this.renderParams, offset: 0, size: 128 }
+          }
+        ]
+      });
       map.set(key, bg);
       if (map.size > 8) {
         const firstKey = map.keys().next().value;
@@ -6952,7 +8985,9 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       if (map.has(key)) return map.get(key);
       const bg = this._getOrCreateRenderBindGroup(canvas, bgl, samp);
       const format = this._render.format;
-      const rbe = this.device.createRenderBundleEncoder({ colorFormats: [format] });
+      const rbe = this.device.createRenderBundleEncoder({
+        colorFormats: [format]
+      });
       rbe.setPipeline(pipe);
       rbe.setBindGroup(0, bg);
       rbe.draw(6, 1, 0, 0);
@@ -6971,7 +9006,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const sunBloom = opts.sunBloom ?? 0;
       const skyColor = opts.skyColor ?? [0.55, 0.7, 0.95];
       const rad = (d) => d * Math.PI / 180;
-      const cross2 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const cross2 = (a, b) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0]
+      ];
       const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
       const len = (a) => Math.hypot(a[0], a[1], a[2]) || 1;
       const norm2 = (a) => {
@@ -7044,39 +9083,87 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this._canvasStates.set(canvas, state);
       }
       if (state.lastSize[0] !== displayW || state.lastSize[1] !== displayH || ctxRec.format !== format) {
-        ctx.configure({ device: this.device, format, alphaMode: "opaque", size: [displayW, displayH] });
+        ctx.configure({
+          device: this.device,
+          format,
+          alphaMode: "opaque",
+          size: [displayW, displayH]
+        });
         state.lastSize = [displayW, displayH];
         state.hasContent = false;
         ctxRec.format = format;
       }
       return { ctx, state };
     }
-    renderToCanvasWorld(canvas, { layerIndex = 0, cam, sunDir = [0, 1, 0], exposure = 1.2, skyColor = [0.55, 0.7, 0.95], sunBloom = 0 } = {}) {
-      if (!this.outView) throw new Error("Nothing to render: run dispatch() first or setOutputView().");
+    renderToCanvasWorld(canvas, {
+      layerIndex = 0,
+      cam,
+      sunDir = [0, 1, 0],
+      exposure = 1.2,
+      skyColor = [0.55, 0.7, 0.95],
+      sunBloom = 0
+    } = {}) {
+      if (!this.outView)
+        throw new Error(
+          "Nothing to render: run dispatch() first or setOutputView()."
+        );
       const { pipe, bgl, samp, format } = this._ensureRenderPipeline("bgra8unorm");
       const { ctx, state } = this._ensureCanvasConfigured(canvas, format);
       if (!this._lastHadWork || !this.outView) {
         const enc2 = this.device.createCommandEncoder();
         const tex2 = ctx.getCurrentTexture();
-        const pass2 = enc2.beginRenderPass({ colorAttachments: [{ view: tex2.createView(), loadOp: "clear", clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+        const pass2 = enc2.beginRenderPass({
+          colorAttachments: [
+            {
+              view: tex2.createView(),
+              loadOp: "clear",
+              clearValue: {
+                r: skyColor[0],
+                g: skyColor[1],
+                b: skyColor[2],
+                a: 1
+              },
+              storeOp: "store"
+            }
+          ]
+        });
         pass2.end();
         this.queue.submit([enc2.finish()]);
         state.hasContent = true;
         return;
       }
-      this._writeRenderUniforms({ layerIndex, cam, sunDir, exposure, skyColor, sunBloom });
+      this._writeRenderUniforms({
+        layerIndex,
+        cam,
+        sunDir,
+        exposure,
+        skyColor,
+        sunBloom
+      });
       const bundle = this._getOrCreateRenderBundle(canvas, pipe, bgl, samp);
       const enc = this.device.createCommandEncoder();
       const tex = ctx.getCurrentTexture();
       const loadOp = state.hasContent ? "load" : "clear";
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), loadOp, clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+      const pass = enc.beginRenderPass({
+        colorAttachments: [
+          {
+            view: tex.createView(),
+            loadOp,
+            clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 },
+            storeOp: "store"
+          }
+        ]
+      });
       pass.executeBundles([bundle]);
       pass.end();
       this.queue.submit([enc.finish()]);
       state.hasContent = true;
     }
     renderToCanvas(canvas, opts = {}) {
-      if (!this.outView) throw new Error("Nothing to render: run dispatch() first or setOutputView().");
+      if (!this.outView)
+        throw new Error(
+          "Nothing to render: run dispatch() first or setOutputView()."
+        );
       const { pipe, bgl, samp, format } = this._ensureRenderPipeline("bgra8unorm");
       if (opts.displayWidth || opts.displayHeight) {
         const w = opts.displayWidth || Math.round(opts.displayHeight * this.width / this.height);
@@ -7090,7 +9177,21 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       if (!this._lastHadWork || !this.outView) {
         const enc2 = this.device.createCommandEncoder();
         const tex2 = ctx.getCurrentTexture();
-        const pass2 = enc2.beginRenderPass({ colorAttachments: [{ view: tex2.createView(), loadOp: "clear", clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+        const pass2 = enc2.beginRenderPass({
+          colorAttachments: [
+            {
+              view: tex2.createView(),
+              loadOp: "clear",
+              clearValue: {
+                r: skyColor[0],
+                g: skyColor[1],
+                b: skyColor[2],
+                a: 1
+              },
+              storeOp: "store"
+            }
+          ]
+        });
         pass2.end();
         this.queue.submit([enc2.finish()]);
         state.hasContent = true;
@@ -7101,7 +9202,16 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const enc = this.device.createCommandEncoder();
       const tex = ctx.getCurrentTexture();
       const loadOp = state.hasContent ? "load" : "clear";
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: tex.createView(), loadOp, clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 }, storeOp: "store" }] });
+      const pass = enc.beginRenderPass({
+        colorAttachments: [
+          {
+            view: tex.createView(),
+            loadOp,
+            clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 },
+            storeOp: "store"
+          }
+        ]
+      });
       pass.executeBundles([bundle]);
       pass.end();
       this.queue.submit([enc.finish()]);
@@ -7109,7 +9219,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     // -------------------- coarse helpers --------------------
     _ensureCoarseTexture(w, h, layers = 1) {
-      if (this._coarseTexture && this._coarseW === w && this._coarseH === h && this._coarseLayers === layers) return;
+      if (this._coarseTexture && this._coarseW === w && this._coarseH === h && this._coarseLayers === layers)
+        return;
       try {
         if (this._coarseTexture?.destroy) this._coarseTexture.destroy();
       } catch (_) {
@@ -7117,14 +9228,22 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this._coarseW = w;
       this._coarseH = h;
       this._coarseLayers = layers;
-      this._coarseTexture = this.device.createTexture({ size: [w, h, layers], format: this.outFormat, usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
-      this._coarseView = this._coarseTexture.createView({ dimension: "2d-array", arrayLayerCount: layers });
+      this._coarseTexture = this.device.createTexture({
+        size: [w, h, layers],
+        format: this.outFormat,
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+      });
+      this._coarseView = this._coarseTexture.createView({
+        dimension: "2d-array",
+        arrayLayerCount: layers
+      });
       this._bg0Dirty = true;
       this._bg1Dirty = true;
     }
     // upsample pipeline for coarse->full
     _ensureUpsamplePipeline(format = this.outFormat) {
-      if (this._upsample && this._upsample.format === format) return this._upsample;
+      if (this._upsample && this._upsample.format === format)
+        return this._upsample;
       const blitWGSL = `
       struct RenderParams { layerIndex : u32, _pad:u32, _pad2:u32, _pad3:u32, };
       @group(0) @binding(0) var samp : sampler;
@@ -7145,13 +9264,35 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       const mod = this.device.createShaderModule({ code: blitWGSL });
       const bgl = this.device.createBindGroupLayout({
         entries: [
-          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
-          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "2d-array" } },
-          { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { viewDimension: "2d-array" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
         ]
       });
-      const pipe = this.device.createRenderPipeline({ layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }), vertex: { module: mod, entryPoint: "vs_main" }, fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] }, primitive: { topology: "triangle-list" } });
-      const samp = this.device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+      const pipe = this.device.createRenderPipeline({
+        layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+        vertex: { module: mod, entryPoint: "vs_main" },
+        fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] },
+        primitive: { topology: "triangle-list" }
+      });
+      const samp = this.device.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge"
+      });
       this._upsample = { pipe, bgl, samp, format };
       return this._upsample;
     }
@@ -7164,7 +9305,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         entries: [
           { binding: 0, resource: up.samp },
           { binding: 1, resource: coarseView },
-          { binding: 2, resource: { buffer: this.renderParams, offset: 0, size: 128 } }
+          {
+            binding: 2,
+            resource: { buffer: this.renderParams, offset: 0, size: 128 }
+          }
         ]
       });
       this._upsampleBgCache.set(key, bg);
@@ -7174,7 +9318,17 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       }
       return bg;
     }
-    async _upsampleCoarseToOut({ srcX = 0, srcY = 0, srcW, srcH, dstX = 0, dstY = 0, dstW, dstH, wait = false } = {}) {
+    async _upsampleCoarseToOut({
+      srcX = 0,
+      srcY = 0,
+      srcW,
+      srcH,
+      dstX = 0,
+      dstY = 0,
+      dstW,
+      dstH,
+      wait = false
+    } = {}) {
       if (!this._coarseView || !this.outTexture) return;
       const up = this._ensureUpsamplePipeline(this.outFormat);
       const enc = this.device.createCommandEncoder();
@@ -7182,25 +9336,49 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         this._dvRender.setUint32(0, layer >>> 0, true);
         this._writeIfChanged("render", this.renderParams, this._abRender);
         const bg = this._getOrCreateUpsampleBindGroup(this._coarseView, layer);
-        const colorView = this.outTexture.createView({ baseArrayLayer: layer, arrayLayerCount: 1 });
-        const pass = enc.beginRenderPass({ colorAttachments: [{ view: colorView, loadOp: "load", storeOp: "store" }] });
+        const colorView = this.outTexture.createView({
+          baseArrayLayer: layer,
+          arrayLayerCount: 1
+        });
+        const pass = enc.beginRenderPass({
+          colorAttachments: [
+            { view: colorView, loadOp: "load", storeOp: "store" }
+          ]
+        });
         pass.setPipeline(up.pipe);
         pass.setBindGroup(0, bg);
         pass.draw(6, 1, 0, 0);
         pass.end();
       }
       this.queue.submit([enc.finish()]);
-      if (wait && typeof this.queue.onSubmittedWorkDone === "function") await this.queue.onSubmittedWorkDone();
+      if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+        await this.queue.onSubmittedWorkDone();
     }
     // -------------------- cleanup --------------------
     destroy() {
-      const toDestroy = ["optionsBuffer", "paramsBuffer", "offsetsBuffer", "dummyBuffer", "posBuffer", "frameBuffer", "lightBuffer", "viewBuffer", "boxBuffer", "samplingBuffer", "reprojBuffer", "perfBuffer", "renderParams", "tuningBuffer"];
-      for (const k of toDestroy) try {
-        if (this[k]?.destroy) this[k].destroy();
-      } catch (_) {
-      } finally {
-        this[k] = null;
-      }
+      const toDestroy = [
+        "optionsBuffer",
+        "paramsBuffer",
+        "offsetsBuffer",
+        "dummyBuffer",
+        "posBuffer",
+        "frameBuffer",
+        "lightBuffer",
+        "viewBuffer",
+        "boxBuffer",
+        "samplingBuffer",
+        "reprojBuffer",
+        "perfBuffer",
+        "renderParams",
+        "tuningBuffer"
+      ];
+      for (const k of toDestroy)
+        try {
+          if (this[k]?.destroy) this[k].destroy();
+        } catch (_) {
+        } finally {
+          this[k] = null;
+        }
       try {
         if (this.outTexture?.destroy) this.outTexture.destroy();
       } catch (_) {
@@ -7213,10 +9391,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       this.outView = null;
       this._coarseTexture = null;
       this._coarseView = null;
-      if (this._ownsBlue && this.blueTex) try {
-        this.blueTex.destroy();
-      } catch (_) {
-      }
+      if (this._ownsBlue && this.blueTex)
+        try {
+          this.blueTex.destroy();
+        } catch (_) {
+        }
       this.blueTex = null;
       this.blueView = null;
       this._ownsBlue = false;
@@ -7341,8 +9520,26 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (!nb) return;
     const s = Math.max(0, Math.min(SHAPE_SIZE - 1, currentSlice | 0));
     const d = Math.max(0, Math.min(DETAIL_SIZE - 1, Math.floor(s * DETAIL_SIZE / SHAPE_SIZE)));
-    if (dbg.shapeR && noise.shape128.view3D) nb.renderTexture3DSliceToCanvas(noise.shape128.view3D, dbg.shapeR, { depth: SHAPE_SIZE, slice: s, channel: 1, clear: true, width: DBG_W, height: DBG_H });
-    if (dbg.detailR && noise.detail32.view3D) nb.renderTexture3DSliceToCanvas(noise.detail32.view3D, dbg.detailR, { depth: DETAIL_SIZE, slice: d, channel: 1, clear: true, width: DBG_W, height: DBG_H });
+    if (dbg.shapeR && noise.shape128.view3D) {
+      nb.renderTexture3DSliceToCanvas(noise.shape128.view3D, dbg.shapeR, {
+        depth: SHAPE_SIZE,
+        slice: s,
+        channel: 1,
+        clear: true,
+        width: DBG_W,
+        height: DBG_H
+      });
+    }
+    if (dbg.detailR && noise.detail32.view3D) {
+      nb.renderTexture3DSliceToCanvas(noise.detail32.view3D, dbg.detailR, {
+        depth: DETAIL_SIZE,
+        slice: d,
+        channel: 1,
+        clear: true,
+        width: DBG_W,
+        height: DBG_H
+      });
+    }
   }
   function maybeApplySeedToPermTable(params) {
     if (!params) return;
@@ -7352,52 +9549,81 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (!Number.isFinite(s) || s === 0) return;
     try {
       nb.buildPermTable?.(s);
-      log("[SEED] Applied seed to perm table:", s);
     } catch (e) {
       console.warn("buildPermTable(seed) failed", e);
     }
+  }
+  function isEntry4D(ep) {
+    return typeof ep === "string" && /4D/.test(ep);
+  }
+  function getEntrySet() {
+    const eps = Array.isArray(nb?.entryPoints) ? nb.entryPoints : [];
+    return new Set(eps.filter((x) => typeof x === "string" && x.length));
+  }
+  function sanitizeEntry(entry, fallback, opts = {}) {
+    const { require4D = false } = opts;
+    const set = getEntrySet();
+    const s = typeof entry === "string" ? entry : "";
+    if (!s) return fallback;
+    if (!set.has(s)) return fallback;
+    if (require4D && !isEntry4D(s)) return fallback;
+    return s;
+  }
+  function stripKeys(src, keys) {
+    const out = {};
+    const o = src && typeof src === "object" ? src : {};
+    for (const k of Object.keys(o)) {
+      if (keys.has(k)) continue;
+      out[k] = o[k];
+    }
+    return out;
+  }
+  function withToroidalFromMode(params, mode) {
+    const p = params && typeof params === "object" ? { ...params } : {};
+    p.toroidal = isEntry4D(mode) ? 1 : 0;
+    return p;
   }
   async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {}) {
     if (noise.weather.arrayView && !force && !noise.weather.dirty) {
       if (dbg.weather) nb.renderTextureToCanvas(noise.weather.arrayView, dbg.weather, { preserveCanvasSize: true, clear: true, channel: 1, width: DBG_W, height: DBG_H });
       if (dbg.weatherG) nb.renderTextureToCanvas(noise.weather.arrayView, dbg.weatherG, { preserveCanvasSize: true, clear: true, channel: 2, width: DBG_W, height: DBG_H });
       noise.weather.dirty = false;
-      return { baseMs: 0, billowMs: 0, totalMs: 0 };
+      return { baseMs: 0, gMs: 0, totalMs: 0 };
     }
     const T0 = performance.now();
-    maybeApplySeedToPermTable(weatherParams);
+    const WEATHER_DROP = /* @__PURE__ */ new Set(["mode"]);
+    const baseMode = sanitizeEntry(weatherParams.mode, "computeFBM", { require4D: false });
+    const baseParamsRaw = stripKeys(weatherParams, WEATHER_DROP);
+    const baseParams = withToroidalFromMode(baseParamsRaw, baseMode);
+    maybeApplySeedToPermTable(baseParams);
     const t0 = performance.now();
     const baseView = await nb.computeToTexture(
       WEATHER_W,
       WEATHER_H,
-      weatherParams,
-      { noiseChoices: ["clearTexture", "computeFBM"], outputChannel: 1, textureKey: "weather2d", viewDimension: "2d-array" }
+      baseParams,
+      { noiseChoices: ["clearTexture", baseMode], outputChannel: 1, textureKey: "weather2d", viewDimension: "2d-array" }
     );
     const baseMs = performance.now() - t0;
-    let billowMs = 0;
-    const billowEnabled = !!(billowParams && billowParams.enabled === true) || !!(weatherParams && weatherParams.billowEnabled === true);
-    if (billowEnabled) {
-      maybeApplySeedToPermTable(billowParams);
-      const bp = {
-        zoom: typeof billowParams.zoom === "number" ? billowParams.zoom : weatherParams.zoom || 1,
-        freq: typeof billowParams.freq === "number" ? billowParams.freq : weatherParams.freq || 1,
-        octaves: typeof billowParams.octaves === "number" ? billowParams.octaves : weatherParams.octaves || 4,
-        lacunarity: typeof billowParams.lacunarity === "number" ? billowParams.lacunarity : weatherParams.lacunarity || 2,
-        seedAngle: typeof billowParams.seedAngle === "number" ? billowParams.seedAngle : weatherParams.seedAngle || 0,
-        gain: typeof billowParams.gain === "number" ? billowParams.gain : weatherParams.gain || 0.5,
-        threshold: typeof billowParams.threshold === "number" ? billowParams.threshold : weatherParams.threshold || 0,
-        scale: typeof billowParams.scale === "number" ? billowParams.scale : 1,
-        pos: Array.isArray(billowParams.pos) ? billowParams.pos.slice(0, 3) : [0, 0, 0],
-        vel: Array.isArray(billowParams.vel) ? billowParams.vel.slice(0, 3) : [0, 0, 0],
-        seed: billowParams.seed !== void 0 ? billowParams.seed : weatherParams.seed !== void 0 ? weatherParams.seed : void 0
-      };
-      const tb0 = performance.now();
-      await nb.computeToTexture(WEATHER_W, WEATHER_H, bp, { noiseChoices: ["clearTexture", "computeBillow"], outputChannel: 2, textureKey: "weather2d", viewDimension: "2d-array" });
-      billowMs = performance.now() - tb0;
+    const G_DROP = /* @__PURE__ */ new Set(["mode", "enabled"]);
+    const enabledG = !!(billowParams && billowParams.enabled === true);
+    let gMs = 0;
+    if (enabledG) {
+      const gMode = sanitizeEntry(billowParams.mode, "computeBillow", { require4D: false });
+      const gParamsRaw = stripKeys(billowParams, G_DROP);
+      const gParams = withToroidalFromMode(gParamsRaw, gMode);
+      maybeApplySeedToPermTable(gParams);
+      const tg0 = performance.now();
+      await nb.computeToTexture(
+        WEATHER_W,
+        WEATHER_H,
+        gParams,
+        { noiseChoices: ["clearTexture", gMode], outputChannel: 2, textureKey: "weather2d", viewDimension: "2d-array" }
+      );
+      gMs = performance.now() - tg0;
     } else {
       const tc0 = performance.now();
       await nb.computeToTexture(WEATHER_W, WEATHER_H, { zoom: 1 }, { noiseChoices: ["clearTexture"], outputChannel: 2, textureKey: "weather2d", viewDimension: "2d-array" });
-      billowMs = performance.now() - tc0;
+      gMs = performance.now() - tc0;
     }
     noise.weather.arrayView = (typeof nb.get2DView === "function" ? nb.get2DView("weather2d", { dimension: "2d-array" }) : baseView) || baseView;
     noise.weather.dirty = false;
@@ -7406,8 +9632,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       if (dbg.weatherG) nb.renderTextureToCanvas(noise.weather.arrayView, dbg.weatherG, { preserveCanvasSize: true, clear: true, channel: 2, width: DBG_W, height: DBG_H });
     }
     const totalMs = performance.now() - T0;
-    log("[BENCH] weather base(ms):", baseMs.toFixed(2), " billow/clearG(ms):", billowMs.toFixed(2), " total(ms):", totalMs.toFixed(2));
-    return { baseMs, billowMs, totalMs };
+    log("[BENCH] weather base(ms):", baseMs.toFixed(2), " g(ms):", gMs.toFixed(2), " total(ms):", totalMs.toFixed(2), " baseMode:", baseMode, " gEnabled:", enabledG);
+    return { baseMs, gMs, totalMs };
   }
   async function bakeBlue2D(blueParams = {}, force = false) {
     maybeApplySeedToPermTable(blueParams);
@@ -7436,26 +9662,37 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return { baseMs: 0, bandsMs: [0, 0, 0], totalMs: 0 };
     }
     const T0 = performance.now();
+    const drop = /* @__PURE__ */ new Set(["baseModeA", "baseModeB", "bandMode2", "bandMode3", "bandMode4"]);
+    const baseParamsRaw = stripKeys(shapeParams, drop);
+    const baseParams = { ...baseParamsRaw, toroidal: 1, band: "base" };
+    const baseModeA = sanitizeEntry(shapeParams.baseModeA, "computePerlin4D", { require4D: true });
+    const baseModeB = sanitizeEntry(shapeParams.baseModeB, "computeAntiWorley4D", { require4D: true });
+    const baseChoices = ["clearTexture", baseModeA];
+    if (baseModeB && baseModeB !== baseModeA) baseChoices.push(baseModeB);
     const t0 = performance.now();
     await nb.computeToTexture3D(
       SHAPE_SIZE,
       SHAPE_SIZE,
       SHAPE_SIZE,
-      { ...shapeParams, band: "base", toroidal: 1 },
-      { noiseChoices: ["clearTexture", "computePerlin4D", "computeWorley4D"], outputChannel: 1, id: "shape128" }
+      baseParams,
+      { noiseChoices: baseChoices, outputChannel: 1, id: "shape128" }
     );
     const baseMs = performance.now() - t0;
+    const z = Number(shapeParams.zoom) || 1;
+    const bandSpecs = [
+      { ch: 2, zm: z / 2, mode: sanitizeEntry(shapeParams.bandMode2, "computeWorley4D", { require4D: true }) },
+      { ch: 3, zm: z / 4, mode: sanitizeEntry(shapeParams.bandMode3, "computeWorley4D", { require4D: true }) },
+      { ch: 4, zm: z / 8, mode: sanitizeEntry(shapeParams.bandMode4, "computeWorley4D", { require4D: true }) }
+    ];
     const bandsMs = [];
-    const z = shapeParams.zoom || 1;
-    const bands = [{ ch: 2, zm: z / 2 }, { ch: 3, zm: z / 4 }, { ch: 4, zm: z / 8 }];
-    for (const b of bands) {
+    for (const b of bandSpecs) {
       const tb0 = performance.now();
       await nb.computeToTexture3D(
         SHAPE_SIZE,
         SHAPE_SIZE,
         SHAPE_SIZE,
-        { ...shapeParams, zoom: b.zm, toroidal: 1 },
-        { noiseChoices: ["clearTexture", "computeWorley4D"], outputChannel: b.ch, id: "shape128" }
+        { ...baseParamsRaw, zoom: b.zm, toroidal: 1 },
+        { noiseChoices: ["clearTexture", b.mode], outputChannel: b.ch, id: "shape128" }
       );
       bandsMs.push(performance.now() - tb0);
     }
@@ -7464,7 +9701,20 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
     renderDebugSlices();
     const totalMs = performance.now() - T0;
-    log("[BENCH] shape base(ms):", baseMs.toFixed(2), " bands(ms):", bandsMs.map((x) => x.toFixed(2)).join(", "), " total(ms):", totalMs.toFixed(2));
+    log(
+      "[BENCH] shape base(ms):",
+      baseMs.toFixed(2),
+      " bands(ms):",
+      bandsMs.map((x) => x.toFixed(2)).join(", "),
+      " total(ms):",
+      totalMs.toFixed(2),
+      " base:",
+      baseModeA,
+      "+",
+      baseModeB,
+      " bands:",
+      bandSpecs.map((b) => `${b.ch}:${b.mode}`).join(" ")
+    );
     return { baseMs, bandsMs, totalMs };
   }
   async function bakeDetail32(detailParams = {}, force = false) {
@@ -7476,17 +9726,26 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
       return { bandsMs: [0, 0, 0], totalMs: 0 };
     }
     const T0 = performance.now();
+    const drop = /* @__PURE__ */ new Set(["mode1", "mode2", "mode3"]);
+    const baseParamsRaw = stripKeys(detailParams, drop);
+    const z = Number(detailParams.zoom) || 1;
+    const m1 = sanitizeEntry(detailParams.mode1, "computeAntiWorley4D", { require4D: true });
+    const m2 = sanitizeEntry(detailParams.mode2, "computeAntiWorley4D", { require4D: true });
+    const m3 = sanitizeEntry(detailParams.mode3, "computeAntiWorley4D", { require4D: true });
+    const bands = [
+      { ch: 1, zm: z, mode: m1 },
+      { ch: 2, zm: z / 2, mode: m2 },
+      { ch: 3, zm: z / 4, mode: m3 }
+    ];
     const bandsMs = [];
-    const z = detailParams.zoom || 1;
-    const bands = [{ ch: 1, zm: z }, { ch: 2, zm: z / 2 }, { ch: 3, zm: z / 4 }];
     for (const b of bands) {
       const tb0 = performance.now();
       await nb.computeToTexture3D(
         DETAIL_SIZE,
         DETAIL_SIZE,
         DETAIL_SIZE,
-        { ...detailParams, zoom: b.zm, toroidal: 1 },
-        { noiseChoices: ["clearTexture", "computeAntiWorley4D"], outputChannel: b.ch, id: "detail32" }
+        { ...baseParamsRaw, zoom: b.zm, toroidal: 1 },
+        { noiseChoices: ["clearTexture", b.mode], outputChannel: b.ch, id: "detail32" }
       );
       bandsMs.push(performance.now() - tb0);
     }
@@ -7495,7 +9754,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
     renderDebugSlices();
     const totalMs = performance.now() - T0;
-    log("[BENCH] detail bands(ms):", bandsMs.map((x) => x.toFixed(2)).join(", "), " total(ms):", totalMs.toFixed(2));
+    log("[BENCH] detail bands(ms):", bandsMs.map((x) => x.toFixed(2)).join(", "), " total(ms):", totalMs.toFixed(2), " modes:", `${m1},${m2},${m3}`);
     return { bandsMs, totalMs };
   }
   function ensureHistoryTextures(w, h, layers = 1) {
@@ -7515,7 +9774,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     historyViewA = historyViewB = null;
     historyPrevView = null;
     historyOutView = null;
-    const desc = { size: [w, h, layers], format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC };
+    const desc = {
+      size: [w, h, layers],
+      format: "rgba16float",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC
+    };
     historyTexA = device.createTexture(desc);
     historyTexB = device.createTexture(desc);
     historyViewA = historyTexA.createView({ dimension: "2d-array", arrayLayerCount: layers });
@@ -7643,18 +9906,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     }
     if (changed) {
       workerTuningVersion = workerTuningVersion + 1 >>> 0;
-      log("[TUNING] merged patch, new version:", workerTuningVersion, workerTuning);
-    } else {
-      log("[TUNING] merged patch, no effective changes");
     }
   }
   function applyWorkerTuning() {
     if (!workerTuning) return false;
     if (workerTuningVersion === lastAppliedTuningVersion) return false;
-    try {
-      log("[TUNING] applying patch ->", workerTuning, "version", workerTuningVersion);
-    } catch {
-    }
     try {
       if (cb && typeof cb.setTuning === "function") {
         cb.setTuning(Object.assign({}, workerTuning));
@@ -7665,13 +9921,15 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         }
         return true;
       }
-      if (!cb) log("[TUNING] cb not ready yet; tuning cached for later");
       return false;
     } catch (e) {
       console.warn("applyWorkerTuning failed", e);
       log("[TUNING] apply failed", String(e));
       return false;
     }
+  }
+  function payloadHasTuning(obj) {
+    return !!(obj && obj.tuning && typeof obj.tuning === "object");
   }
   async function runFrame({
     weatherParams,
@@ -7813,7 +10071,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     if (!ctxMain) configureMainContext();
     cb._writeRenderUniforms({
       layerIndex: Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0)),
-      cam: { camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0], right, up, fwd, fovYDeg: preview?.cam?.fovYDeg || 60, aspect },
+      cam: {
+        camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+        right,
+        up,
+        fwd,
+        fovYDeg: preview?.cam?.fovYDeg || 60,
+        aspect
+      },
       sunDir,
       exposure: preview?.exposure || 1,
       skyColor: preview?.sky || [0.5, 0.6, 0.8],
@@ -7841,9 +10106,6 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
     const timings = { computeMs: tC1 - tC0, renderMs: tR1 - tR0, totalMs: tAll1 - tAll0 };
     log("[BENCH] compute(waited, ms):", timings.computeMs.toFixed(2), " render(waited, ms):", timings.renderMs.toFixed(2), " total(ms):", timings.totalMs.toFixed(2), " coarseFactor:", cf);
     return timings;
-  }
-  function payloadHasTuning(obj) {
-    return !!(obj && obj.tuning && typeof obj.tuning === "object");
   }
   function startLoop() {
     if (loopRunning) return;
@@ -7951,7 +10213,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
         BN_H = constants.BN_H;
         await ensureDevice();
         configureMainContext();
-        respond(true, { ok: true });
+        respond(true, { ok: true, entryPoints: Array.isArray(nb?.entryPoints) ? nb.entryPoints.slice() : [] });
         return;
       }
       if (type === "resize") {
@@ -8111,10 +10373,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {\r
             if (dVel) detailScrollVel = dVel;
             if (dPos) detailScrollPos = dPos;
           }
-          respond(true, {
-            shape: { pos: shapeScrollPos, vel: shapeScrollVel },
-            detail: { pos: detailScrollPos, vel: detailScrollVel }
-          });
+          respond(true, { shape: { pos: shapeScrollPos, vel: shapeScrollVel }, detail: { pos: detailScrollPos, vel: detailScrollVel } });
           return;
         }
       }
