@@ -1220,22 +1220,58 @@ async function initNoiseDemo() {
     );
   };
 
+  const setZSliceIndex = (idx, rerender = true) => {
+    let v = Number(idx);
+    if (!Number.isFinite(v)) v = 0;
+    v = Math.round(v);
+
+    const depth = TOROIDAL_SIZE | 0;
+    v = ((v % depth) + depth) % depth;
+
+    if (zSlider && String(zSlider.value) !== String(v))
+      zSlider.value = String(v);
+    if (zInput && String(zInput.value) !== String(v)) zInput.value = String(v);
+
+    if (rerender) rerenderSliceOnlyIfVisible();
+  };
+
   if (zSlider) {
     zSlider.addEventListener("input", () => {
-      const v = Number(zSlider.value);
-      if (zInput) zInput.value = String(v);
-      rerenderSliceOnlyIfVisible();
+      setZSliceIndex(Number(zSlider.value), true);
+    });
+
+    zSlider.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+
+      e.preventDefault();
+
+      const stepRaw = Number(zSlider.step);
+      const step =
+        Number.isFinite(stepRaw) && stepRaw > 0 ? Math.round(stepRaw) : 1;
+
+      const cur = Number(zSlider.value);
+      const curI = Number.isFinite(cur) ? Math.round(cur) : 0;
+
+      const next = e.key === "ArrowLeft" ? curI - step : curI + step;
+      setZSliceIndex(next, true);
     });
   }
 
   if (zInput) {
     zInput.addEventListener("change", () => {
-      let idx = Number(zInput.value);
-      if (!Number.isFinite(idx)) idx = 0;
-      idx = Math.min(Math.max(Math.round(idx), 0), TOROIDAL_SIZE - 1);
-      zInput.value = String(idx);
-      if (zSlider) zSlider.value = String(idx);
-      rerenderSliceOnlyIfVisible();
+      setZSliceIndex(Number(zInput.value), true);
+    });
+
+    zInput.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+
+      e.preventDefault();
+
+      const cur = Number(zInput.value);
+      const curI = Number.isFinite(cur) ? Math.round(cur) : 0;
+
+      const next = e.key === "ArrowDown" ? curI - 1 : curI + 1;
+      setZSliceIndex(next, true);
     });
   }
 

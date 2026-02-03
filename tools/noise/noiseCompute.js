@@ -40,6 +40,9 @@ import blit3DWGSL from "./noiseBlit3D.wgsl";
 
 // Should be derived from device limits in real code
 const MAX_2D_TILE = 8192;
+const COMPOSITE_TILE_2D = 2048;     // scratch tile size for large outputs
+const COMPOSITE_DIM_THRESHOLD = 4096; // if either side exceeds this, use composite path
+
 const MAX_3D_TILE = 2048;
 const BYTES_PER_VOXEL = 8; // rgba16float = 4 * 16-bit
 
@@ -335,8 +338,6 @@ export class NoiseComputeBuilder {
       });
     }
   }
-
-  // Paste these methods into the NoiseComputeBuilder class (near other helpers is fine).
 
   _getMaxBufferChunkBytes(requested) {
     const devMax = this.device?.limits?.maxBufferSize ?? 256 * 1024 * 1024;
