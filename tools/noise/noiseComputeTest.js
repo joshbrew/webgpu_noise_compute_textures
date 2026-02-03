@@ -276,34 +276,43 @@ function getZSliceIndexFromUI() {
   return idx;
 }
 
-function applyCanvasCSS(canvas, cssW, cssH) {
-  canvas.style.width = `${cssW}px`;
-  canvas.style.height = `${cssH}px`;
+function applyCanvasCSS(canvas, cssW = null, cssH = null) {
   canvas.style.display = "block";
   canvas.style.margin = "0";
   canvas.style.padding = "0";
   canvas.style.border = "0";
   canvas.style.outline = "0";
   canvas.style.background = "transparent";
+
+  canvas.style.width = cssW != null ? `${cssW}px` : "100%";
+  canvas.style.height = cssH != null ? `${cssH}px` : "100%";
+
+  canvas.style.objectFit = "contain";
+  canvas.style.objectPosition = "center";
+
   canvas.style.imageRendering = "crisp-edges";
   canvas.style.imageRendering = "pixelated";
 }
 
-function ensureCanvasSize(builder, canvas, w, h) {
-  const iw = w | 0;
-  const ih = h | 0;
+function ensureCanvasSize(builder, canvas, w, h, cssW = null, cssH = null) {
+  const iw = Math.max(1, w | 0);
+  const ih = Math.max(1, h | 0);
 
-  applyCanvasCSS(canvas, iw, ih);
+  applyCanvasCSS(canvas, cssW, cssH);
+
+  let changed = false;
 
   if (canvas.width !== iw || canvas.height !== ih) {
     canvas.width = iw;
     canvas.height = ih;
-    if (builder && typeof builder.configureCanvas === "function") {
-      builder.configureCanvas(canvas);
-    }
-    return true;
+    changed = true;
   }
-  return false;
+
+  if (builder && typeof builder.configureCanvas === "function" && changed) {
+    builder.configureCanvas(canvas);
+  }
+
+  return changed;
 }
 
 function configureMosaicLayout(mosaicRoot, tileW, tileH, count) {
@@ -326,7 +335,6 @@ function configureMosaicLayout(mosaicRoot, tileW, tileH, count) {
   mosaicRoot.style.overflow = "hidden";
 }
 
-
 function initMainAndMosaicCanvases() {
   let mainCanvas = document.getElementById("noise-canvas");
   const stack = document.getElementById("view-stack");
@@ -343,7 +351,7 @@ function initMainAndMosaicCanvases() {
     throw new Error("Missing main preview canvas (#noise-canvas)");
   }
 
-  applyCanvasCSS(mainCanvas, mainCanvas.width, mainCanvas.height);
+  applyCanvasCSS(mainCanvas); // fill .squareWrap
 
   const mosaicRoot = document.getElementById("mosaic");
   if (!mosaicRoot) {
@@ -358,13 +366,13 @@ function initMainAndMosaicCanvases() {
       const c = document.createElement("canvas");
       c.width = TOROIDAL_SIZE;
       c.height = TOROIDAL_SIZE;
-      applyCanvasCSS(c, TOROIDAL_SIZE, TOROIDAL_SIZE);
+      applyCanvasCSS(c); // fill grid cell
       mosaicRoot.appendChild(c);
       mosaicCanvases.push(c);
     }
   } else {
     existing.forEach((c) => {
-      applyCanvasCSS(c, c.width || TOROIDAL_SIZE, c.height || TOROIDAL_SIZE);
+      applyCanvasCSS(c); // fill grid cell
       mosaicCanvases.push(c);
     });
   }
@@ -378,7 +386,6 @@ function initMainAndMosaicCanvases() {
 
   return { mainCanvas, mosaicCanvases };
 }
-
 
 function buildModeLabelList(bits) {
   if (!bits.length) return NOISE_LABELS_BY_BIT[0] || "Perlin";
@@ -658,7 +665,7 @@ function updateOverridesFromFields() {
 }
 
 function _isEntryPoint4D(ep) {
-  return typeof ep === "string" && /4D/.test(ep);
+  return typeof ep === "string" && /4d/i.test(ep);
 }
 
 async function renderMainNoise(builder, mainCanvas) {
@@ -682,6 +689,8 @@ async function renderMainNoise(builder, mainCanvas) {
     baseRadius: 0,
     heightScale: 1,
     useCustomPos: 0,
+    squareWorld: true,
+    worldMode: "crop",
   };
 
   const tComputeStart = performance.now();
@@ -689,25 +698,17 @@ async function renderMainNoise(builder, mainCanvas) {
   await builder.computeToTexture(resW, resH, globalParams, {
     ...commonOptions,
     noiseChoices: ["clearTexture"],
-    frameFullWidth: resW,
-    frameFullHeight: resH,
   });
 
   for (const bit of noiseBits) {
     const ep = ENTRY_POINTS[bit];
     const params = buildParamsForBit(bit, globalParams);
 
-    if (_isEntryPoint4D(ep)) {
-      params.toroidal = 1;
-    } else {
-      params.toroidal = 0;
-    }
+    params.toroidal = _isEntryPoint4D(ep) ? 1 : 0;
 
     await builder.computeToTexture(resW, resH, params, {
       ...commonOptions,
       noiseChoices: [bit],
-      frameFullWidth: resW,
-      frameFullHeight: resH,
     });
   }
 
@@ -728,8 +729,8 @@ async function renderMainNoise(builder, mainCanvas) {
   if (previewMeta) {
     const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
     const tileTag = any4D ? " · toroidal(4D)" : "";
-    previewMeta.textContent =
-      `Height field preview · ${resW}×${resH} · modes: ${buildModeLabelList(noiseBits)}${tileTag}`;
+    const worldDim = Math.max(resW, resH) | 0;
+    previewMeta.textContent = `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ${buildModeLabelList(noiseBits)}${tileTag}`;
   }
 
   if (previewStats) {
@@ -740,34 +741,6 @@ async function renderMainNoise(builder, mainCanvas) {
 
   return { resW, resH, noiseBits };
 }
-
-function renderToroidalSlice(builder, volumeView, mosaicCanvases) {
-  if (!volumeView) return;
-
-  const depth = TOROIDAL_SIZE;
-  const zIndex = getZSliceIndexFromUI();
-  const zNorm = (zIndex + 0.5) / depth;
-
-  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
-  const count = canvases.length || 9;
-
-  for (let i = 0; i < count; i++) {
-    const canvas = canvases[i];
-    if (!canvas) continue;
-
-    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
-
-    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
-      depth,
-      zNorm,
-      channel: 0,
-      chunk: 0,
-      preserveCanvasSize: true,
-      clear: true,
-    });
-  }
-}
-
 
 async function renderToroidalDemo(builder, mosaicCanvases, state) {
   const globalParams = readGlobalParamsFromUI();
@@ -804,6 +777,8 @@ async function renderToroidalDemo(builder, mosaicCanvases, state) {
         ? buildParamsForBit(bit, baseParams)
         : { ...baseParams };
 
+    params.toroidal = 1;
+
     volumeView = await builder.computeToTexture3D(
       TOROIDAL_SIZE,
       TOROIDAL_SIZE,
@@ -827,6 +802,33 @@ async function renderToroidalDemo(builder, mosaicCanvases, state) {
     volumeView,
     new Array(9).fill(0).map((_, i) => mosaicCanvases[i]),
   );
+}
+
+function renderToroidalSlice(builder, volumeView, mosaicCanvases) {
+  if (!volumeView) return;
+
+  const depth = TOROIDAL_SIZE;
+  const zIndex = getZSliceIndexFromUI();
+  const zNorm = (zIndex + 0.5) / depth;
+
+  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
+  const count = canvases.length || 9;
+
+  for (let i = 0; i < count; i++) {
+    const canvas = canvases[i];
+    if (!canvas) continue;
+
+    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
+
+    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
+      depth,
+      zNorm,
+      channel: 0,
+      chunk: 0,
+      preserveCanvasSize: true,
+      clear: true,
+    });
+  }
 }
 
 async function initNoiseDemo() {
@@ -1065,13 +1067,22 @@ async function initNoiseDemo() {
   if (downloadMainBtn) {
     downloadMainBtn.addEventListener("click", async () => {
       try {
+        updateOverridesFromFields();
+
+        const bg = syncExportBackgroundToBuilder(builder);
+
         const resW = Number(document.getElementById("res-width")?.value) || 800;
         const resH =
           Number(document.getElementById("res-height")?.value) || 800;
 
+        ensureCanvasSize(builder, mainCanvas, resW, resH);
+
+        await renderMainNoise(builder, mainCanvas);
+
         const blob = await builder.exportCurrent2DToPNGBlob(resW, resH, {
           layer: 0,
           channel: 0,
+          background: bg,
         });
 
         const url = URL.createObjectURL(blob);
@@ -1093,6 +1104,12 @@ async function initNoiseDemo() {
   if (downloadTileBtn) {
     downloadTileBtn.addEventListener("click", async () => {
       try {
+        updateOverridesFromFields();
+
+        const bg = syncExportBackgroundToBuilder(builder);
+
+        await renderToroidalDemo(builder, mosaicCanvases, state);
+
         if (!state.lastToroidalVolumeView) {
           console.warn("No toroidal volume available for export");
           return;
@@ -1124,6 +1141,7 @@ async function initNoiseDemo() {
             zNorm,
             channel: 0,
             chunk: 0,
+            background: bg,
           },
         );
 
@@ -1161,67 +1179,17 @@ async function initNoiseDemo() {
       .slice(0, 120);
   }
 
-  async function exportToroidalTilesetPNG(builder, volumeView, opts) {
-    const tileW = Math.max(1, opts.tileW | 0);
-    const tileH = Math.max(1, opts.tileH | 0);
-    const depth = Math.max(1, opts.depth | 0);
-
-    const cols = Math.max(1, opts.columns | 0);
-    const rows = Math.ceil(depth / cols);
-
-    const channel = Number.isFinite(opts.channel) ? opts.channel | 0 : 0;
-    const chunk = Number.isFinite(opts.chunk) ? opts.chunk | 0 : 0;
-
-    const atlas = document.createElement("canvas");
-    atlas.width = tileW * cols;
-    atlas.height = tileH * rows;
-
-    const ctx = atlas.getContext("2d", { alpha: true });
-    if (!ctx) throw new Error("Failed to create 2D context for atlas canvas");
-    ctx.clearRect(0, 0, atlas.width, atlas.height);
-
-    const tmp = document.createElement("canvas");
-    tmp.width = tileW;
-    tmp.height = tileH;
-
-    builder.configureCanvas(tmp);
-
-    for (let z = 0; z < depth; z++) {
-      const zNorm = (z + 0.5) / depth;
-
-      builder.renderTexture3DSliceToCanvas(volumeView, tmp, {
-        depth,
-        zNorm,
-        channel,
-        chunk,
-        preserveCanvasSize: true,
-        clear: true,
-      });
-
-      if (
-        builder.queue &&
-        typeof builder.queue.onSubmittedWorkDone === "function"
-      ) {
-        await builder.queue.onSubmittedWorkDone();
-      }
-
-      const x = (z % cols) * tileW;
-      const y = Math.floor(z / cols) * tileH;
-      ctx.drawImage(tmp, x, y);
-    }
-
-    const blob = await new Promise((resolve) =>
-      atlas.toBlob(resolve, "image/png"),
-    );
-    if (!blob) throw new Error("Failed to encode atlas PNG");
-    return { blob, cols, rows, width: atlas.width, height: atlas.height };
-  }
-
   async function saveToroidalTileset(builder, state) {
     if (!state || !state.lastToroidalVolumeView) {
       console.warn("No toroidal volume available for tileset export");
       return;
     }
+
+    updateOverridesFromFields();
+
+    const bg = syncExportBackgroundToBuilder(builder);
+
+    await renderToroidalDemo(builder, mosaicCanvases, state);
 
     const globalParams = readGlobalParamsFromUI();
     const modes = collectSelectedToroidalModesFromUI().map((m) => m.entry);
@@ -1230,17 +1198,21 @@ async function initNoiseDemo() {
     const tileW = TOROIDAL_SIZE;
     const tileH = TOROIDAL_SIZE;
     const depth = TOROIDAL_SIZE;
+    const rows = Math.ceil(depth / cols);
 
-    const out = await exportToroidalTilesetPNG(
-      builder,
+    const blob = await builder.export3DTilesetToPNGBlob(
       state.lastToroidalVolumeView,
+      tileW,
+      tileH,
       {
-        tileW,
-        tileH,
         depth,
-        columns: cols,
         channel: 0,
         chunk: 0,
+        tilesAcross: cols,
+        tilesDown: rows,
+        startSlice: 0,
+        sliceCount: depth,
+        background: bg,
       },
     );
 
@@ -1248,9 +1220,9 @@ async function initNoiseDemo() {
       _safeFilePart(modes.map(makeNoiseLabelFromEntryPoint).join("+")) ||
       "tileset";
     const seedTag = _safeFilePart(globalParams.seed);
-    const filename = `noise-tileset_${modeTag}_seed${seedTag}_${tileW}x${tileH}_z${depth}_${out.cols}x${out.rows}.png`;
+    const filename = `noise-tileset_${modeTag}_seed${seedTag}_${tileW}x${tileH}_z${depth}_${cols}x${rows}.png`;
 
-    _downloadBlob(out.blob, filename);
+    _downloadBlob(blob, filename);
   }
 
   // inside initNoiseDemo(), near the other download button handlers
@@ -1266,6 +1238,36 @@ async function initNoiseDemo() {
     });
   }
 
+  function getExportBackgroundFromUI() {
+    const el = document.querySelector(
+      'input[type="radio"][name="export-bg"]:checked',
+    );
+    const v = String(el?.value || "transparent");
+    if (v === "black" || v === "white" || v === "transparent") return v;
+    return "transparent";
+  }
+
+  function syncExportBackgroundToBuilder(builder) {
+    const bg = getExportBackgroundFromUI();
+    if (builder && typeof builder.setExportBackground === "function") {
+      builder.setExportBackground(bg);
+    }
+    return bg;
+  }
+
+  function wireExportBackgroundUI(builder) {
+    syncExportBackgroundToBuilder(builder);
+
+    const radios = document.querySelectorAll(
+      'input[type="radio"][name="export-bg"]',
+    );
+    radios.forEach((r) => {
+      r.addEventListener("change", () => {
+        syncExportBackgroundToBuilder(builder);
+      });
+    });
+  }
+  wireExportBackgroundUI(builder);
   updateMosaicCaption(collectSelectedToroidalModesFromUI().map((m) => m.entry));
 
   await renderMainNoise(builder, mainCanvas);

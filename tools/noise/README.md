@@ -1,14 +1,6 @@
 
 # WebGPU Noise Playground
 
-
-### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
-
-##### See also: [https://codepen.io/joshbrew/pen/RNWQvXB](https://codepen.io/joshbrew/pen/RNWQvXB) Toroidal noise explainer.
-
-##### And for a use case: [Procedural WebGPU volumetric clouds](https://webgpuclouds.netlify.app/)
-
-
 GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
 
 This repo has two main parts:
@@ -276,5 +268,4 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
-
 

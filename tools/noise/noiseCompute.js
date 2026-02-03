@@ -456,57 +456,51 @@ export class NoiseComputeBuilder {
       gaborRadius = 4.0,
       terraceStep = 8.0,
 
-      // Toroidal options
-      toroidal = 0, // (0/1)
-      // Voronoi options (new)
-      voroMode = 0, // u32 mode selector
-      edgeK = 0.0, // f32 edge strength/scale
+      toroidal = 0,
+      voroMode = 0,
+      edgeK = 0.0,
     } = params;
 
-    // defensive sanitization
-    const _zoom = Math.max(zoom, 1e-6);
-    const _freq = Math.max(freq, 1e-6);
+    const _zoom = Math.max(Number(zoom) || 0, 1e-6);
+    const _freq = Math.max(Number(freq) || 0, 1e-6);
 
-    // Toroidal flag (now purely driven by the `toroidal` arg)
+    const _oct = Math.max(0, Math.floor(Number(octaves) || 0)) >>> 0;
+    const _turb = (turbulence ? 1 : 0) >>> 0;
+
     const toroFlag = (toroidal ? 1 : 0) >>> 0;
 
-    // Pack into params UBO: 22 * 4 bytes
     const buf = new ArrayBuffer(22 * 4);
     const dv = new DataView(buf);
     let base = 0;
 
-    dv.setUint32(base + 0, seed >>> 0, true); // seed (u32)
-    dv.setFloat32(base + 4, zoom, true); // zoom (f32)
-    dv.setFloat32(base + 8, freq, true); // freq (f32)
-    dv.setUint32(base + 12, octaves >>> 0, true); // octaves (u32)
-    dv.setFloat32(base + 16, lacunarity, true); // lacunarity
-    dv.setFloat32(base + 20, gain, true); // gain
-    dv.setFloat32(base + 24, xShift, true); // xShift
-    dv.setFloat32(base + 28, yShift, true); // yShift
-    dv.setFloat32(base + 32, zShift, true); // zShift
-    dv.setUint32(base + 36, turbulence ? 1 : 0, true); // turbulence (u32)
-    dv.setFloat32(base + 40, seedAngle, true); // seedAngle
-    dv.setFloat32(base + 44, exp1, true); // exp1
-    dv.setFloat32(base + 48, exp2, true); // exp2
-    dv.setFloat32(base + 52, threshold, true); // threshold
-    dv.setFloat32(base + 56, rippleFreq, true); // rippleFreq
-    dv.setFloat32(base + 60, time, true); // time
-    dv.setFloat32(base + 64, warpAmp, true); // warpAmp
-    dv.setFloat32(base + 68, gaborRadius, true); // gaborRadius
-    dv.setFloat32(base + 72, terraceStep, true); // terraceStep
+    dv.setUint32(base + 0, seed >>> 0, true);
+    dv.setFloat32(base + 4, _zoom, true);
+    dv.setFloat32(base + 8, _freq, true);
+    dv.setUint32(base + 12, _oct, true);
+    dv.setFloat32(base + 16, lacunarity, true);
+    dv.setFloat32(base + 20, gain, true);
+    dv.setFloat32(base + 24, xShift, true);
+    dv.setFloat32(base + 28, yShift, true);
+    dv.setFloat32(base + 32, zShift, true);
+    dv.setUint32(base + 36, _turb, true);
+    dv.setFloat32(base + 40, seedAngle, true);
+    dv.setFloat32(base + 44, exp1, true);
+    dv.setFloat32(base + 48, exp2, true);
+    dv.setFloat32(base + 52, threshold, true);
+    dv.setFloat32(base + 56, rippleFreq, true);
+    dv.setFloat32(base + 60, time, true);
+    dv.setFloat32(base + 64, warpAmp, true);
+    dv.setFloat32(base + 68, gaborRadius, true);
+    dv.setFloat32(base + 72, terraceStep, true);
 
-    dv.setUint32(base + 76, toroFlag >>> 0, true); // toroidal (u32)
-    dv.setUint32(base + 80, voroMode >>> 0, true); // voroMode (u32)
-    dv.setFloat32(base + 84, edgeK, true); // edgeK (f32)
+    dv.setUint32(base + 76, toroFlag, true);
+    dv.setUint32(base + 80, voroMode >>> 0, true);
+    dv.setFloat32(base + 84, edgeK, true);
 
-    // upload
     this.queue.writeBuffer(this.paramsBuffer, 0, buf);
 
-    // mark bindgroups dirty so new params are used; but DO NOT null existing BGs
     for (const pair of this._texPairs.values()) pair.bindGroupDirty = true;
 
-    // Mark existing 3D volumes as needing bind-group recreation.
-    // We set a dirty flag on the volume so we can lazily re-create them.
     for (const [key, vol] of this._volumeCache) {
       if (!vol || !Array.isArray(vol.chunks)) continue;
       vol._bindGroupsDirty = true;
@@ -686,6 +680,8 @@ export class NoiseComputeBuilder {
   }
 
   // NOTE: options may include customData, frameFullWidth, frameFullHeight (world extents)
+  //       options.squareWorld: if true, normalize both axes by max(fullW, fullH) and treat pixels as a crop of that space
+  //       options.worldMode: "crop" | "stretch" (default stretch). "crop" maps pixel coords 1:1 into the larger world extents.
   _create2DTileBindGroups(tid, options = {}) {
     const pair = this._texPairs.get(tid);
     if (!pair) throw new Error("_create2DTileBindGroups: invalid tid");
@@ -731,18 +727,42 @@ export class NoiseComputeBuilder {
         }
 
         // world extents override (keeps pixel->world mapping consistent)
-        const worldFullW = Number.isFinite(options.frameFullWidth)
+        let worldFullW = Number.isFinite(options.frameFullWidth)
           ? options.frameFullWidth >>> 0
           : pair.fullWidth;
-        const worldFullH = Number.isFinite(options.frameFullHeight)
+        let worldFullH = Number.isFinite(options.frameFullHeight)
           ? options.frameFullHeight >>> 0
           : pair.fullHeight;
 
-        // fractional scaling (no flooring) -> guarantees continuity across tiles and zoom
-        const scaleX = worldFullW / pair.fullWidth;
-        const scaleY = worldFullH / pair.fullHeight;
-        const originXf = originX * scaleX; // float pixels in "world" pixel units
-        const originYf = originY * scaleY;
+        const cropMode =
+          options.squareWorld ||
+          String(options.worldMode || "").toLowerCase() === "crop";
+
+        if (options.squareWorld) {
+          const m =
+            Math.max(
+              worldFullW,
+              worldFullH,
+              pair.fullWidth,
+              pair.fullHeight,
+            ) >>> 0;
+          worldFullW = m;
+          worldFullH = m;
+        }
+
+        // originXf/originYf are pixel-space coordinates inside the conceptual world.
+        // - crop mode: pixel coords map 1:1 into the larger world extents (thin output becomes a slice)
+        // - stretch mode: preserve legacy behavior for callers that used frameFull* to stretch mapping
+        let originXf, originYf;
+        if (cropMode) {
+          originXf = originX;
+          originYf = originY;
+        } else {
+          const scaleX = worldFullW / pair.fullWidth;
+          const scaleY = worldFullH / pair.fullHeight;
+          originXf = originX * scaleX;
+          originYf = originY * scaleY;
+        }
 
         this._writeFrameUniform(fb, {
           fullWidth: worldFullW,
@@ -1660,10 +1680,158 @@ export class NoiseComputeBuilder {
     this.queue.submit([enc.finish()]);
   }
 
-  // Capture a 2D-array noise texture (one layer/channel) to a PNG Blob.
-  // textureView: GPUTextureView for the 2D-array rgba16float texture
-  // width/height: desired output resolution in pixels
-  // opts: { layer?: number, channel?: number }
+  setExportBackground(background = "black") {
+    this.exportBackground = background;
+  }
+
+  _resolveExportBackground(background) {
+    const bg = background === undefined ? this.exportBackground : background;
+
+    if (bg == null) return { r: 0, g: 0, b: 0, a: 1, transparent: false };
+    if (typeof bg === "string") {
+      const s = bg.trim().toLowerCase();
+      if (s === "transparent")
+        return { r: 0, g: 0, b: 0, a: 0, transparent: true };
+      if (s === "black") return { r: 0, g: 0, b: 0, a: 1, transparent: false };
+      if (s === "white") return { r: 1, g: 1, b: 1, a: 1, transparent: false };
+      if (s[0] === "#") return this._parseHexBackground(s);
+    }
+
+    const norm01 = (v) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return 0;
+      const x = n > 1 ? n / 255 : n;
+      return Math.min(Math.max(x, 0), 1);
+    };
+
+    if (Array.isArray(bg)) {
+      const r = norm01(bg[0]);
+      const g = norm01(bg[1]);
+      const b = norm01(bg[2]);
+      const a = bg.length >= 4 ? norm01(bg[3]) : 1;
+      return { r, g, b, a, transparent: a <= 0 };
+    }
+
+    if (typeof bg === "object") {
+      const r = norm01(bg.r);
+      const g = norm01(bg.g);
+      const b = norm01(bg.b);
+      const a = bg.a === undefined ? 1 : norm01(bg.a);
+      return { r, g, b, a, transparent: a <= 0 };
+    }
+
+    return { r: 0, g: 0, b: 0, a: 1, transparent: false };
+  }
+
+  _parseHexBackground(hex) {
+    const h = String(hex).trim().replace(/^#/, "");
+    const expand = (c) => c + c;
+
+    let r = 0,
+      g = 0,
+      b = 0,
+      a = 255;
+
+    if (h.length === 3 || h.length === 4) {
+      r = parseInt(expand(h[0]), 16);
+      g = parseInt(expand(h[1]), 16);
+      b = parseInt(expand(h[2]), 16);
+      if (h.length === 4) a = parseInt(expand(h[3]), 16);
+    } else if (h.length === 6 || h.length === 8) {
+      r = parseInt(h.slice(0, 2), 16);
+      g = parseInt(h.slice(2, 4), 16);
+      b = parseInt(h.slice(4, 6), 16);
+      if (h.length === 8) a = parseInt(h.slice(6, 8), 16);
+    } else {
+      return { r: 0, g: 0, b: 0, a: 1, transparent: false };
+    }
+
+    const rf = r / 255;
+    const gf = g / 255;
+    const bf = b / 255;
+    const af = a / 255;
+
+    return { r: rf, g: gf, b: bf, a: af, transparent: af <= 0 };
+  }
+
+  _applyExportBackground(pixelsRGBA, bg) {
+    if (!pixelsRGBA || !bg || bg.transparent) return;
+
+    const br = Math.round(bg.r * 255);
+    const bgc = Math.round(bg.g * 255);
+    const bb = Math.round(bg.b * 255);
+    const ba = Math.round((bg.a ?? 1) * 255);
+
+    if (ba <= 0) return;
+
+    const n = pixelsRGBA.length | 0;
+
+    if (ba >= 255) {
+      for (let i = 0; i < n; i += 4) {
+        const a = pixelsRGBA[i + 3] | 0;
+        if (a === 255) continue;
+        if (a === 0) {
+          pixelsRGBA[i + 0] = br;
+          pixelsRGBA[i + 1] = bgc;
+          pixelsRGBA[i + 2] = bb;
+          pixelsRGBA[i + 3] = 255;
+          continue;
+        }
+        const ia = 255 - a;
+        pixelsRGBA[i + 0] = ((pixelsRGBA[i + 0] * a + br * ia) / 255) | 0;
+        pixelsRGBA[i + 1] = ((pixelsRGBA[i + 1] * a + bgc * ia) / 255) | 0;
+        pixelsRGBA[i + 2] = ((pixelsRGBA[i + 2] * a + bb * ia) / 255) | 0;
+        pixelsRGBA[i + 3] = 255;
+      }
+      return;
+    }
+
+    for (let i = 0; i < n; i += 4) {
+      const fr = pixelsRGBA[i + 0] | 0;
+      const fg = pixelsRGBA[i + 1] | 0;
+      const fb = pixelsRGBA[i + 2] | 0;
+      const fa = pixelsRGBA[i + 3] | 0;
+
+      const outA = (fa + (ba * (255 - fa)) / 255) | 0;
+
+      if (outA <= 0) {
+        pixelsRGBA[i + 0] = 0;
+        pixelsRGBA[i + 1] = 0;
+        pixelsRGBA[i + 2] = 0;
+        pixelsRGBA[i + 3] = 0;
+        continue;
+      }
+
+      const brp = (br * ba) | 0;
+      const bgp = (bgc * ba) | 0;
+      const bbp = (bb * ba) | 0;
+
+      const frp = (fr * fa) | 0;
+      const fgp = (fg * fa) | 0;
+      const fbp = (fb * fa) | 0;
+
+      const bgScale = (255 - fa) | 0;
+
+      const outRp = (frp + (brp * bgScale) / 255) | 0;
+      const outGp = (fgp + (bgp * bgScale) / 255) | 0;
+      const outBp = (fbp + (bbp * bgScale) / 255) | 0;
+
+      pixelsRGBA[i + 0] = Math.min(
+        255,
+        Math.max(0, ((outRp * 255) / outA) | 0),
+      );
+      pixelsRGBA[i + 1] = Math.min(
+        255,
+        Math.max(0, ((outGp * 255) / outA) | 0),
+      );
+      pixelsRGBA[i + 2] = Math.min(
+        255,
+        Math.max(0, ((outBp * 255) / outA) | 0),
+      );
+      pixelsRGBA[i + 3] = Math.min(255, Math.max(0, outA));
+    }
+  }
+
   async export2DTextureToPNGBlob(textureView, width, height, opts = {}) {
     if (!textureView) {
       throw new Error("export2DTextureToPNGBlob: textureView is required");
@@ -1674,18 +1842,14 @@ export class NoiseComputeBuilder {
     const layer = opts.layer ?? 0;
     const channel = opts.channel ?? 0;
 
+    const bgSpec = this._resolveExportBackground(opts.background);
+
     this.initBlitRender();
 
-    // Ensure all pending compute/blit work is finished before export
     if (this.queue && this.queue.onSubmittedWorkDone) {
       try {
         await this.queue.onSubmittedWorkDone();
-      } catch (e) {
-        console.warn(
-          "export2DTextureToPNGBlob: onSubmittedWorkDone before export failed",
-          e,
-        );
-      }
+      } catch (e) {}
     }
 
     const format = "bgra8unorm";
@@ -1696,7 +1860,6 @@ export class NoiseComputeBuilder {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
 
-    // Pack layer/channel UBO for the blit shader
     const u = new Uint32Array([layer >>> 0, channel >>> 0, 0, 0]);
     this.queue.writeBuffer(
       this.blit2DUbo,
@@ -1723,7 +1886,7 @@ export class NoiseComputeBuilder {
           view: captureTexture.createView(),
           loadOp: "clear",
           storeOp: "store",
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
         },
       ],
     });
@@ -1733,7 +1896,6 @@ export class NoiseComputeBuilder {
     rpass.draw(6, 1, 0, 0);
     rpass.end();
 
-    // Read back captureTexture into a CPU buffer
     const bytesPerPixel = 4;
     const align = 256;
     const bytesPerRowUnaligned = W * bytesPerPixel;
@@ -1747,11 +1909,7 @@ export class NoiseComputeBuilder {
 
     encoder.copyTextureToBuffer(
       { texture: captureTexture },
-      {
-        buffer: readBuffer,
-        bytesPerRow,
-        rowsPerImage: H,
-      },
+      { buffer: readBuffer, bytesPerRow, rowsPerImage: H },
       { width: W, height: H, depthOrArrayLayers: 1 },
     );
 
@@ -1766,29 +1924,23 @@ export class NoiseComputeBuilder {
     const src = new Uint8Array(mapped);
     const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
 
-    const isBGRA = true;
     let dst = 0;
     for (let y = 0; y < H; y++) {
       const rowStart = y * bytesPerRow;
       for (let x = 0; x < W; x++) {
         const si = rowStart + x * 4;
-        if (isBGRA) {
-          pixels[dst++] = src[si + 2]; // R
-          pixels[dst++] = src[si + 1]; // G
-          pixels[dst++] = src[si + 0]; // B
-          pixels[dst++] = src[si + 3]; // A
-        } else {
-          pixels[dst++] = src[si + 0];
-          pixels[dst++] = src[si + 1];
-          pixels[dst++] = src[si + 2];
-          pixels[dst++] = src[si + 3];
-        }
+        pixels[dst++] = src[si + 2];
+        pixels[dst++] = src[si + 1];
+        pixels[dst++] = src[si + 0];
+        pixels[dst++] = src[si + 3];
       }
     }
 
     readBuffer.unmap();
     readBuffer.destroy();
     captureTexture.destroy();
+
+    this._applyExportBackground(pixels, bgSpec);
 
     const tmpCanvas = document.createElement("canvas");
     tmpCanvas.width = W;
@@ -1797,8 +1949,7 @@ export class NoiseComputeBuilder {
     if (!ctx2d)
       throw new Error("export2DTextureToPNGBlob: unable to get 2D context");
 
-    const imageData = new ImageData(pixels, W, H);
-    ctx2d.putImageData(imageData, 0, 0);
+    ctx2d.putImageData(new ImageData(pixels, W, H), 0, 0);
 
     const blob = await new Promise((resolve, reject) => {
       tmpCanvas.toBlob((b) => {
@@ -1811,8 +1962,6 @@ export class NoiseComputeBuilder {
     return blob;
   }
 
-  // Convenience wrapper: export the currently active 2D pair view
-  // (what getCurrentView() returns) to a PNG Blob.
   async exportCurrent2DToPNGBlob(width, height, opts = {}) {
     const view = this.getCurrentView();
     if (!view) {
@@ -1835,17 +1984,14 @@ export class NoiseComputeBuilder {
       throw new Error("export3DSliceToPNGBlob: depth must be provided and > 0");
     }
 
+    const bgSpec = this._resolveExportBackground(opts.background);
+
     this.initBlitRender();
 
     if (this.queue && this.queue.onSubmittedWorkDone) {
       try {
         await this.queue.onSubmittedWorkDone();
-      } catch (e) {
-        console.warn(
-          "export3DSliceToPNGBlob: onSubmittedWorkDone before export failed",
-          e,
-        );
-      }
+      } catch (e) {}
     }
 
     let view3D;
@@ -1901,7 +2047,7 @@ export class NoiseComputeBuilder {
           view: captureTexture.createView(),
           loadOp: "clear",
           storeOp: "store",
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
         },
       ],
     });
@@ -1924,11 +2070,7 @@ export class NoiseComputeBuilder {
 
     encoder.copyTextureToBuffer(
       { texture: captureTexture },
-      {
-        buffer: readBuffer,
-        bytesPerRow,
-        rowsPerImage: H,
-      },
+      { buffer: readBuffer, bytesPerRow, rowsPerImage: H },
       { width: W, height: H, depthOrArrayLayers: 1 },
     );
 
@@ -1943,29 +2085,23 @@ export class NoiseComputeBuilder {
     const src = new Uint8Array(mapped);
     const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
 
-    const isBGRA = true;
     let dst = 0;
     for (let y = 0; y < H; y++) {
       const rowStart = y * bytesPerRow;
       for (let x = 0; x < W; x++) {
         const si = rowStart + x * 4;
-        if (isBGRA) {
-          pixels[dst++] = src[si + 2];
-          pixels[dst++] = src[si + 1];
-          pixels[dst++] = src[si + 0];
-          pixels[dst++] = src[si + 3];
-        } else {
-          pixels[dst++] = src[si + 0];
-          pixels[dst++] = src[si + 1];
-          pixels[dst++] = src[si + 2];
-          pixels[dst++] = src[si + 3];
-        }
+        pixels[dst++] = src[si + 2];
+        pixels[dst++] = src[si + 1];
+        pixels[dst++] = src[si + 0];
+        pixels[dst++] = src[si + 3];
       }
     }
 
     readBuffer.unmap();
     readBuffer.destroy();
     captureTexture.destroy();
+
+    this._applyExportBackground(pixels, bgSpec);
 
     const tmpCanvas = document.createElement("canvas");
     tmpCanvas.width = W;
@@ -1975,8 +2111,7 @@ export class NoiseComputeBuilder {
       throw new Error("export3DSliceToPNGBlob: unable to get 2D context");
     }
 
-    const imageData = new ImageData(pixels, W, H);
-    ctx2d.putImageData(imageData, 0, 0);
+    ctx2d.putImageData(new ImageData(pixels, W, H), 0, 0);
 
     const blob = await new Promise((resolve, reject) => {
       tmpCanvas.toBlob((b) => {
@@ -1988,9 +2123,14 @@ export class NoiseComputeBuilder {
     return blob;
   }
 
-  // Render a single Z slice from a 3D texture view into an RGBA8 pixel buffer (RGBA order).
-  // zNorm is in [0,1]. channel selects which packed channel to display.
-  async _render3DSliceToRGBA8Pixels(view3D, width, height, zNorm, channel = 0) {
+  async _render3DSliceToRGBA8Pixels(
+    view3D,
+    width,
+    height,
+    zNorm,
+    channel = 0,
+    bgSpec = null,
+  ) {
     if (!view3D)
       throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");
 
@@ -2034,7 +2174,7 @@ export class NoiseComputeBuilder {
           view: captureTexture.createView(),
           loadOp: "clear",
           storeOp: "store",
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
         },
       ],
     });
@@ -2077,10 +2217,10 @@ export class NoiseComputeBuilder {
       const rowStart = y * bytesPerRow;
       for (let x = 0; x < W; x++) {
         const si = rowStart + x * 4;
-        pixels[dst++] = src[si + 2]; // R
-        pixels[dst++] = src[si + 1]; // G
-        pixels[dst++] = src[si + 0]; // B
-        pixels[dst++] = src[si + 3]; // A
+        pixels[dst++] = src[si + 2];
+        pixels[dst++] = src[si + 1];
+        pixels[dst++] = src[si + 0];
+        pixels[dst++] = src[si + 3];
       }
     }
 
@@ -2088,21 +2228,11 @@ export class NoiseComputeBuilder {
     readBuffer.destroy();
     captureTexture.destroy();
 
+    if (bgSpec) this._applyExportBackground(pixels, bgSpec);
+
     return pixels;
   }
 
-  // Export a full 3D volume as a single PNG tileset.
-  // Tiles are laid out row-major: z=0 is top-left, z increases left->right then top->bottom.
-  // target can be a raw 3D view OR your { views: [...], meta: { tile: { d }}} bundle.
-  // tileWidth/tileHeight are the per-slice render size in pixels (usually TOROIDAL_SIZE).
-  // opts:
-  //  - depth (required if target has no meta)
-  //  - channel (default 0)
-  //  - chunk (default 0, if target is bundle)
-  //  - tilesAcross (default 16)
-  //  - tilesDown (default ceil(depth/tilesAcross))
-  //  - startSlice (default 0)
-  //  - sliceCount (default depth-startSlice)
   async export3DTilesetToPNGBlob(target, tileWidth, tileHeight, opts = {}) {
     if (!target)
       throw new Error("export3DTilesetToPNGBlob: target is required");
@@ -2120,17 +2250,14 @@ export class NoiseComputeBuilder {
       sliceCount = null,
     } = opts;
 
+    const bgSpec = this._resolveExportBackground(opts.background);
+
     this.initBlitRender();
 
     if (this.queue && this.queue.onSubmittedWorkDone) {
       try {
         await this.queue.onSubmittedWorkDone();
-      } catch (e) {
-        console.warn(
-          "export3DTilesetToPNGBlob: onSubmittedWorkDone before export failed",
-          e,
-        );
-      }
+      } catch (e) {}
     }
 
     let view3D;
@@ -2171,7 +2298,6 @@ export class NoiseComputeBuilder {
       const rel = z - start;
       const col = rel % across;
       const row = (rel / across) | 0;
-
       if (row >= down) break;
 
       const zNorm = (z + 0.5) / d;
@@ -2181,6 +2307,7 @@ export class NoiseComputeBuilder {
         TH,
         zNorm,
         channel,
+        bgSpec,
       );
 
       const dstBaseX = col * TW;

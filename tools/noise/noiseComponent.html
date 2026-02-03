@@ -204,6 +204,42 @@
       height: 100%;
     }
 
+    /* Export background toggles (near Save buttons) */
+    #export-bg {
+      margin: 2px 0 8px 0;
+      padding: 8px 10px;
+      border: 1px solid #262626;
+      border-radius: 999px;
+      background: rgba(12, 12, 12, 0.7);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #export-bg .export-bg-title {
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #cfcfcf;
+      opacity: 0.9;
+    }
+
+    #export-bg label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      font-size: 0.82rem;
+      color: #e0e0e0;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    #export-bg input[type="radio"] {
+      transform: translateY(1px);
+    }
+
     /* Mosaic panel */
     #mosaic-box {
       margin: 0 var(--gap) var(--gap) var(--gap);
@@ -673,6 +709,40 @@
     </div>
 
     <button id="render-btn" type="button">Render</button>
+
+    <div id="export-bg">
+      <div class="export-bg-title">Export BG</div>
+      <label>
+        <input
+          type="radio"
+          name="export-bg"
+          id="export-bg-transparent"
+          value="transparent"
+          checked
+        />
+        Transparent
+      </label>
+
+      <label>
+        <input
+          type="radio"
+          name="export-bg"
+          id="export-bg-black"
+          value="black"
+        />
+        Black
+      </label>
+
+      <label>
+        <input
+          type="radio"
+          name="export-bg"
+          id="export-bg-white"
+          value="white"
+        />
+        White
+      </label>
+    </div>
     <button id="download-main" type="button">Save image</button>
     <button id="download-tile" type="button">Save tile</button>
     <button id="download-tileset" type="button">Save tileset</button>
