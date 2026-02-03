@@ -634,7 +634,7 @@
     </nav>
 
     <details id="res-section" class="param-group">
-      <summary>Resolution</summary>
+      <summary>Image Settings</summary>
       <div class="param-body">
         <label>
           Canvas width:
@@ -645,6 +645,20 @@
           <input type="number" id="res-height" value="800" min="1" />
         </label>
         <button id="apply-res" type="button">Apply resolution</button>
+       
+        <label>
+          World Offset X (pixels):
+          <input type="number" id="res-offsetX" value="0" step="1" />
+        </label>
+        <label>
+          World Offset Y (pixels):
+          <input type="number" id="res-offsetY" value="0" step="1" />
+        </label>
+        <label>
+          World Offset Z (pixels):
+          <input type="number" id="res-offsetZ" value="0" step="1" />
+        </label>
+
       </div>
     </details>
 
@@ -703,18 +717,20 @@
             min="0.0"
           />
         </label>
+       
         <label>
-          X shift:
+          X step shift:
           <input type="number" step="0.01" id="noise-xShift" value="0" />
         </label>
         <label>
-          Y shift:
+          Y step shift:
           <input type="number" step="0.01" id="noise-yShift" value="0" />
         </label>
         <label>
-          Z shift:
+          Z step shift:
           <input type="number" step="0.01" id="noise-zShift" value="0" />
         </label>
+        
       </div>
     </details>
 

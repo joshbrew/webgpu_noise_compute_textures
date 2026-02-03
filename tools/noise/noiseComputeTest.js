@@ -713,6 +713,36 @@ function setPreviewStats(text) {
   if (previewStats) previewStats.textContent = text;
 }
 
+function readTileOffsetsFromUI() {
+  const getNum = (id, fallback = 0) => {
+    const el = document.getElementById(id);
+    if (!el) return fallback;
+    const v = Number(el.value);
+    return Number.isFinite(v) ? v : fallback;
+  };
+
+  return {
+    x: getNum("res-offsetX", 0),
+    y: getNum("res-offsetY", 0),
+    z: getNum("res-offsetZ", 0),
+  };
+}
+
+
+function _tileOffsetTag(tileOffsets) {
+  if (!tileOffsets) return "";
+  const ox = Number(tileOffsets.x) || 0;
+  const oy = Number(tileOffsets.y) || 0;
+  const oz = Number(tileOffsets.z) || 0;
+
+  const eps = 1e-9;
+  if (Math.abs(ox) < eps && Math.abs(oy) < eps && Math.abs(oz) < eps) return "";
+
+  const fmt = (v) => (Math.abs(v) >= 1 ? v.toFixed(2) : v.toFixed(6));
+  return ` · tile offset ${fmt(ox)},${fmt(oy)},${fmt(oz)}`;
+}
+
+
 function syncMainHeaderFromCache(info) {
   if (!info) return;
 
@@ -724,9 +754,11 @@ function syncMainHeaderFromCache(info) {
   const tileTag = any4D ? " · toroidal(4D)" : "";
   const worldDim = Math.max(resW, resH) | 0;
 
+  const offTag = _tileOffsetTag(info.tileOffsets);
+
   setPreviewHeader(
     `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
-      `${buildModeLabelList(noiseBits)}${tileTag}`,
+      `${buildModeLabelList(noiseBits)}${tileTag}${offTag}`,
   );
 
   if (typeof info.computeMs === "number" && typeof info.blitMs === "number") {
@@ -742,6 +774,8 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
   const updateUI = opts.updateUI !== false;
 
   const { w: resW, h: resH } = readLockedResolutionFromUI(builder, 800);
+  const tileOffsets = readTileOffsetsFromUI();
+  const worldScale = Math.max(resW, resH) | 0;
 
   ensurePreviewCanvas(builder, mainCanvas, resW, resH);
 
@@ -761,10 +795,17 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
     worldMode: "crop",
   };
 
+  const scrollOptions = {
+    offsetX: Number(tileOffsets.x) || 0,
+    offsetY: Number(tileOffsets.y) || 0,
+    offsetZ: Number(tileOffsets.z) || 0,
+  };
+
   const tComputeStart = performance.now();
 
   await builder.computeToTexture(resW, resH, globalParams, {
     ...commonOptions,
+    ...scrollOptions,
     noiseChoices: ["clearTexture"],
   });
 
@@ -775,6 +816,7 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
 
     await builder.computeToTexture(resW, resH, params, {
       ...commonOptions,
+      ...scrollOptions,
       noiseChoices: [bit],
     });
   }
@@ -799,11 +841,11 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
   if (updateUI) {
     const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
     const tileTag = any4D ? " · toroidal(4D)" : "";
-    const worldDim = Math.max(resW, resH) | 0;
+    const offTag = _tileOffsetTag(tileOffsets);
 
     setPreviewHeader(
-      `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
-        `${buildModeLabelList(noiseBits)}${tileTag}`,
+      `Height field preview · ${resW}×${resH} · world ${worldScale}×${worldScale} · modes: ` +
+        `${buildModeLabelList(noiseBits)}${tileTag}${offTag}`,
     );
 
     setPreviewStats(
@@ -811,40 +853,9 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
     );
   }
 
-  return { resW, resH, noiseBits, computeMs, blitMs };
+  return { resW, resH, noiseBits, computeMs, blitMs, tileOffsets };
 }
 
-function renderToroidalSlice(builder, volumeView, mosaicCanvases, opts = {}) {
-  if (!volumeView) return 0;
-
-  const depth = TOROIDAL_SIZE;
-  const zIndex = getZSliceIndexFromUI();
-  const zNorm = (zIndex + 0.5) / depth;
-
-  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
-  const count = canvases.length || 9;
-
-  const t0 = performance.now();
-
-  for (let i = 0; i < count; i++) {
-    const canvas = canvases[i];
-    if (!canvas) continue;
-
-    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
-
-    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
-      depth,
-      zNorm,
-      channel: 0,
-      chunk: 0,
-      preserveCanvasSize: true,
-      clear: true,
-    });
-  }
-
-  const t1 = performance.now();
-  return t1 - t0;
-}
 
 async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
   const draw = opts.draw !== false;
@@ -852,6 +863,9 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
 
   const globalParams = readGlobalParamsFromUI();
   builder.buildPermTable(globalParams.seed | 0);
+
+  const tileOffsets = readTileOffsetsFromUI();
+  const worldScale = TOROIDAL_SIZE | 0;
 
   const baseParams = {
     ...globalParams,
@@ -914,8 +928,10 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
       ? modes.map((m) => makeNoiseLabelFromEntryPoint(m.entry)).join(" + ")
       : "None";
 
+    const offTag = _tileOffsetTag(tileOffsets);
+
     setPreviewHeader(
-      `Toroidal tiles · ${TOROIDAL_SIZE}³ · modes: ${modeTag} · Z slice: ${getZSliceIndexFromUI()}`,
+      `Toroidal tiles · ${TOROIDAL_SIZE}³ · modes: ${modeTag} · Z slice: ${getZSliceIndexFromUI()}${offTag}`,
     );
 
     const computeMs = state.lastToroidalComputeMs.toFixed(1);
@@ -928,6 +944,38 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
   }
 
   return { computeMs: state.lastToroidalComputeMs, sliceBlitMs };
+}
+
+function renderToroidalSlice(builder, volumeView, mosaicCanvases, opts = {}) {
+  if (!volumeView) return 0;
+
+  const depth = TOROIDAL_SIZE;
+  const zIndex = getZSliceIndexFromUI();
+  const zNorm = (zIndex + 0.5) / depth;
+
+  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
+  const count = canvases.length || 9;
+
+  const t0 = performance.now();
+
+  for (let i = 0; i < count; i++) {
+    const canvas = canvases[i];
+    if (!canvas) continue;
+
+    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
+
+    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
+      depth,
+      zNorm,
+      channel: 0,
+      chunk: 0,
+      preserveCanvasSize: true,
+      clear: true,
+    });
+  }
+
+  const t1 = performance.now();
+  return t1 - t0;
 }
 
 function getActiveView() {
@@ -1135,9 +1183,24 @@ async function initNoiseDemo() {
   const applyResBtn = document.getElementById("apply-res");
   if (applyResBtn) {
     applyResBtn.addEventListener("click", () => {
-      markDirtyMain(true);
+      markDirtyBoth();
     });
   }
+
+  ["res-offsetX", "res-offsetY", "res-offsetZ"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      dirty.main = true;
+      dirty.tileset = true;
+      requestActiveRender();
+    });
+    el.addEventListener("change", () => {
+      dirty.main = true;
+      dirty.tileset = true;
+      requestActiveRender();
+    });
+  });
 
   const GLOBAL_PARAM_IDS = [
     "noise-seed",

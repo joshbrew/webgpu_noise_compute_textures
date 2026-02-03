@@ -1323,59 +1323,164 @@ fn domainWarpFBM(p: vec3<f32>, params: NoiseParams,
     return fbm3D(q, params);
 }
 
+// ───────── gabor utils ─────────
+
+const TAU : f32 = 6.283185307179586;
+
+fn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
+
+fn hash_u32(x: u32) -> u32 {
+  var v = x;
+  v = (v ^ 61u) ^ (v >> 16u);
+  v = v + (v << 3u);
+  v = v ^ (v >> 4u);
+  v = v * 0x27d4eb2du;
+  v = v ^ (v >> 15u);
+  return v;
+}
+
+fn hash3_u32(ix: i32, iy: i32, iz: i32, seed: u32, salt: u32) -> u32 {
+  let x = u32(ix) * 73856093u;
+  let y = u32(iy) * 19349663u;
+  let z = u32(iz) * 83492791u;
+  return hash_u32(x ^ y ^ z ^ seed ^ salt);
+}
+
+fn rnd01(h: u32) -> f32 {
+  return f32(h) * (1.0 / 4294967295.0);
+}
+
+fn rand3_01(ix: i32, iy: i32, iz: i32, seed: u32, salt: u32) -> f32 {
+  return rnd01(hash3_u32(ix, iy, iz, seed, salt));
+}
+
+fn rand3_vec3(ix: i32, iy: i32, iz: i32, seed: u32, salt: u32) -> vec3<f32> {
+  let a = rand3_01(ix, iy, iz, seed, salt + 0u);
+  let b = rand3_01(ix, iy, iz, seed, salt + 1u);
+  let c = rand3_01(ix, iy, iz, seed, salt + 2u);
+  return vec3<f32>(a, b, c);
+}
+
+fn rand_unit_vec3(ix: i32, iy: i32, iz: i32, seed: u32, salt: u32) -> vec3<f32> {
+  let u = rand3_01(ix, iy, iz, seed, salt + 0u);
+  let v = rand3_01(ix, iy, iz, seed, salt + 1u);
+
+  let z = 1.0 - 2.0 * u;
+  let r = sqrt(max(0.0, 1.0 - z * z));
+  let a = TAU * v;
+
+  return vec3<f32>(r * cos(a), r * sin(a), z);
+}
+
+fn gabor_kernel3D(d: vec3<f32>, dir: vec3<f32>, waveFreq: f32, sigma: f32, phase: f32) -> f32 {
+  let s  = max(0.0005, sigma);
+  let g  = exp(-dot(d, d) / (2.0 * s * s));
+  let w  = cos(TAU * waveFreq * dot(dir, d) + phase);
+  return g * w;
+}
+
+fn gaborWarpDomain(p: vec3<f32>, params: NoiseParams) -> vec3<f32> {
+  let a = params.warpAmp;
+  if (a <= 0.00001) { return p; }
+
+  let w1 = simplex3D(p * 0.75 + vec3<f32>(13.1, 7.7, 19.3));
+  let w2 = simplex3D(p * 0.75 + vec3<f32>(41.7, 23.9, 5.3));
+  let w3 = simplex3D(p * 0.75 + vec3<f32>(9.9, 31.3, 17.7));
+
+  return p + vec3<f32>(w1, w2, w3) * a;
+}
+
 /*────────────────────  Gabor sparse-convolution  ──────────────*/
-fn gaborOctave3D(p: vec3<f32>, radius: f32) -> f32 {
-    // 3 taps in a tiny kernel to keep it cheap
-    let R = max(0.001, radius);
-    var sum : f32 = 0.0;
-    for (var i = -1; i <= 1; i = i + 1) {
-        for (var j = -1; j <= 1; j = j + 1) {
-            let xi = vec3<f32>(f32(i), f32(j), 0.0);
-            let w  = exp(-dot(xi, xi) / (R * R));
-            let n  = simplex3D(p + xi);  // using simplex as the carrier
-            sum += w * n;
-        }
+fn gaborOctave3D(p: vec3<f32>, waveFreq: f32, sigma: f32, params: NoiseParams) -> f32 {
+  let base = vec3<i32>(
+    i32(floor(p.x)),
+    i32(floor(p.y)),
+    i32(floor(p.z))
+  );
+
+  var sum: f32 = 0.0;
+
+  for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
+    for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+      for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+        let cx = base.x + dx;
+        let cy = base.y + dy;
+        let cz = base.z + dz;
+
+        let jitter = rand3_vec3(cx, cy, cz, params.seed, 11u) - vec3<f32>(0.5, 0.5, 0.5);
+        let center = vec3<f32>(f32(cx), f32(cy), f32(cz)) + vec3<f32>(0.5, 0.5, 0.5) + jitter * 0.95;
+
+        let d     = p - center;
+        let dir   = rand_unit_vec3(cx, cy, cz, params.seed, 41u);
+        let phase = TAU * rand3_01(cx, cy, cz, params.seed, 71u);
+        let amp   = rand3_01(cx, cy, cz, params.seed, 91u) * 2.0 - 1.0;
+
+        sum += amp * gabor_kernel3D(d, dir, waveFreq, sigma, phase);
+      }
     }
-    return sum * 0.75; // keep in ~[-1,1]
+  }
+
+  return sum * (1.0 / 9.0);
+}
+
+fn gaborShape(n: f32, params: NoiseParams) -> f32 {
+  var v = 0.5 + 0.5 * clamp(n, -1.0, 1.0);
+
+  let widen = max(0.0, params.gaborRadius) * max(0.0001, params.exp2);
+  v = pow(saturate(v), 1.0 / (1.0 + widen));
+
+  let t    = saturate(params.threshold);
+  let hard = max(0.0001, params.exp1);
+
+  let a = smoothstep(t - hard, t + hard, v);
+  return a * 2.0 - 1.0;
 }
 
 /* Multi-octave Gabor with the same rotate/shift cadence as Perlin */
 fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {
-    var x = p.x / params.zoom * params.freq + params.xShift;
-    var y = p.y / params.zoom * params.freq + params.yShift;
-    var z = p.z / params.zoom * params.freq + params.zShift;
+  var x = p.x / params.zoom + params.xShift;
+  var y = p.y / params.zoom + params.yShift;
+  var z = p.z / params.zoom + params.zShift;
 
-    var sum     : f32 = 0.0;
-    var amp     : f32 = 1.0;
-    var freqLoc : f32 = params.freq;
-    var angle   : f32 = params.seedAngle;
+  var sum     : f32 = 0.0;
+  var amp     : f32 = 1.0;
+  var freqLoc : f32 = params.freq;
+  var angle   : f32 = params.seedAngle;
 
-    // tie kernel radius to frequency so bandwidth tracks lacunarity
-    for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-        let radius = max(0.001, params.gaborRadius / freqLoc);
-        var n = gaborOctave3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc), radius);
-        if (params.turbulence == 1u) { n = abs(n); }
-        sum += n * amp;
+  let waveFreq = max(0.001, params.rippleFreq);
 
-        freqLoc *= params.lacunarity;
-        amp     *= params.gain;
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    let sigma = max(0.0005, params.gaborRadius);
 
-        let c  = cos(angle);
-        let s  = sin(angle);
-        let nx = x * c - y * s;
-        let ny = x * s + y * c;
-        let nz = y * s + z * c;
+    var pp = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);
+    pp = gaborWarpDomain(pp, params);
 
-        x = nx + params.xShift;
-        y = ny + params.yShift;
-        z = nz + params.zShift;
+    var n = gaborOctave3D(pp, waveFreq, sigma, params);
 
-        angle += ANGLE_INCREMENT;
-    }
+    if (params.turbulence == 1u) { n = abs(n); }
+    sum += n * amp;
 
-    if (params.turbulence == 1u) { sum = sum - 1.0; }
-    return sum;
+    freqLoc *= params.lacunarity;
+    amp     *= params.gain;
+
+    let c  = cos(angle);
+    let s  = sin(angle);
+    let nx = x * c - y * s;
+    let ny = x * s + y * c;
+    let nz = y * s + z * c;
+
+    x = nx + params.xShift;
+    y = ny + params.yShift;
+    z = nz + params.zShift;
+
+    angle += ANGLE_INCREMENT;
+  }
+
+  var out = gaborShape(sum, params);
+  if (params.turbulence == 1u) { out = out - 1.0; }
+  return out;
 }
+
 
 /*────────────────────  Terrace & Foam filters  ───────────────*/
 fn terrace(v:f32, steps:f32)  -> f32 { return floor(v*steps)/steps; }
