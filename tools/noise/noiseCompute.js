@@ -2520,6 +2520,70 @@ export class NoiseComputeBuilder {
 
     return blob;
   }
+
+  _installAllocDebug(thresholdBytes = 256 * 1024 * 1024) {
+  if (this._allocDebugInstalled) return;
+  this._allocDebugInstalled = true;
+
+  const dev = this.device;
+
+  const origCreateBuffer = dev.createBuffer.bind(dev);
+  dev.createBuffer = (desc) => {
+    const size = Number(desc?.size ?? 0);
+    if (Number.isFinite(size) && size >= thresholdBytes) {
+      console.warn(
+        "[alloc] createBuffer",
+        { size, usage: desc?.usage, mappedAtCreation: desc?.mappedAtCreation },
+        "\n",
+        new Error().stack,
+      );
+    }
+    return origCreateBuffer(desc);
+  };
+
+  const origCreateTexture = dev.createTexture.bind(dev);
+  dev.createTexture = (desc) => {
+    const t = origCreateTexture(desc);
+
+    try {
+      const fmt = desc?.format;
+      const bpp =
+        fmt === "rgba16float" ? 8 :
+        fmt === "rgba8unorm" ? 4 :
+        fmt === "bgra8unorm" ? 4 :
+        0;
+
+      const dim = desc?.dimension || "2d";
+      const s = desc?.size;
+
+      let w = 0, h = 0, d = 1;
+      if (Array.isArray(s)) {
+        w = s[0] | 0;
+        h = s[1] | 0;
+        d = (s[2] ?? 1) | 0;
+      } else if (s && typeof s === "object") {
+        w = s.width | 0;
+        h = s.height | 0;
+        d = (s.depthOrArrayLayers ?? 1) | 0;
+      }
+
+      if (bpp && w > 0 && h > 0 && d > 0) {
+        const approx = w * h * d * bpp;
+        if (approx >= thresholdBytes) {
+          console.warn(
+            "[alloc] createTexture",
+            { format: fmt, dimension: dim, size: desc?.size, approxBytes: approx, usage: desc?.usage },
+            "\n",
+            new Error().stack,
+          );
+        }
+      }
+    } catch {}
+
+    return t;
+  };
+}
+
 }
 
 // -----------------------------------------------------------------------------

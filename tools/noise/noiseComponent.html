@@ -148,7 +148,6 @@
       min-width: 0;
     }
 
-    /* view stack uses a square canvas wrapper with min size */
     #view-stack {
       display: flex;
       flex-direction: column;
@@ -198,10 +197,137 @@
       overflow: hidden;
     }
 
+    /* Stage tabs */
+    .stage {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .stage input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .stage-tabs {
+      display: inline-flex;
+      gap: 6px;
+      padding: 6px;
+      border: 1px solid #202020;
+      border-radius: 999px;
+      background: rgba(10, 10, 10, 0.85);
+      width: fit-content;
+    }
+
+    .stage-tab {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #2b2b2b;
+      background: rgba(20, 20, 20, 0.95);
+      color: #d0d0d0;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      user-select: none;
+      transition:
+        background 0.15s ease,
+        border-color 0.15s ease,
+        color 0.15s ease;
+    }
+
+    .stage-tab:hover {
+      border-color: var(--accent);
+      background: rgba(21, 80, 130, 0.9);
+      color: #ffffff;
+    }
+
+    #view-tab-preview:checked ~ .stage-tabs label[for="view-tab-preview"],
+    #view-tab-tileset:checked ~ .stage-tabs label[for="view-tab-tileset"] {
+      border-color: var(--accent);
+      background: linear-gradient(135deg, #2575fc, #21c0ff);
+      color: #000;
+      font-weight: 700;
+    }
+
+    .squareWrap.stageWrap {
+      position: relative;
+    }
+
+    .stage-panel {
+      position: absolute;
+      inset: 0;
+      display: none;
+      width: 100%;
+      height: 100%;
+    }
+
+    #view-tab-preview:checked ~ .stageWrap .stage-preview {
+      display: block;
+    }
+
+    #view-tab-tileset:checked ~ .stageWrap .stage-tileset {
+      display: block;
+    }
+
     #noise-canvas {
       display: block;
       width: 100%;
       height: 100%;
+    }
+
+    /* Mosaic panel now lives inside the stage square */
+    #mosaic {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      gap: 0;
+      padding: 0;
+      margin: 0;
+      line-height: 0;
+      font-size: 0;
+
+      border-radius: 0;
+      overflow: hidden;
+      border: 0;
+      background: #000;
+    }
+
+    #mosaic canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: #000;
+    }
+
+    .stage-footer {
+      margin-top: -2px;
+      padding: 0 4px;
+    }
+
+    .mosaic-caption {
+      margin: 0;
+      font-size: 11px;
+      color: #aaaaaa;
+      line-height: 1.35;
+    }
+
+    #view-tab-preview:checked ~ .stage-footer {
+      display: none;
+    }
+
+    #view-tab-tileset:checked ~ .stage-footer {
+      display: block;
     }
 
     /* Export background toggles (near Save buttons) */
@@ -240,67 +366,7 @@
       transform: translateY(1px);
     }
 
-    /* Mosaic panel */
-    #mosaic-box {
-      margin: 0 var(--gap) var(--gap) var(--gap);
-      padding: 10px;
-
-      background: radial-gradient(
-        circle at top,
-        #161616 0,
-        #050505 40%,
-        #000 100%
-      );
-      border: 1px solid #252525;
-      border-radius: var(--radius);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
-    }
-
-    #mosaic-box h2 {
-      margin: 0;
-      font-size: 0.95rem;
-      padding: 2px 0 0 0;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      color: #f0f0f0;
-    }
-
-    #mosaic-box .mosaic-caption {
-      margin: 6px 0 10px 0;
-      font-size: 11px;
-      color: #aaaaaa;
-      line-height: 1.35;
-    }
-
-    /* contiguous 3x3 tile canvases */
-    #mosaic {
-      width: 100%;
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      grid-template-rows: repeat(3, 1fr);
-      gap: 0;
-      padding: 0;
-      margin: 0;
-      line-height: 0;
-      font-size: 0;
-
-      border-radius: 8px;
-      overflow: hidden;
-      border: 1px solid #181818;
-      background: #000;
-    }
-
-    #mosaic canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      border: 0;
-      background: #000;
-    }
-
-    /* Param groups */
+    /* Collapsible Param groups (details.param-group) */
     aside#sidebar .param-group {
       background: radial-gradient(
         circle at top left,
@@ -311,8 +377,9 @@
       border: 1px solid #262626;
       border-radius: 8px;
       box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5);
-      padding: 10px 9px 10px 9px;
       margin: 0 0 10px 0;
+      padding: 0;
+      overflow: hidden;
     }
 
     aside#sidebar .param-group:hover {
@@ -322,14 +389,40 @@
         0 6px 18px rgba(0, 0, 0, 0.7);
     }
 
-    aside#sidebar .param-group h2 {
-      margin: 0 0 7px 0;
+    aside#sidebar .param-group > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 10px 9px;
       font-size: 0.75rem;
       letter-spacing: 0.12em;
       text-transform: uppercase;
       color: #e0e0e0;
       border-bottom: 1px solid #262626;
-      padding-bottom: 5px;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    aside#sidebar .param-group > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    aside#sidebar .param-group > summary::after {
+      content: "▾";
+      font-size: 0.9rem;
+      opacity: 0.9;
+      transform: translateY(-1px);
+      transition: transform 0.12s ease;
+    }
+
+    aside#sidebar .param-group[open] > summary::after {
+      transform: rotate(180deg) translateY(1px);
+    }
+
+    aside#sidebar .param-group > .param-body {
+      padding: 10px 9px 10px 9px;
     }
 
     .noise-modes-row {
@@ -339,7 +432,7 @@
       margin-bottom: 4px;
     }
 
-    aside#sidebar .param-group > label:not(.grow) {
+    aside#sidebar .param-group .param-body > label:not(.grow) {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -379,11 +472,12 @@
       width: 100%;
     }
 
-    aside#sidebar details {
+    /* Nested details inside param bodies */
+    aside#sidebar details:not(.param-group) {
       width: 100%;
     }
 
-    aside#sidebar details summary {
+    aside#sidebar details:not(.param-group) summary {
       cursor: pointer;
       font-weight: 600;
       list-style: none;
@@ -392,7 +486,7 @@
       color: #e4e4e4;
     }
 
-    aside#sidebar details > div {
+    aside#sidebar details:not(.param-group) > div {
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -405,7 +499,7 @@
       width: 100%;
     }
 
-    aside#sidebar details label {
+    aside#sidebar details:not(.param-group) label {
       display: flex;
       align-items: center;
       justify-content: flex-start;
@@ -539,174 +633,179 @@
       <a href="#toroidal-section" class="nav-pill">Z slice</a>
     </nav>
 
-    <div id="res-section" class="param-group">
-      <h2>Resolution</h2>
-      <label>
-        Canvas width:
-        <input type="number" id="res-width" value="800" min="1" />
-      </label>
-      <label>
-        Canvas height:
-        <input type="number" id="res-height" value="800" min="1" />
-      </label>
-      <button id="apply-res" type="button">Apply resolution</button>
-    </div>
+    <details id="res-section" class="param-group">
+      <summary>Resolution</summary>
+      <div class="param-body">
+        <label>
+          Canvas width:
+          <input type="number" id="res-width" value="800" min="1" />
+        </label>
+        <label>
+          Canvas height:
+          <input type="number" id="res-height" value="800" min="1" />
+        </label>
+        <button id="apply-res" type="button">Apply resolution</button>
+      </div>
+    </details>
 
-    <div id="noise-params" class="param-group">
-      <h2>Noise settings</h2>
+    <details id="noise-params" class="param-group" open>
+      <summary>Noise settings</summary>
+      <div class="param-body">
+        <div class="noise-modes-row">
+          <label class="grow">
+            Noise modes (additive):
+            <details class="grow">
+              <summary>Select noise types ▾</summary>
+              <div id="noise-type-list"></div>
+            </details>
+          </label>
+        </div>
 
-      <div class="noise-modes-row">
-        <label class="grow">
-          Noise modes (additive):
-          <details class="grow">
-            <summary>Select noise types ▾</summary>
-            <div id="noise-type-list"></div>
-          </details>
+        <label>
+          Seed:
+          <input
+            type="number"
+            step="1"
+            id="noise-seed"
+            value="1234567890"
+            min="1"
+          />
+        </label>
+        <label>
+          Zoom:
+          <input type="number" step="0.1" id="noise-zoom" value="1.0" min="0.1" />
+        </label>
+        <label>
+          Frequency:
+          <input type="number" step="0.01" id="noise-freq" value="1.0" />
+        </label>
+        <label>
+          Octaves:
+          <input type="number" step="1" id="noise-octaves" value="8" min="1" />
+        </label>
+        <label>
+          Lacunarity:
+          <input
+            type="number"
+            step="0.1"
+            id="noise-lacunarity"
+            value="2.0"
+            min="0.1"
+          />
+        </label>
+        <label>
+          Gain:
+          <input
+            type="number"
+            step="0.01"
+            id="noise-gain"
+            value="0.5"
+            min="0.0"
+          />
+        </label>
+        <label>
+          X shift:
+          <input type="number" step="0.01" id="noise-xShift" value="0" />
+        </label>
+        <label>
+          Y shift:
+          <input type="number" step="0.01" id="noise-yShift" value="0" />
+        </label>
+        <label>
+          Z shift:
+          <input type="number" step="0.01" id="noise-zShift" value="0" />
         </label>
       </div>
+    </details>
 
-      <label>
-        Seed:
-        <input
-          type="number"
-          step="1"
-          id="noise-seed"
-          value="1234567890"
-          min="1"
-        />
-      </label>
-      <label>
-        Zoom:
-        <input type="number" step="0.1" id="noise-zoom" value="1.0" min="0.1" />
-      </label>
-      <label>
-        Frequency:
-        <input type="number" step="0.01" id="noise-freq" value="1.0" />
-      </label>
-      <label>
-        Octaves:
-        <input type="number" step="1" id="noise-octaves" value="8" min="1" />
-      </label>
-      <label>
-        Lacunarity:
-        <input
-          type="number"
-          step="0.1"
-          id="noise-lacunarity"
-          value="2.0"
-          min="0.1"
-        />
-      </label>
-      <label>
-        Gain:
-        <input
-          type="number"
-          step="0.01"
-          id="noise-gain"
-          value="0.5"
-          min="0.0"
-        />
-      </label>
-      <label>
-        X shift:
-        <input type="number" step="0.01" id="noise-xShift" value="0" />
-      </label>
-      <label>
-        Y shift:
-        <input type="number" step="0.01" id="noise-yShift" value="0" />
-      </label>
-      <label>
-        Z shift:
-        <input type="number" step="0.01" id="noise-zShift" value="0" />
-      </label>
-    </div>
+    <details id="voro-params" class="param-group">
+      <summary>Voronoi</summary>
+      <div class="param-body">
+        <label>
+          Mode:
+          <select id="noise-voroMode" style="width: 100%">
+            <option value="0" selected>Granite (Cell value)</option>
+            <option value="5">Flat shade (Cells) [gap]</option>
+            <option value="6">Flat shade (Edges) [gap]</option>
+            <option value="4">Edge threshold (Gap gate) [gap]</option>
+            <option value="3">Edges (Continuous) [gap]</option>
+            <option value="2">Interior (F2 − F1) [gap]</option>
 
-    <div id="voro-params" class="param-group">
-      <h2>Voronoi</h2>
+            <option value="10">Flat shade (Cells) [sq]</option>
+            <option value="11">Flat shade (Edges) [sq]</option>
+            <option value="9">Edge threshold (Gap gate) [sq]</option>
+            <option value="8">Edges (Continuous) [sq]</option>
+            <option value="7">Interior (F2² − F1²) [sq]</option>
+            <option value="1">F1 distance</option>
+            <option value="12">F1 threshold (Gate)</option>
+            <option value="13">F1 mask (Smooth)</option>
+            <option value="14">F1 mask (Smooth inv)</option>
+            <option value="15">Edge falloff (1 / (1 + gap*k))</option>
+            <option value="16">Edge falloff (1 / (1 + gapSq*k))</option>
+          </select>
+        </label>
 
-      <label>
-        Mode:
-        <select id="noise-voroMode" style="width: 100%">
-          <option value="0" selected>Granite (Cell value)</option>
-          <option value="5">Flat shade (Cells) [gap]</option>
-          <option value="6">Flat shade (Edges) [gap]</option>
-          <option value="4">Edge threshold (Gap gate) [gap]</option>
-          <option value="3">Edges (Continuous) [gap]</option>
-          <option value="2">Interior (F2 − F1) [gap]</option>
+        <label>
+          Threshold:
+          <input type="number" step="0.01" id="noise-threshold" value="0.1" />
+        </label>
 
-          <option value="10">Flat shade (Cells) [sq]</option>
-          <option value="11">Flat shade (Edges) [sq]</option>
-          <option value="9">Edge threshold (Gap gate) [sq]</option>
-          <option value="8">Edges (Continuous) [sq]</option>
-          <option value="7">Interior (F2² − F1²) [sq]</option>
-          <option value="1">F1 distance</option>
-          <option value="12">F1 threshold (Gate)</option>
-          <option value="13">F1 mask (Smooth)</option>
-          <option value="14">F1 mask (Smooth inv)</option>
-          <option value="15">Edge falloff (1 / (1 + gap*k))</option>
-          <option value="16">Edge falloff (1 / (1 + gapSq*k))</option>
-        </select>
-      </label>
+        <label>
+          Edge softness (edgeK):
+          <input type="number" step="0.01" id="noise-edgeK" value="0.0" />
+        </label>
+      </div>
+    </details>
 
-      <label>
-        Threshold:
-        <input type="number" step="0.01" id="noise-threshold" value="0.1" />
-      </label>
+    <details id="adv-params" class="param-group">
+      <summary>Advanced params</summary>
+      <div class="param-body">
+        <label>
+          Seed angle:
+          <input type="number" step="0.01" id="noise-seedAngle" value="0.0" />
+        </label>
 
-      <label>
-        Edge softness (edgeK):
-        <input type="number" step="0.01" id="noise-edgeK" value="0.0" />
-      </label>
-    </div>
+        <label>
+          Turbulence:
+          <input type="checkbox" id="noise-turbulence" />
+        </label>
 
-    <div id="adv-params" class="param-group">
-      <h2>Advanced params</h2>
+        <label>
+          Time:
+          <input type="number" step="0.01" id="noise-time" value="0.0" />
+        </label>
 
-      <label>
-        Seed angle:
-        <input type="number" step="0.01" id="noise-seedAngle" value="0.0" />
-      </label>
+        <label>
+          Warp amp:
+          <input type="number" step="0.01" id="noise-warpAmp" value="0.5" />
+        </label>
 
-      <label>
-        Turbulence:
-        <input type="checkbox" id="noise-turbulence" />
-      </label>
+        <label>
+          Gabor radius:
+          <input type="number" step="0.01" id="noise-gaborRadius" value="4.0" />
+        </label>
 
-      <label>
-        Time:
-        <input type="number" step="0.01" id="noise-time" value="0.0" />
-      </label>
+        <label>
+          Terrace step:
+          <input type="number" step="0.01" id="noise-terraceStep" value="8.0" />
+        </label>
 
-      <label>
-        Warp amp:
-        <input type="number" step="0.01" id="noise-warpAmp" value="0.5" />
-      </label>
+        <label>
+          Exp1:
+          <input type="number" step="0.01" id="noise-exp1" value="1.0" />
+        </label>
 
-      <label>
-        Gabor radius:
-        <input type="number" step="0.01" id="noise-gaborRadius" value="4.0" />
-      </label>
+        <label>
+          Exp2:
+          <input type="number" step="0.01" id="noise-exp2" value="0.0" />
+        </label>
 
-      <label>
-        Terrace step:
-        <input type="number" step="0.01" id="noise-terraceStep" value="8.0" />
-      </label>
-
-      <label>
-        Exp1:
-        <input type="number" step="0.01" id="noise-exp1" value="1.0" />
-      </label>
-
-      <label>
-        Exp2:
-        <input type="number" step="0.01" id="noise-exp2" value="0.0" />
-      </label>
-
-      <label>
-        Ripple freq:
-        <input type="number" step="0.01" id="noise-rippleFreq" value="10.0" />
-      </label>
-    </div>
+        <label>
+          Ripple freq:
+          <input type="number" step="0.01" id="noise-rippleFreq" value="10.0" />
+        </label>
+      </div>
+    </details>
 
     <button id="render-btn" type="button">Render</button>
 
@@ -743,168 +842,186 @@
         White
       </label>
     </div>
+
     <button id="download-main" type="button">Save image</button>
     <button id="download-tile" type="button">Save tile</button>
     <button id="download-tileset" type="button">Save tileset</button>
 
-    <div id="overrides-group" class="param-group">
-      <h2>Per entry overrides</h2>
+    <details id="overrides-group" class="param-group">
+      <summary>Per entry overrides</summary>
+      <div class="param-body">
+        <label>
+          Entry:
+          <select id="override-mode" style="width: 100%"></select>
+        </label>
 
-      <label>
-        Entry:
-        <select id="override-mode" style="width: 100%"></select>
-      </label>
+        <label>
+          Zoom:
+          <input type="number" id="ov-zoom" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Frequency:
+          <input type="number" id="ov-freq" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Lacunarity:
+          <input type="number" id="ov-lacunarity" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Gain:
+          <input type="number" id="ov-gain" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Octaves:
+          <input type="number" id="ov-octaves" step="1" placeholder="" />
+        </label>
 
-      <label>
-        Zoom:
-        <input type="number" id="ov-zoom" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Frequency:
-        <input type="number" id="ov-freq" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Lacunarity:
-        <input type="number" id="ov-lacunarity" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Gain:
-        <input type="number" id="ov-gain" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Octaves:
-        <input type="number" id="ov-octaves" step="1" placeholder="" />
-      </label>
+        <label>
+          Turbulence:
+          <select id="ov-turbulence" style="width: 7.2em">
+            <option value="">inherit</option>
+            <option value="0">0</option>
+            <option value="1">1</option>
+          </select>
+        </label>
 
-      <label>
-        Turbulence:
-        <select id="ov-turbulence" style="width: 7.2em">
-          <option value="">inherit</option>
-          <option value="0">0</option>
-          <option value="1">1</option>
-        </select>
-      </label>
+        <label>
+          Seed angle:
+          <input type="number" id="ov-seedAngle" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        Seed angle:
-        <input type="number" id="ov-seedAngle" step="0.01" placeholder="" />
-      </label>
+        <label>
+          Exp1:
+          <input type="number" id="ov-exp1" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Exp2:
+          <input type="number" id="ov-exp2" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Ripple freq:
+          <input type="number" id="ov-rippleFreq" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        Exp1:
-        <input type="number" id="ov-exp1" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Exp2:
-        <input type="number" id="ov-exp2" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Ripple freq:
-        <input type="number" id="ov-rippleFreq" step="0.01" placeholder="" />
-      </label>
+        <label>
+          Time:
+          <input type="number" id="ov-time" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        Time:
-        <input type="number" id="ov-time" step="0.01" placeholder="" />
-      </label>
+        <label>
+          Warp amp:
+          <input type="number" id="ov-warp" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        Warp amp:
-        <input type="number" id="ov-warp" step="0.01" placeholder="" />
-      </label>
+        <label>
+          Threshold:
+          <input type="number" id="ov-threshold" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        Threshold:
-        <input type="number" id="ov-threshold" step="0.01" placeholder="" />
-      </label>
+        <label>
+          Voronoi mode:
+          <select id="ov-voroMode" style="width: 7.2em">
+            <option value="">inherit</option>
+            <option value="0">granite</option>
+            <option value="5">flat cells</option>
+            <option value="6">flat edges</option>
+            <option value="4">edge gate</option>
+            <option value="3">edges</option>
+            <option value="1">f1</option>
+            <option value="2">gap</option>
+          </select>
+        </label>
 
-      <label>
-        Voronoi mode:
-        <select id="ov-voroMode" style="width: 7.2em">
-          <option value="">inherit</option>
-          <option value="0">granite</option>
-          <option value="5">flat cells</option>
-          <option value="6">flat edges</option>
-          <option value="4">edge gate</option>
-          <option value="3">edges</option>
-          <option value="1">f1</option>
-          <option value="2">gap</option>
-        </select>
-      </label>
+        <label>
+          EdgeK:
+          <input type="number" id="ov-edgeK" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        EdgeK:
-        <input type="number" id="ov-edgeK" step="0.01" placeholder="" />
-      </label>
+        <label>
+          Gabor radius:
+          <input type="number" id="ov-gabor" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        Gabor radius:
-        <input type="number" id="ov-gabor" step="0.01" placeholder="" />
-      </label>
+        <label>
+          Terrace step:
+          <input type="number" id="ov-terraceStep" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        Terrace step:
-        <input type="number" id="ov-terraceStep" step="0.01" placeholder="" />
-      </label>
+        <label>
+          X shift:
+          <input type="number" id="ov-xShift" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Y shift:
+          <input type="number" id="ov-yShift" step="0.01" placeholder="" />
+        </label>
+        <label>
+          Z shift:
+          <input type="number" id="ov-zShift" step="0.01" placeholder="" />
+        </label>
 
-      <label>
-        X shift:
-        <input type="number" id="ov-xShift" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Y shift:
-        <input type="number" id="ov-yShift" step="0.01" placeholder="" />
-      </label>
-      <label>
-        Z shift:
-        <input type="number" id="ov-zShift" step="0.01" placeholder="" />
-      </label>
-
-      <button id="ov-clear" type="button" style="width: 100%; margin-top: 8px">
-        Clear overrides for entry
-      </button>
-    </div>
+        <button id="ov-clear" type="button" style="width: 100%; margin-top: 8px">
+          Clear overrides for entry
+        </button>
+      </div>
+    </details>
 
     <hr />
 
-    <div id="toroidal-section" class="param-group">
-      <h2>Toroidal slice</h2>
+    <details id="toroidal-section" class="param-group">
+      <summary>Toroidal slice</summary>
+      <div class="param-body">
+        <label class="grow">
+          Volume 4D modes (additive):
+          <details class="grow">
+            <summary>Select 4D types ▾</summary>
+            <div id="toroidal-type-list"></div>
+          </details>
+        </label>
 
-      <label class="grow">
-        Volume 4D modes (additive):
-        <details class="grow">
-          <summary>Select 4D types ▾</summary>
-          <div id="toroidal-type-list"></div>
-        </details>
-      </label>
-
-      <label>
-        Z slice (0 to 127):
-        <input type="range" id="z-slice" min="0" max="127" value="64" />
-      </label>
-      <label>
-        Slice index:
-        <input type="number" id="z-slice-num" min="0" max="127" value="64" />
-      </label>
-    </div>
+        <label>
+          Slice index:
+          <input type="number" id="z-slice-num" min="0" max="127" value="64" />
+        </label>
+      </div>
+    </details>
   </aside>
 
   <main id="main">
     <div id="view-stack" class="content">
-      <div class="preview-header">
-        <div id="preview-meta">Height field preview</div>
-        <div id="preview-stats"></div>
-      </div>
+      <div class="stage">
+        <input type="radio" name="view-tab" id="view-tab-preview" checked />
+        <input type="radio" name="view-tab" id="view-tab-tileset" />
 
-      <div class="squareWrap">
-        <canvas id="noise-canvas"></canvas>
-      </div>
-    </div>
+        <div class="preview-header">
+          <div id="preview-meta">Height field preview</div>
+          <div id="preview-stats"></div>
+        </div>
 
-    <div id="mosaic-box" class="content">
-      <h2>3D toroidal volume tiles (3×3)</h2>
-      <p id="mosaic-caption" class="mosaic-caption"></p>
-      <div id="mosaic"></div>
+        <div class="stage-tabs" role="tablist" aria-label="Preview tabs">
+          <label class="stage-tab" for="view-tab-preview">Main</label>
+          <label class="stage-tab" for="view-tab-tileset">Tileset</label>
+        </div>
+
+        <div class="squareWrap stageWrap">
+          <div class="stage-panel stage-preview">
+            <canvas id="noise-canvas"></canvas>
+          </div>
+
+          <div class="stage-panel stage-tileset">
+            
+        <label>
+          Z slice (0 to 127):
+          <input type="range" id="z-slice" min="0" max="127" value="64" />
+        </label>
+            <div id="mosaic"></div>
+          </div>
+        </div>
+
+        <div class="stage-footer">
+          <p id="mosaic-caption" class="mosaic-caption"></p>
+        </div>
+      </div>
     </div>
   </main>
 </div>

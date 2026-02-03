@@ -315,24 +315,29 @@ function ensureCanvasSize(builder, canvas, w, h, cssW = null, cssH = null) {
   return changed;
 }
 
-function configureMosaicLayout(mosaicRoot, tileW, tileH, count) {
+function configureMosaicLayout(mosaicRoot, count) {
   const n = Math.max(1, count | 0);
-  const cols = Math.max(1, Math.round(Math.sqrt(n)));
+  const cols = Math.round(Math.sqrt(n));
   const rows = Math.ceil(n / cols);
 
   mosaicRoot.style.display = "grid";
-  mosaicRoot.style.gridTemplateColumns = `repeat(${cols}, ${tileW}px)`;
-  mosaicRoot.style.gridAutoRows = `${tileH}px`;
-  mosaicRoot.style.gap = "0px";
+
+  /* fully fill the squareWrap */
+  mosaicRoot.style.width = "100%";
+  mosaicRoot.style.height = "100%";
+
+  /* equal fractional cells */
+  mosaicRoot.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  mosaicRoot.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+
+  mosaicRoot.style.gap = "0";
   mosaicRoot.style.padding = "0";
   mosaicRoot.style.margin = "0";
   mosaicRoot.style.border = "0";
   mosaicRoot.style.lineHeight = "0";
   mosaicRoot.style.fontSize = "0";
-  mosaicRoot.style.alignItems = "start";
-  mosaicRoot.style.justifyItems = "start";
-  mosaicRoot.style.placeItems = "start";
-  mosaicRoot.style.overflow = "hidden";
+
+  mosaicRoot.style.placeItems = "stretch";
 }
 
 function initMainAndMosaicCanvases() {
@@ -351,7 +356,7 @@ function initMainAndMosaicCanvases() {
     throw new Error("Missing main preview canvas (#noise-canvas)");
   }
 
-  applyCanvasCSS(mainCanvas); // fill .squareWrap
+  applyCanvasCSS(mainCanvas);
 
   const mosaicRoot = document.getElementById("mosaic");
   if (!mosaicRoot) {
@@ -366,23 +371,18 @@ function initMainAndMosaicCanvases() {
       const c = document.createElement("canvas");
       c.width = TOROIDAL_SIZE;
       c.height = TOROIDAL_SIZE;
-      applyCanvasCSS(c); // fill grid cell
+      applyCanvasCSS(c);
       mosaicRoot.appendChild(c);
       mosaicCanvases.push(c);
     }
   } else {
     existing.forEach((c) => {
-      applyCanvasCSS(c); // fill grid cell
+      applyCanvasCSS(c);
       mosaicCanvases.push(c);
     });
   }
 
-  configureMosaicLayout(
-    mosaicRoot,
-    TOROIDAL_SIZE,
-    TOROIDAL_SIZE,
-    mosaicCanvases.length || 9,
-  );
+  configureMosaicLayout(mosaicRoot, mosaicCanvases.length || 9);
 
   return { mainCanvas, mosaicCanvases };
 }
@@ -682,7 +682,6 @@ function readLockedResolutionFromUI(builder, fallback = 800) {
   const maxTex2D = lim.maxTextureDimension2D ?? 8192;
   const maxStore2D = lim.maxStorageTextureDimension2D ?? maxTex2D;
 
-  // You bind the output as a storage texture, so this is the effective cap.
   const devMax = Math.min(maxTex2D, maxStore2D) | 0;
 
   let w = toI(wEl?.value, fallback);
@@ -697,7 +696,6 @@ function readLockedResolutionFromUI(builder, fallback = 800) {
   return { w, h };
 }
 
-
 function ensurePreviewCanvas(builder, canvas, resW, resH) {
   const maxPreview = 2048;
   const pw = Math.min(resW, maxPreview);
@@ -705,14 +703,22 @@ function ensurePreviewCanvas(builder, canvas, resW, resH) {
   ensureCanvasSize(builder, canvas, pw, ph);
 }
 
+function setPreviewHeader(text) {
+  const previewMeta = document.getElementById("preview-meta");
+  if (previewMeta) previewMeta.textContent = text;
+}
 
-async function renderMainNoise(builder, mainCanvas) {
+function setPreviewStats(text) {
+  const previewStats = document.getElementById("preview-stats");
+  if (previewStats) previewStats.textContent = text;
+}
+
+async function renderMainNoise(builder, mainCanvas, opts = {}) {
+  const updateUI = opts.updateUI !== false;
+
   const { w: resW, h: resH } = readLockedResolutionFromUI(builder, 800);
 
   ensurePreviewCanvas(builder, mainCanvas, resW, resH);
-
-  const previewMeta = document.getElementById("preview-meta");
-  const previewStats = document.getElementById("preview-stats");
 
   const globalParams = readGlobalParamsFromUI();
   builder.buildPermTable(globalParams.seed | 0);
@@ -762,26 +768,60 @@ async function renderMainNoise(builder, mainCanvas) {
   }
   const tBlitEnd = performance.now();
 
-  if (previewMeta) {
+  if (updateUI) {
     const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
     const tileTag = any4D ? " · toroidal(4D)" : "";
     const worldDim = Math.max(resW, resH) | 0;
-    previewMeta.textContent =
-      `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
-      `${buildModeLabelList(noiseBits)}${tileTag}`;
-  }
 
-  if (previewStats) {
+    setPreviewHeader(
+      `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
+        `${buildModeLabelList(noiseBits)}${tileTag}`,
+    );
+
     const computeMs = (tComputeEnd - tComputeStart).toFixed(1);
     const blitMs = (tBlitEnd - tBlitStart).toFixed(1);
-    previewStats.textContent = `GPU compute ${computeMs} ms · blit ${blitMs} ms`;
+    setPreviewStats(`GPU compute ${computeMs} ms · blit ${blitMs} ms`);
   }
 
   return { resW, resH, noiseBits };
 }
 
+function renderToroidalSlice(builder, volumeView, mosaicCanvases, opts = {}) {
+  if (!volumeView) return 0;
 
-async function renderToroidalDemo(builder, mosaicCanvases, state) {
+  const depth = TOROIDAL_SIZE;
+  const zIndex = getZSliceIndexFromUI();
+  const zNorm = (zIndex + 0.5) / depth;
+
+  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
+  const count = canvases.length || 9;
+
+  const t0 = performance.now();
+
+  for (let i = 0; i < count; i++) {
+    const canvas = canvases[i];
+    if (!canvas) continue;
+
+    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
+
+    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
+      depth,
+      zNorm,
+      channel: 0,
+      chunk: 0,
+      preserveCanvasSize: true,
+      clear: true,
+    });
+  }
+
+  const t1 = performance.now();
+  return t1 - t0;
+}
+
+async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
+  const draw = opts.draw !== false;
+  const updateUI = opts.updateUI !== false;
+
   const globalParams = readGlobalParamsFromUI();
   builder.buildPermTable(globalParams.seed | 0);
 
@@ -836,38 +876,35 @@ async function renderToroidalDemo(builder, mosaicCanvases, state) {
   state.lastToroidalVolumeView = volumeView;
   state.lastToroidalComputeMs = t1 - t0;
 
-  renderToroidalSlice(
-    builder,
-    volumeView,
-    new Array(9).fill(0).map((_, i) => mosaicCanvases[i]),
-  );
+  let sliceBlitMs = 0;
+  if (draw) {
+    sliceBlitMs = renderToroidalSlice(builder, volumeView, mosaicCanvases);
+  }
+
+  if (updateUI) {
+    const modeTag = modes.length
+      ? modes.map((m) => makeNoiseLabelFromEntryPoint(m.entry)).join(" + ")
+      : "None";
+
+    setPreviewHeader(
+      `Toroidal tiles · ${TOROIDAL_SIZE}³ · modes: ${modeTag} · Z slice: ${getZSliceIndexFromUI()}`,
+    );
+
+    const computeMs = state.lastToroidalComputeMs.toFixed(1);
+    const blitMs = sliceBlitMs.toFixed(1);
+    setPreviewStats(
+      draw
+        ? `GPU volume compute ${computeMs} ms · slice blit ${blitMs} ms`
+        : `GPU volume compute ${computeMs} ms`,
+    );
+  }
+
+  return { computeMs: state.lastToroidalComputeMs, sliceBlitMs };
 }
 
-function renderToroidalSlice(builder, volumeView, mosaicCanvases) {
-  if (!volumeView) return;
-
-  const depth = TOROIDAL_SIZE;
-  const zIndex = getZSliceIndexFromUI();
-  const zNorm = (zIndex + 0.5) / depth;
-
-  const canvases = Array.isArray(mosaicCanvases) ? mosaicCanvases : [];
-  const count = canvases.length || 9;
-
-  for (let i = 0; i < count; i++) {
-    const canvas = canvases[i];
-    if (!canvas) continue;
-
-    ensureCanvasSize(builder, canvas, TOROIDAL_SIZE, TOROIDAL_SIZE);
-
-    builder.renderTexture3DSliceToCanvas(volumeView, canvas, {
-      depth,
-      zNorm,
-      channel: 0,
-      chunk: 0,
-      preserveCanvasSize: true,
-      clear: true,
-    });
-  }
+function getActiveView() {
+  const tilesetTab = document.getElementById("view-tab-tileset");
+  return tilesetTab && tilesetTab.checked ? "tileset" : "main";
 }
 
 async function initNoiseDemo() {
@@ -921,36 +958,76 @@ async function initNoiseDemo() {
     lastToroidalComputeMs: 0,
   };
 
-  let mainRenderPending = false;
-  let toroidalRenderPending = false;
+  const dirty = {
+    main: true,
+    tileset: true,
+  };
 
-  const scheduleMainRender = () => {
-    if (mainRenderPending) return;
-    mainRenderPending = true;
-    requestAnimationFrame(() => {
-      mainRenderPending = false;
-      renderMainNoise(builder, mainCanvas).catch((err) => {
+  let renderInFlight = false;
+  let wantsRender = false;
+
+  const requestActiveRender = () => {
+    wantsRender = true;
+    if (renderInFlight) return;
+
+    renderInFlight = true;
+    requestAnimationFrame(async () => {
+      wantsRender = false;
+
+      const view = getActiveView();
+
+      try {
+        if (view === "main") {
+          if (dirty.main) {
+            dirty.main = false;
+            await renderMainNoise(builder, mainCanvas, { updateUI: true });
+          }
+        } else {
+          if (dirty.tileset || !state.lastToroidalVolumeView) {
+            dirty.tileset = false;
+            await renderToroidalDemo(builder, mosaicCanvases, state, {
+              draw: true,
+              updateUI: true,
+            });
+          } else {
+            const blitMs = renderToroidalSlice(
+              builder,
+              state.lastToroidalVolumeView,
+              mosaicCanvases,
+            );
+            setPreviewHeader(
+              `Toroidal tiles · ${TOROIDAL_SIZE}³ · Z slice: ${getZSliceIndexFromUI()}`,
+            );
+            setPreviewStats(
+              `GPU volume compute ${state.lastToroidalComputeMs.toFixed(1)} ms · slice blit ${blitMs.toFixed(1)} ms`,
+            );
+          }
+        }
+      } catch (err) {
         console.error(err);
         if (statsEl) statsEl.textContent = String(err);
-      });
+      }
+
+      renderInFlight = false;
+      if (wantsRender) requestActiveRender();
     });
   };
 
-  const scheduleToroidalRender = () => {
-    if (toroidalRenderPending) return;
-    toroidalRenderPending = true;
-    requestAnimationFrame(() => {
-      toroidalRenderPending = false;
-      renderToroidalDemo(builder, mosaicCanvases, state).catch((err) => {
-        console.error(err);
-        if (statsEl) statsEl.textContent = String(err);
-      });
-    });
+  const markDirtyMain = (scheduleIfActive = true) => {
+    dirty.main = true;
+    if (scheduleIfActive && getActiveView() === "main") requestActiveRender();
   };
 
-  const scheduleAllRender = () => {
-    scheduleMainRender();
-    scheduleToroidalRender();
+  const markDirtyTileset = (scheduleIfActive = true) => {
+    dirty.tileset = true;
+    if (scheduleIfActive && getActiveView() === "tileset")
+      requestActiveRender();
+  };
+
+  const markDirtyBoth = () => {
+    dirty.main = true;
+    dirty.tileset = true;
+    requestActiveRender();
   };
 
   const overrideInputs = [
@@ -981,8 +1058,7 @@ async function initNoiseDemo() {
     if (!el) return;
     el.addEventListener("change", () => {
       updateOverridesFromFields();
-      scheduleMainRender();
-      scheduleToroidalRender();
+      markDirtyBoth();
     });
   });
 
@@ -1003,22 +1079,22 @@ async function initNoiseDemo() {
       if (!Number.isInteger(bit)) return;
       MODE_OVERRIDES.delete(bit);
       populateOverrideFieldsForBit(bit);
-      scheduleMainRender();
-      scheduleToroidalRender();
+      markDirtyBoth();
     });
   }
 
   const renderBtn = document.getElementById("render-btn");
   if (renderBtn) {
     renderBtn.addEventListener("click", () => {
-      scheduleAllRender();
+      if (getActiveView() === "main") markDirtyMain(true);
+      else markDirtyTileset(true);
     });
   }
 
   const applyResBtn = document.getElementById("apply-res");
   if (applyResBtn) {
     applyResBtn.addEventListener("click", () => {
-      scheduleAllRender();
+      markDirtyMain(true);
     });
   }
 
@@ -1052,12 +1128,14 @@ async function initNoiseDemo() {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("input", () => {
-      scheduleMainRender();
-      scheduleToroidalRender();
+      dirty.main = true;
+      dirty.tileset = true;
+      requestActiveRender();
     });
     el.addEventListener("change", () => {
-      scheduleMainRender();
-      scheduleToroidalRender();
+      dirty.main = true;
+      dirty.tileset = true;
+      requestActiveRender();
     });
   });
 
@@ -1066,7 +1144,7 @@ async function initNoiseDemo() {
     noiseListRoot.addEventListener("change", (e) => {
       const t = e.target;
       if (!t || t.name !== "noise-type") return;
-      scheduleMainRender();
+      markDirtyMain(true);
     });
   }
 
@@ -1075,23 +1153,37 @@ async function initNoiseDemo() {
     toroidalListRoot.addEventListener("change", (e) => {
       const t = e.target;
       if (!t || t.name !== "toroidal-type") return;
-      scheduleToroidalRender();
+      updateMosaicCaption(
+        collectSelectedToroidalModesFromUI().map((m) => m.entry),
+      );
+      markDirtyTileset(true);
     });
   }
 
   const zSlider = document.getElementById("z-slice");
   const zInput = document.getElementById("z-slice-num");
 
-  const rerenderSliceOnly = () => {
+  const rerenderSliceOnlyIfVisible = () => {
+    if (getActiveView() !== "tileset") return;
     if (!state.lastToroidalVolumeView) return;
-    renderToroidalSlice(builder, state.lastToroidalVolumeView, mosaicCanvases);
+    const blitMs = renderToroidalSlice(
+      builder,
+      state.lastToroidalVolumeView,
+      mosaicCanvases,
+    );
+    setPreviewHeader(
+      `Toroidal tiles · ${TOROIDAL_SIZE}³ · Z slice: ${getZSliceIndexFromUI()}`,
+    );
+    setPreviewStats(
+      `GPU volume compute ${state.lastToroidalComputeMs.toFixed(1)} ms · slice blit ${blitMs.toFixed(1)} ms`,
+    );
   };
 
   if (zSlider) {
     zSlider.addEventListener("input", () => {
       const v = Number(zSlider.value);
       if (zInput) zInput.value = String(v);
-      rerenderSliceOnly();
+      rerenderSliceOnlyIfVisible();
     });
   }
 
@@ -1102,104 +1194,20 @@ async function initNoiseDemo() {
       idx = Math.min(Math.max(Math.round(idx), 0), TOROIDAL_SIZE - 1);
       zInput.value = String(idx);
       if (zSlider) zSlider.value = String(idx);
-      rerenderSliceOnly();
+      rerenderSliceOnlyIfVisible();
     });
   }
 
-  const downloadMainBtn = document.getElementById("download-main");
-  if (downloadMainBtn) {
-    downloadMainBtn.addEventListener("click", async () => {
-      try {
-        updateOverridesFromFields();
-
-        const bg = syncExportBackgroundToBuilder(builder);
-
-        const resW = Number(document.getElementById("res-width")?.value) || 800;
-        const resH =
-          Number(document.getElementById("res-height")?.value) || 800;
-
-        ensureCanvasSize(builder, mainCanvas, resW, resH);
-
-        await renderMainNoise(builder, mainCanvas);
-
-        const blob = await builder.exportCurrent2DToPNGBlob(resW, resH, {
-          layer: 0,
-          channel: 0,
-          background: bg,
-        });
-
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "noise-main.png";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      } catch (e) {
-        console.error("download-main failed:", e);
-        if (statsEl) statsEl.textContent = "Export main PNG failed: " + e;
-      }
+  const tabPreview = document.getElementById("view-tab-preview");
+  const tabTileset = document.getElementById("view-tab-tileset");
+  if (tabPreview) {
+    tabPreview.addEventListener("change", () => {
+      requestActiveRender();
     });
   }
-
-  const downloadTileBtn = document.getElementById("download-tile");
-  if (downloadTileBtn) {
-    downloadTileBtn.addEventListener("click", async () => {
-      try {
-        updateOverridesFromFields();
-
-        const bg = syncExportBackgroundToBuilder(builder);
-
-        await renderToroidalDemo(builder, mosaicCanvases, state);
-
-        if (!state.lastToroidalVolumeView) {
-          console.warn("No toroidal volume available for export");
-          return;
-        }
-
-        const tileCanvas =
-          (mosaicCanvases && mosaicCanvases.length
-            ? mosaicCanvases[0]
-            : null) || document.getElementById("tile-canvas");
-
-        if (!tileCanvas) {
-          console.warn("No tile canvas found for export");
-          return;
-        }
-
-        const w = tileCanvas.width || TOROIDAL_SIZE;
-        const h = tileCanvas.height || TOROIDAL_SIZE;
-        const depth = TOROIDAL_SIZE;
-
-        const zIndex = getZSliceIndexFromUI();
-        const zNorm = (zIndex + 0.5) / depth;
-
-        const blob = await builder.export3DSliceToPNGBlob(
-          state.lastToroidalVolumeView,
-          w,
-          h,
-          {
-            depth,
-            zNorm,
-            channel: 0,
-            chunk: 0,
-            background: bg,
-          },
-        );
-
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "noise-tile.png";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      } catch (e) {
-        console.error("download-tile failed:", e);
-        if (statsEl) statsEl.textContent = "Export tile PNG failed: " + e;
-      }
+  if (tabTileset) {
+    tabTileset.addEventListener("change", () => {
+      requestActiveRender();
     });
   }
 
@@ -1222,17 +1230,128 @@ async function initNoiseDemo() {
       .slice(0, 120);
   }
 
-  async function saveToroidalTileset(builder, state) {
-    if (!state || !state.lastToroidalVolumeView) {
-      console.warn("No toroidal volume available for tileset export");
-      return;
-    }
+  function getExportBackgroundFromUI() {
+    const el = document.querySelector(
+      'input[type="radio"][name="export-bg"]:checked',
+    );
+    const v = String(el?.value || "transparent");
+    if (v === "black" || v === "white" || v === "transparent") return v;
+    return "transparent";
+  }
 
+  function syncExportBackgroundToBuilder(builder) {
+    const bg = getExportBackgroundFromUI();
+    if (builder && typeof builder.setExportBackground === "function") {
+      builder.setExportBackground(bg);
+    }
+    return bg;
+  }
+
+  function wireExportBackgroundUI(builder) {
+    syncExportBackgroundToBuilder(builder);
+
+    const radios = document.querySelectorAll(
+      'input[type="radio"][name="export-bg"]',
+    );
+    radios.forEach((r) => {
+      r.addEventListener("change", () => {
+        syncExportBackgroundToBuilder(builder);
+      });
+    });
+  }
+
+  async function ensureToroidalVolumeForExport() {
     updateOverridesFromFields();
+    await renderToroidalDemo(builder, mosaicCanvases, state, {
+      draw: getActiveView() === "tileset",
+      updateUI: getActiveView() === "tileset",
+    });
+  }
+
+  const downloadMainBtn = document.getElementById("download-main");
+  if (downloadMainBtn) {
+    downloadMainBtn.addEventListener("click", async () => {
+      try {
+        updateOverridesFromFields();
+
+        const bg = syncExportBackgroundToBuilder(builder);
+
+        const resW = Number(document.getElementById("res-width")?.value) || 800;
+        const resH =
+          Number(document.getElementById("res-height")?.value) || 800;
+
+        ensureCanvasSize(builder, mainCanvas, resW, resH);
+
+        await renderMainNoise(builder, mainCanvas, {
+          updateUI: getActiveView() === "main",
+        });
+
+        const blob = await builder.exportCurrent2DToPNGBlob(resW, resH, {
+          layer: 0,
+          channel: 0,
+          background: bg,
+        });
+
+        _downloadBlob(blob, "noise-main.png");
+      } catch (e) {
+        console.error("download-main failed:", e);
+        if (statsEl) statsEl.textContent = "Export main PNG failed: " + e;
+      }
+    });
+  }
+
+  const downloadTileBtn = document.getElementById("download-tile");
+  if (downloadTileBtn) {
+    downloadTileBtn.addEventListener("click", async () => {
+      try {
+        const bg = syncExportBackgroundToBuilder(builder);
+
+        await ensureToroidalVolumeForExport();
+
+        if (!state.lastToroidalVolumeView) {
+          console.warn("No toroidal volume available for export");
+          return;
+        }
+
+        const w = TOROIDAL_SIZE;
+        const h = TOROIDAL_SIZE;
+        const depth = TOROIDAL_SIZE;
+
+        const zIndex = getZSliceIndexFromUI();
+        const zNorm = (zIndex + 0.5) / depth;
+
+        const blob = await builder.export3DSliceToPNGBlob(
+          state.lastToroidalVolumeView,
+          w,
+          h,
+          {
+            depth,
+            zNorm,
+            channel: 0,
+            chunk: 0,
+            background: bg,
+          },
+        );
+
+        _downloadBlob(blob, "noise-tile.png");
+      } catch (e) {
+        console.error("download-tile failed:", e);
+        if (statsEl) statsEl.textContent = "Export tile PNG failed: " + e;
+      }
+    });
+  }
+
+  async function saveToroidalTileset(builder, state) {
+    if (!state) return;
 
     const bg = syncExportBackgroundToBuilder(builder);
 
-    await renderToroidalDemo(builder, mosaicCanvases, state);
+    await ensureToroidalVolumeForExport();
+
+    if (!state.lastToroidalVolumeView) {
+      console.warn("No toroidal volume available for tileset export");
+      return;
+    }
 
     const globalParams = readGlobalParamsFromUI();
     const modes = collectSelectedToroidalModesFromUI().map((m) => m.entry);
@@ -1268,7 +1387,6 @@ async function initNoiseDemo() {
     _downloadBlob(blob, filename);
   }
 
-  // inside initNoiseDemo(), near the other download button handlers
   const downloadTilesetBtn = document.getElementById("download-tileset");
   if (downloadTilesetBtn) {
     downloadTilesetBtn.addEventListener("click", async () => {
@@ -1281,40 +1399,10 @@ async function initNoiseDemo() {
     });
   }
 
-  function getExportBackgroundFromUI() {
-    const el = document.querySelector(
-      'input[type="radio"][name="export-bg"]:checked',
-    );
-    const v = String(el?.value || "transparent");
-    if (v === "black" || v === "white" || v === "transparent") return v;
-    return "transparent";
-  }
-
-  function syncExportBackgroundToBuilder(builder) {
-    const bg = getExportBackgroundFromUI();
-    if (builder && typeof builder.setExportBackground === "function") {
-      builder.setExportBackground(bg);
-    }
-    return bg;
-  }
-
-  function wireExportBackgroundUI(builder) {
-    syncExportBackgroundToBuilder(builder);
-
-    const radios = document.querySelectorAll(
-      'input[type="radio"][name="export-bg"]',
-    );
-    radios.forEach((r) => {
-      r.addEventListener("change", () => {
-        syncExportBackgroundToBuilder(builder);
-      });
-    });
-  }
   wireExportBackgroundUI(builder);
   updateMosaicCaption(collectSelectedToroidalModesFromUI().map((m) => m.entry));
 
-  await renderMainNoise(builder, mainCanvas);
-  await renderToroidalDemo(builder, mosaicCanvases, state);
+  requestActiveRender();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
