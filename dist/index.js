@@ -823,46 +823,6 @@
       </div>\r
     </details>\r
 \r
-    <button id="render-btn" type="button">Render</button>\r
-\r
-    <div id="export-bg">\r
-      <div class="export-bg-title">Export BG</div>\r
-      <label>\r
-        <input\r
-          type="radio"\r
-          name="export-bg"\r
-          id="export-bg-transparent"\r
-          value="transparent"\r
-          checked\r
-        />\r
-        Transparent\r
-      </label>\r
-\r
-      <label>\r
-        <input\r
-          type="radio"\r
-          name="export-bg"\r
-          id="export-bg-black"\r
-          value="black"\r
-        />\r
-        Black\r
-      </label>\r
-\r
-      <label>\r
-        <input\r
-          type="radio"\r
-          name="export-bg"\r
-          id="export-bg-white"\r
-          value="white"\r
-        />\r
-        White\r
-      </label>\r
-    </div>\r
-\r
-    <button id="download-main" type="button">Save image</button>\r
-    <button id="download-tile" type="button">Save tile</button>\r
-    <button id="download-tileset" type="button">Save tileset</button>\r
-\r
     <details id="overrides-group" class="param-group">\r
       <summary>Per entry overrides</summary>\r
       <div class="param-body">\r
@@ -981,6 +941,47 @@
         </button>\r
       </div>\r
     </details>\r
+    \r
+    <button id="render-btn" type="button">Render</button>\r
+\r
+    <div id="export-bg">\r
+      <div class="export-bg-title">Export BG</div>\r
+      <label>\r
+        <input\r
+          type="radio"\r
+          name="export-bg"\r
+          id="export-bg-transparent"\r
+          value="transparent"\r
+          checked\r
+        />\r
+        Transparent\r
+      </label>\r
+\r
+      <label>\r
+        <input\r
+          type="radio"\r
+          name="export-bg"\r
+          id="export-bg-black"\r
+          value="black"\r
+        />\r
+        Black\r
+      </label>\r
+\r
+      <label>\r
+        <input\r
+          type="radio"\r
+          name="export-bg"\r
+          id="export-bg-white"\r
+          value="white"\r
+        />\r
+        White\r
+      </label>\r
+    </div>\r
+\r
+    <button id="download-main" type="button">Save image</button>\r
+    <button id="download-tile" type="button">Save tile</button>\r
+    <button id="download-tileset" type="button">Save tileset</button>\r
+\r
 \r
     <hr />\r
 \r
