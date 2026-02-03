@@ -668,11 +668,48 @@ function _isEntryPoint4D(ep) {
   return typeof ep === "string" && /4d/i.test(ep);
 }
 
-async function renderMainNoise(builder, mainCanvas) {
-  const resW = Number(document.getElementById("res-width")?.value) || 800;
-  const resH = Number(document.getElementById("res-height")?.value) || 800;
+function readLockedResolutionFromUI(builder, fallback = 800) {
+  const wEl = document.getElementById("res-width");
+  const hEl = document.getElementById("res-height");
 
-  ensureCanvasSize(builder, mainCanvas, resW, resH);
+  const toI = (v, fb) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fb | 0;
+    return Math.max(1, Math.floor(n));
+  };
+
+  const lim = builder?.device?.limits || {};
+  const maxTex2D = lim.maxTextureDimension2D ?? 8192;
+  const maxStore2D = lim.maxStorageTextureDimension2D ?? maxTex2D;
+
+  // You bind the output as a storage texture, so this is the effective cap.
+  const devMax = Math.min(maxTex2D, maxStore2D) | 0;
+
+  let w = toI(wEl?.value, fallback);
+  let h = toI(hEl?.value, fallback);
+
+  w = Math.min(w, devMax);
+  h = Math.min(h, devMax);
+
+  if (wEl && String(wEl.value) !== String(w)) wEl.value = String(w);
+  if (hEl && String(hEl.value) !== String(h)) hEl.value = String(h);
+
+  return { w, h };
+}
+
+
+function ensurePreviewCanvas(builder, canvas, resW, resH) {
+  const maxPreview = 2048;
+  const pw = Math.min(resW, maxPreview);
+  const ph = Math.min(resH, maxPreview);
+  ensureCanvasSize(builder, canvas, pw, ph);
+}
+
+
+async function renderMainNoise(builder, mainCanvas) {
+  const { w: resW, h: resH } = readLockedResolutionFromUI(builder, 800);
+
+  ensurePreviewCanvas(builder, mainCanvas, resW, resH);
 
   const previewMeta = document.getElementById("preview-meta");
   const previewStats = document.getElementById("preview-stats");
@@ -703,7 +740,6 @@ async function renderMainNoise(builder, mainCanvas) {
   for (const bit of noiseBits) {
     const ep = ENTRY_POINTS[bit];
     const params = buildParamsForBit(bit, globalParams);
-
     params.toroidal = _isEntryPoint4D(ep) ? 1 : 0;
 
     await builder.computeToTexture(resW, resH, params, {
@@ -730,7 +766,9 @@ async function renderMainNoise(builder, mainCanvas) {
     const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
     const tileTag = any4D ? " · toroidal(4D)" : "";
     const worldDim = Math.max(resW, resH) | 0;
-    previewMeta.textContent = `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ${buildModeLabelList(noiseBits)}${tileTag}`;
+    previewMeta.textContent =
+      `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
+      `${buildModeLabelList(noiseBits)}${tileTag}`;
   }
 
   if (previewStats) {
@@ -741,6 +779,7 @@ async function renderMainNoise(builder, mainCanvas) {
 
   return { resW, resH, noiseBits };
 }
+
 
 async function renderToroidalDemo(builder, mosaicCanvases, state) {
   const globalParams = readGlobalParamsFromUI();
@@ -847,7 +886,11 @@ async function initNoiseDemo() {
     return;
   }
 
-  const device = await adapter.requestDevice();
+  const device = await adapter.requestDevice({
+    requiredLimits: {
+      maxBufferSize: adapter.limits.maxBufferSize,
+    },
+  });
   const builder = new NoiseComputeBuilder(device, device.queue);
 
   ENTRY_POINTS = Array.isArray(builder.entryPoints)

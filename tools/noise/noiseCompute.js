@@ -39,7 +39,7 @@ import blit2DWGSL from "./noiseBlit.wgsl";
 import blit3DWGSL from "./noiseBlit3D.wgsl";
 
 // Should be derived from device limits in real code
-const MAX_2D_TILE = 4096;
+const MAX_2D_TILE = 8192;
 const MAX_3D_TILE = 2048;
 const BYTES_PER_VOXEL = 8; // rgba16float = 4 * 16-bit
 
@@ -51,6 +51,8 @@ export class NoiseComputeBuilder {
   constructor(device, queue) {
     this.device = device;
     this.queue = queue;
+
+    this.maxBufferChunkBytes = 8_000_000;
 
     // Keep in sync with WGSL entry points
     this.entryPoints = [
@@ -332,6 +334,141 @@ export class NoiseComputeBuilder {
         dimension: "3d",
       });
     }
+  }
+
+  // Paste these methods into the NoiseComputeBuilder class (near other helpers is fine).
+
+  _getMaxBufferChunkBytes(requested) {
+    const devMax = this.device?.limits?.maxBufferSize ?? 256 * 1024 * 1024;
+    const cap = Math.max(1024 * 1024, Math.floor(devMax * 0.9));
+
+    let want = Number.isFinite(requested)
+      ? Math.floor(requested)
+      : this.maxBufferChunkBytes;
+    if (!Number.isFinite(want) || want <= 0) want = this.maxBufferChunkBytes;
+
+    // keep it >= 4 and 4-byte aligned for writeBuffer
+    want = Math.max(4, want) & ~3;
+
+    return Math.min(cap, want);
+  }
+
+  _writeBufferChunked(
+    dstBuffer,
+    dstOffsetBytes,
+    srcAB,
+    srcOffsetBytes,
+    byteLength,
+    maxChunkBytes = null,
+  ) {
+    const total = byteLength | 0;
+    if (!(total > 0)) return;
+
+    const chunk = this._getMaxBufferChunkBytes(maxChunkBytes);
+    let off = 0;
+
+    while (off < total) {
+      let n = Math.min(chunk, total - off) | 0;
+      n = n & ~3;
+      if (n <= 0) break;
+
+      this.queue.writeBuffer(
+        dstBuffer,
+        (dstOffsetBytes + off) | 0,
+        srcAB,
+        (srcOffsetBytes + off) | 0,
+        n,
+      );
+
+      off = (off + n) | 0;
+    }
+
+    if (off !== total) {
+      throw new Error(
+        `_writeBufferChunked: incomplete write ${off}/${total} bytes`,
+      );
+    }
+  }
+
+  async _readBGRA8TextureToRGBA8Pixels(texture, W, H, opts = {}) {
+    const width = Math.max(1, W | 0);
+    const height = Math.max(1, H | 0);
+
+    const bytesPerPixel = 4;
+    const align = 256;
+    const bytesPerRowUnaligned = width * bytesPerPixel;
+    const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
+
+    const maxBuf = this.device?.limits?.maxBufferSize ?? 256 * 1024 * 1024;
+    const cap = Math.max(1024 * 1024, Math.floor(maxBuf * 0.9));
+
+    let chunkBytes = this._getMaxBufferChunkBytes(opts.maxBufferChunkBytes);
+    if (chunkBytes < bytesPerRow) chunkBytes = bytesPerRow;
+    if (bytesPerRow > cap) {
+      throw new Error(
+        `_readBGRA8TextureToRGBA8Pixels: bytesPerRow=${bytesPerRow} exceeds safe buffer cap=${cap}`,
+      );
+    }
+
+    const rowsPerChunk = Math.max(1, Math.floor(chunkBytes / bytesPerRow)) | 0;
+    const pixels = new Uint8ClampedArray(width * height * 4);
+
+    const chunks = [];
+    const encoder = this.device.createCommandEncoder();
+
+    for (let y0 = 0; y0 < height; y0 += rowsPerChunk) {
+      const rows = Math.min(rowsPerChunk, height - y0) | 0;
+      const bufSize = (bytesPerRow * rows) | 0;
+
+      const readBuffer = this.device.createBuffer({
+        size: bufSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+
+      encoder.copyTextureToBuffer(
+        { texture, origin: { x: 0, y: y0, z: 0 } },
+        { buffer: readBuffer, bytesPerRow, rowsPerImage: rows },
+        { width, height: rows, depthOrArrayLayers: 1 },
+      );
+
+      chunks.push({ readBuffer, y0, rows });
+    }
+
+    this.queue.submit([encoder.finish()]);
+
+    if (this.queue && this.queue.onSubmittedWorkDone) {
+      try {
+        await this.queue.onSubmittedWorkDone();
+      } catch (e) {}
+    }
+
+    for (const ch of chunks) {
+      const { readBuffer, y0, rows } = ch;
+
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const src = new Uint8Array(mapped);
+
+      for (let ry = 0; ry < rows; ry++) {
+        const srcRow = ry * bytesPerRow;
+        const dstRow = (y0 + ry) * width * 4;
+
+        for (let x = 0; x < width; x++) {
+          const si = srcRow + x * 4;
+          const di = dstRow + x * 4;
+
+          pixels[di + 0] = src[si + 2];
+          pixels[di + 1] = src[si + 1];
+          pixels[di + 2] = src[si + 0];
+          pixels[di + 3] = src[si + 3];
+        }
+      }
+
+      readBuffer.unmap();
+      readBuffer.destroy();
+    }
+
+    return pixels;
   }
 
   // ---------------------------
@@ -635,23 +772,44 @@ export class NoiseComputeBuilder {
   }
 
   _buildPosBuffer(width, height, customData) {
-    if ((this.useCustomPos | 0) === 0 && !customData) return this.nullPosBuffer;
-    const numPixels = width * height;
-    const data =
-      customData instanceof Float32Array && customData.length === numPixels * 4
-        ? customData
-        : new Float32Array(numPixels * 4);
+    if (!(customData instanceof Float32Array) || customData.byteLength <= 0) {
+      return this.nullPosBuffer;
+    }
+
+    const w = Math.max(1, Math.floor(width));
+    const h = Math.max(1, Math.floor(height));
+    const numPixels = w * h;
+
+    const expectedLen = numPixels * 4;
+    if (customData.length !== expectedLen) {
+      throw new Error(
+        `_buildPosBuffer: customData length ${customData.length} != expected ${expectedLen} (width=${w}, height=${h})`,
+      );
+    }
+
+    const devMax = this.device?.limits?.maxBufferSize ?? 2147483648;
+    const safeMax = Math.floor(devMax * 0.98);
+
+    if (customData.byteLength > safeMax) {
+      throw new Error(
+        `_buildPosBuffer: ${customData.byteLength} bytes exceeds maxBufferSize ${devMax} (w=${w}, h=${h})`,
+      );
+    }
+
     const buf = this.device.createBuffer({
-      size: data.byteLength,
+      size: customData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    this.queue.writeBuffer(
+
+    this._writeBufferChunked(
       buf,
       0,
-      data.buffer,
-      data.byteOffset,
-      data.byteLength,
+      customData.buffer,
+      customData.byteOffset,
+      customData.byteLength,
+      this.maxBufferChunkBytes,
     );
+
     return buf;
   }
 
@@ -686,11 +844,23 @@ export class NoiseComputeBuilder {
     const pair = this._texPairs.get(tid);
     if (!pair) throw new Error("_create2DTileBindGroups: invalid tid");
 
-    // If tiles already created and not dirty we skip full recreation.
-    if (Array.isArray(pair.tiles) && !pair.bindGroupDirty) {
-      // Still honor potential customData (if provided we must rebuild posBufs)
-      if (!options.customData) return;
-      // If customData present, we'll allow rebuild of posBuf only (below).
+    const wantsCustomPos = ((options.useCustomPos ?? 0) | 0) !== 0;
+    const customData =
+      wantsCustomPos && options.customData instanceof Float32Array
+        ? options.customData
+        : null;
+
+    const hasCustomData = !!customData;
+
+    const hadCustomBefore =
+      Array.isArray(pair.tiles) && pair.tiles.some((t) => t && t.posIsCustom);
+
+    if (!hasCustomData && hadCustomBefore) {
+      pair.bindGroupDirty = true;
+    }
+
+    if (Array.isArray(pair.tiles) && !pair.bindGroupDirty && !hasCustomData) {
+      return;
     }
 
     const tiles = [];
@@ -700,22 +870,35 @@ export class NoiseComputeBuilder {
         const originX = tx * pair.tileWidth;
         const originY = ty * pair.tileHeight;
 
-        // If a tile entry exists, reuse its posBuf and fb, otherwise create.
-        let existingTile = (pair.tiles && pair.tiles[layerIndex]) || null;
+        const existingTile = (pair.tiles && pair.tiles[layerIndex]) || null;
 
-        // Build/Reuse pos buffer. If customData passed we create a fresh posBuf for this tile
-        let posBuf;
-        if (existingTile && existingTile.posBuf && !options.customData) {
-          posBuf = existingTile.posBuf;
-        } else {
+        let posBuf = this.nullPosBuffer;
+        let posIsCustom = false;
+
+        if (hasCustomData) {
           posBuf = this._buildPosBuffer(
             pair.tileWidth,
             pair.tileHeight,
-            options.customData,
+            customData,
           );
+          posIsCustom = posBuf !== this.nullPosBuffer;
+        } else if (
+          existingTile &&
+          existingTile.posBuf &&
+          !existingTile.posIsCustom
+        ) {
+          posBuf = existingTile.posBuf;
+          posIsCustom = false;
+        } else {
+          posBuf = this.nullPosBuffer;
+          posIsCustom = false;
+          if (existingTile && existingTile.posBuf && existingTile.posIsCustom) {
+            try {
+              existingTile.posBuf.destroy();
+            } catch {}
+          }
         }
 
-        // Reuse or create frame UBO (fb)
         let fb;
         if (existingTile && existingTile.frames && existingTile.frames[0]) {
           fb = existingTile.frames[0];
@@ -726,7 +909,6 @@ export class NoiseComputeBuilder {
           });
         }
 
-        // world extents override (keeps pixel->world mapping consistent)
         let worldFullW = Number.isFinite(options.frameFullWidth)
           ? options.frameFullWidth >>> 0
           : pair.fullWidth;
@@ -750,9 +932,6 @@ export class NoiseComputeBuilder {
           worldFullH = m;
         }
 
-        // originXf/originYf are pixel-space coordinates inside the conceptual world.
-        // - crop mode: pixel coords map 1:1 into the larger world extents (thin output becomes a slice)
-        // - stretch mode: preserve legacy behavior for callers that used frameFull* to stretch mapping
         let originXf, originYf;
         if (cropMode) {
           originXf = originX;
@@ -780,50 +959,39 @@ export class NoiseComputeBuilder {
           originYf,
         });
 
-        // If existing bind-groups exist and no global dirty flagged, reuse them.
         let bgA = existingTile?.bgs?.[0]?.bgA ?? null;
         let bgB = existingTile?.bgs?.[0]?.bgB ?? null;
 
         if (!bgA || !bgB || pair.bindGroupDirty) {
-          // Create new BGs using current buffers/views
-          try {
-            bgA = this.device.createBindGroup({
-              layout: this.bindGroupLayout,
-              entries: [
-                { binding: 0, resource: { buffer: this.optionsBuffer } },
-                { binding: 1, resource: { buffer: this.paramsBuffer } },
-                { binding: 2, resource: { buffer: this.permBuffer } },
-                { binding: 3, resource: pair.viewA },
-                { binding: 4, resource: pair.viewB },
-                { binding: 5, resource: { buffer: posBuf } },
-                { binding: 6, resource: { buffer: fb } },
-                // 3D unused for 2D path -> provide dummies
-                { binding: 7, resource: this._dummy3D_sampleView },
-                { binding: 8, resource: this._dummy3D_writeView },
-              ],
-            });
+          bgA = this.device.createBindGroup({
+            layout: this.bindGroupLayout,
+            entries: [
+              { binding: 0, resource: { buffer: this.optionsBuffer } },
+              { binding: 1, resource: { buffer: this.paramsBuffer } },
+              { binding: 2, resource: { buffer: this.permBuffer } },
+              { binding: 3, resource: pair.viewA },
+              { binding: 4, resource: pair.viewB },
+              { binding: 5, resource: { buffer: posBuf } },
+              { binding: 6, resource: { buffer: fb } },
+              { binding: 7, resource: this._dummy3D_sampleView },
+              { binding: 8, resource: this._dummy3D_writeView },
+            ],
+          });
 
-            bgB = this.device.createBindGroup({
-              layout: this.bindGroupLayout,
-              entries: [
-                { binding: 0, resource: { buffer: this.optionsBuffer } },
-                { binding: 1, resource: { buffer: this.paramsBuffer } },
-                { binding: 2, resource: { buffer: this.permBuffer } },
-                { binding: 3, resource: pair.viewB },
-                { binding: 4, resource: pair.viewA },
-                { binding: 5, resource: { buffer: posBuf } },
-                { binding: 6, resource: { buffer: fb } },
-                { binding: 7, resource: this._dummy3D_sampleView },
-                { binding: 8, resource: this._dummy3D_writeView },
-              ],
-            });
-          } catch (e) {
-            throw new Error(
-              `_create2DTileBindGroups: createBindGroup failed: ${
-                e?.message || e
-              }`,
-            );
-          }
+          bgB = this.device.createBindGroup({
+            layout: this.bindGroupLayout,
+            entries: [
+              { binding: 0, resource: { buffer: this.optionsBuffer } },
+              { binding: 1, resource: { buffer: this.paramsBuffer } },
+              { binding: 2, resource: { buffer: this.permBuffer } },
+              { binding: 3, resource: pair.viewB },
+              { binding: 4, resource: pair.viewA },
+              { binding: 5, resource: { buffer: posBuf } },
+              { binding: 6, resource: { buffer: fb } },
+              { binding: 7, resource: this._dummy3D_sampleView },
+              { binding: 8, resource: this._dummy3D_writeView },
+            ],
+          });
         }
 
         tiles.push({
@@ -832,6 +1000,7 @@ export class NoiseComputeBuilder {
           originY,
           frames: [fb],
           posBuf,
+          posIsCustom,
           bgs: [{ bgA, bgB }],
         });
       }
@@ -915,30 +1084,52 @@ export class NoiseComputeBuilder {
   async computeToTexture(width, height, paramsObj = {}, options = {}) {
     const W = width | 0,
       H = height | 0;
-    if (!(W > 0 && H > 0))
+    if (!(W > 0 && H > 0)) {
       throw new Error(`computeToTexture: invalid size ${width}x${height}`);
+    }
 
-    // ensure pair sized to (tileWidth,tileHeight) for this full size
-    if (this._tid == null) this._create2DPair(W, H);
-    let pair = this._texPairs.get(this._tid);
-    if (!pair || pair.fullWidth !== W || pair.fullHeight !== H) {
+    if (this._tid != null) {
+      const cur = this._texPairs.get(this._tid);
+      if (!cur || cur.fullWidth !== W || cur.fullHeight !== H) {
+        this.destroyTexturePair(this._tid);
+      }
+    }
+
+    if (this._tid == null) {
       const tid = this._create2DPair(W, H);
       this.setActiveTexture(tid);
-      pair = this._texPairs.get(tid);
     }
+
+    const pair = this._texPairs.get(this._tid);
+    if (!pair)
+      throw new Error("computeToTexture: failed to create 2D texture pair");
 
     if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
 
-    // 2D path: ioFlags = 0 (2D in/out)
     const origOpts = options || {};
+
+    const wantsCustomPos = ((origOpts.useCustomPos ?? 0) | 0) !== 0;
+    const customData =
+      wantsCustomPos && origOpts.customData instanceof Float32Array
+        ? origOpts.customData
+        : null;
+
+    const useCustomPos = customData ? 1 : 0;
+
     this.setOptions({
       ...origOpts,
       ioFlags: 0,
-      useCustomPos: origOpts.useCustomPos ?? this.useCustomPos,
+      useCustomPos,
     });
 
-    if (!pair.tiles || pair.bindGroupDirty || origOpts.customData) {
-      this._create2DTileBindGroups(this._tid, options);
+    const tileOpts = {
+      ...origOpts,
+      useCustomPos,
+      customData,
+    };
+
+    if (!pair.tiles || pair.bindGroupDirty || !!customData) {
+      this._create2DTileBindGroups(this._tid, tileOpts);
     }
 
     const isAStart = pair.isA;
@@ -946,10 +1137,8 @@ export class NoiseComputeBuilder {
     let lastBGs = null;
 
     for (const tile of pair.tiles) {
-      const { bgs } = tile;
-      const { bgA, bgB } = bgs[0];
+      const { bgA, bgB } = tile.bgs[0];
 
-      // Determine start/alt based on pair.isA and previously used binder
       const start = !finalUsed
         ? isAStart
           ? bgA
@@ -957,6 +1146,7 @@ export class NoiseComputeBuilder {
         : finalUsed === bgA
           ? bgA
           : bgB;
+
       const alt = start === bgA ? bgB : bgA;
 
       finalUsed = await this._runPipelines(
@@ -1832,6 +2022,11 @@ export class NoiseComputeBuilder {
     }
   }
 
+  _forceOpaqueAlpha(pixelsRGBA) {
+    const n = pixelsRGBA.length | 0;
+    for (let i = 3; i < n; i += 4) pixelsRGBA[i] = 255;
+  }
+
   async export2DTextureToPNGBlob(textureView, width, height, opts = {}) {
     if (!textureView) {
       throw new Error("export2DTextureToPNGBlob: textureView is required");
@@ -1896,58 +2091,41 @@ export class NoiseComputeBuilder {
     rpass.draw(6, 1, 0, 0);
     rpass.end();
 
-    const bytesPerPixel = 4;
-    const align = 256;
-    const bytesPerRowUnaligned = W * bytesPerPixel;
-    const bytesPerRow = Math.ceil(bytesPerRowUnaligned / align) * align;
-    const bufferSize = bytesPerRow * H;
-
-    const readBuffer = this.device.createBuffer({
-      size: bufferSize,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-
-    encoder.copyTextureToBuffer(
-      { texture: captureTexture },
-      { buffer: readBuffer, bytesPerRow, rowsPerImage: H },
-      { width: W, height: H, depthOrArrayLayers: 1 },
-    );
-
     this.queue.submit([encoder.finish()]);
 
     if (this.queue && this.queue.onSubmittedWorkDone) {
-      await this.queue.onSubmittedWorkDone();
+      try {
+        await this.queue.onSubmittedWorkDone();
+      } catch (e) {}
     }
 
-    await readBuffer.mapAsync(GPUMapMode.READ);
-    const mapped = readBuffer.getMappedRange();
-    const src = new Uint8Array(mapped);
-    const pixels = new Uint8ClampedArray(W * H * bytesPerPixel);
+    const pixels = await this._readBGRA8TextureToRGBA8Pixels(
+      captureTexture,
+      W,
+      H,
+      {
+        maxBufferChunkBytes:
+          opts.maxBufferChunkBytes ?? this.maxBufferChunkBytes,
+      },
+    );
 
-    let dst = 0;
-    for (let y = 0; y < H; y++) {
-      const rowStart = y * bytesPerRow;
-      for (let x = 0; x < W; x++) {
-        const si = rowStart + x * 4;
-        pixels[dst++] = src[si + 2];
-        pixels[dst++] = src[si + 1];
-        pixels[dst++] = src[si + 0];
-        pixels[dst++] = src[si + 3];
-      }
-    }
-
-    readBuffer.unmap();
-    readBuffer.destroy();
     captureTexture.destroy();
 
-    this._applyExportBackground(pixels, bgSpec);
+    const useAlphaForBackground = opts.useAlphaForBackground === true;
+
+    if (bgSpec.transparent || useAlphaForBackground) {
+      this._applyExportBackground(pixels, bgSpec);
+    } else {
+      this._forceOpaqueAlpha(pixels);
+    }
 
     const tmpCanvas = document.createElement("canvas");
     tmpCanvas.width = W;
     tmpCanvas.height = H;
     const ctx2d = tmpCanvas.getContext("2d");
-    if (!ctx2d)
+    if (!ctx2d) {
       throw new Error("export2DTextureToPNGBlob: unable to get 2D context");
+    }
 
     ctx2d.putImageData(new ImageData(pixels, W, H), 0, 0);
 
