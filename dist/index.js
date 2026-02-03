@@ -1,4 +1,4 @@
-(()=>{var se=`<!-- tools/noise/noiseComponent.html -->\r
+(()=>{var ve=`<!-- tools/noise/noiseComponent.html -->\r
 <div id="noise-app">\r
   <style>\r
     :root {\r
@@ -148,7 +148,6 @@
       min-width: 0;\r
     }\r
 \r
-    /* view stack uses a square canvas wrapper with min size */\r
     #view-stack {\r
       display: flex;\r
       flex-direction: column;\r
@@ -198,10 +197,137 @@
       overflow: hidden;\r
     }\r
 \r
+    /* Stage tabs */\r
+    .stage {\r
+      display: flex;\r
+      flex-direction: column;\r
+      gap: 10px;\r
+      min-width: 0;\r
+    }\r
+\r
+    .stage input[type="radio"] {\r
+      position: absolute;\r
+      opacity: 0;\r
+      pointer-events: none;\r
+    }\r
+\r
+    .stage-tabs {\r
+      display: inline-flex;\r
+      gap: 6px;\r
+      padding: 6px;\r
+      border: 1px solid #202020;\r
+      border-radius: 999px;\r
+      background: rgba(10, 10, 10, 0.85);\r
+      width: fit-content;\r
+    }\r
+\r
+    .stage-tab {\r
+      display: inline-flex;\r
+      align-items: center;\r
+      justify-content: center;\r
+      padding: 6px 10px;\r
+      border-radius: 999px;\r
+      border: 1px solid #2b2b2b;\r
+      background: rgba(20, 20, 20, 0.95);\r
+      color: #d0d0d0;\r
+      font-size: 12px;\r
+      letter-spacing: 0.06em;\r
+      text-transform: uppercase;\r
+      cursor: pointer;\r
+      user-select: none;\r
+      transition:\r
+        background 0.15s ease,\r
+        border-color 0.15s ease,\r
+        color 0.15s ease;\r
+    }\r
+\r
+    .stage-tab:hover {\r
+      border-color: var(--accent);\r
+      background: rgba(21, 80, 130, 0.9);\r
+      color: #ffffff;\r
+    }\r
+\r
+    #view-tab-preview:checked ~ .stage-tabs label[for="view-tab-preview"],\r
+    #view-tab-tileset:checked ~ .stage-tabs label[for="view-tab-tileset"] {\r
+      border-color: var(--accent);\r
+      background: linear-gradient(135deg, #2575fc, #21c0ff);\r
+      color: #000;\r
+      font-weight: 700;\r
+    }\r
+\r
+    .squareWrap.stageWrap {\r
+      position: relative;\r
+    }\r
+\r
+    .stage-panel {\r
+      position: absolute;\r
+      inset: 0;\r
+      display: none;\r
+      width: 100%;\r
+      height: 100%;\r
+    }\r
+\r
+    #view-tab-preview:checked ~ .stageWrap .stage-preview {\r
+      display: block;\r
+    }\r
+\r
+    #view-tab-tileset:checked ~ .stageWrap .stage-tileset {\r
+      display: block;\r
+    }\r
+\r
     #noise-canvas {\r
       display: block;\r
       width: 100%;\r
       height: 100%;\r
+    }\r
+\r
+    /* Mosaic panel now lives inside the stage square */\r
+    #mosaic {\r
+      width: 100%;\r
+      height: 100%;\r
+      display: grid;\r
+      grid-template-columns: repeat(3, 1fr);\r
+      grid-template-rows: repeat(3, 1fr);\r
+      gap: 0;\r
+      padding: 0;\r
+      margin: 0;\r
+      line-height: 0;\r
+      font-size: 0;\r
+\r
+      border-radius: 0;\r
+      overflow: hidden;\r
+      border: 0;\r
+      background: #000;\r
+    }\r
+\r
+    #mosaic canvas {\r
+      display: block;\r
+      width: 100%;\r
+      height: 100%;\r
+      margin: 0;\r
+      padding: 0;\r
+      border: 0;\r
+      background: #000;\r
+    }\r
+\r
+    .stage-footer {\r
+      margin-top: -2px;\r
+      padding: 0 4px;\r
+    }\r
+\r
+    .mosaic-caption {\r
+      margin: 0;\r
+      font-size: 11px;\r
+      color: #aaaaaa;\r
+      line-height: 1.35;\r
+    }\r
+\r
+    #view-tab-preview:checked ~ .stage-footer {\r
+      display: none;\r
+    }\r
+\r
+    #view-tab-tileset:checked ~ .stage-footer {\r
+      display: block;\r
     }\r
 \r
     /* Export background toggles (near Save buttons) */\r
@@ -240,67 +366,7 @@
       transform: translateY(1px);\r
     }\r
 \r
-    /* Mosaic panel */\r
-    #mosaic-box {\r
-      margin: 0 var(--gap) var(--gap) var(--gap);\r
-      padding: 10px;\r
-\r
-      background: radial-gradient(\r
-        circle at top,\r
-        #161616 0,\r
-        #050505 40%,\r
-        #000 100%\r
-      );\r
-      border: 1px solid #252525;\r
-      border-radius: var(--radius);\r
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);\r
-    }\r
-\r
-    #mosaic-box h2 {\r
-      margin: 0;\r
-      font-size: 0.95rem;\r
-      padding: 2px 0 0 0;\r
-      letter-spacing: 0.05em;\r
-      text-transform: uppercase;\r
-      color: #f0f0f0;\r
-    }\r
-\r
-    #mosaic-box .mosaic-caption {\r
-      margin: 6px 0 10px 0;\r
-      font-size: 11px;\r
-      color: #aaaaaa;\r
-      line-height: 1.35;\r
-    }\r
-\r
-    /* contiguous 3x3 tile canvases */\r
-    #mosaic {\r
-      width: 100%;\r
-      display: grid;\r
-      grid-template-columns: repeat(3, 1fr);\r
-      grid-template-rows: repeat(3, 1fr);\r
-      gap: 0;\r
-      padding: 0;\r
-      margin: 0;\r
-      line-height: 0;\r
-      font-size: 0;\r
-\r
-      border-radius: 8px;\r
-      overflow: hidden;\r
-      border: 1px solid #181818;\r
-      background: #000;\r
-    }\r
-\r
-    #mosaic canvas {\r
-      display: block;\r
-      width: 100%;\r
-      height: 100%;\r
-      margin: 0;\r
-      padding: 0;\r
-      border: 0;\r
-      background: #000;\r
-    }\r
-\r
-    /* Param groups */\r
+    /* Collapsible Param groups (details.param-group) */\r
     aside#sidebar .param-group {\r
       background: radial-gradient(\r
         circle at top left,\r
@@ -311,8 +377,9 @@
       border: 1px solid #262626;\r
       border-radius: 8px;\r
       box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5);\r
-      padding: 10px 9px 10px 9px;\r
       margin: 0 0 10px 0;\r
+      padding: 0;\r
+      overflow: hidden;\r
     }\r
 \r
     aside#sidebar .param-group:hover {\r
@@ -322,14 +389,40 @@
         0 6px 18px rgba(0, 0, 0, 0.7);\r
     }\r
 \r
-    aside#sidebar .param-group h2 {\r
-      margin: 0 0 7px 0;\r
+    aside#sidebar .param-group > summary {\r
+      cursor: pointer;\r
+      list-style: none;\r
+      padding: 10px 9px;\r
       font-size: 0.75rem;\r
       letter-spacing: 0.12em;\r
       text-transform: uppercase;\r
       color: #e0e0e0;\r
       border-bottom: 1px solid #262626;\r
-      padding-bottom: 5px;\r
+      user-select: none;\r
+      display: flex;\r
+      align-items: center;\r
+      justify-content: space-between;\r
+      gap: 10px;\r
+    }\r
+\r
+    aside#sidebar .param-group > summary::-webkit-details-marker {\r
+      display: none;\r
+    }\r
+\r
+    aside#sidebar .param-group > summary::after {\r
+      content: "\u25BE";\r
+      font-size: 0.9rem;\r
+      opacity: 0.9;\r
+      transform: translateY(-1px);\r
+      transition: transform 0.12s ease;\r
+    }\r
+\r
+    aside#sidebar .param-group[open] > summary::after {\r
+      transform: rotate(180deg) translateY(1px);\r
+    }\r
+\r
+    aside#sidebar .param-group > .param-body {\r
+      padding: 10px 9px 10px 9px;\r
     }\r
 \r
     .noise-modes-row {\r
@@ -339,7 +432,7 @@
       margin-bottom: 4px;\r
     }\r
 \r
-    aside#sidebar .param-group > label:not(.grow) {\r
+    aside#sidebar .param-group .param-body > label:not(.grow) {\r
       display: flex;\r
       align-items: center;\r
       justify-content: space-between;\r
@@ -379,11 +472,12 @@
       width: 100%;\r
     }\r
 \r
-    aside#sidebar details {\r
+    /* Nested details inside param bodies */\r
+    aside#sidebar details:not(.param-group) {\r
       width: 100%;\r
     }\r
 \r
-    aside#sidebar details summary {\r
+    aside#sidebar details:not(.param-group) summary {\r
       cursor: pointer;\r
       font-weight: 600;\r
       list-style: none;\r
@@ -392,7 +486,7 @@
       color: #e4e4e4;\r
     }\r
 \r
-    aside#sidebar details > div {\r
+    aside#sidebar details:not(.param-group) > div {\r
       display: flex;\r
       flex-direction: column;\r
       gap: 6px;\r
@@ -405,7 +499,7 @@
       width: 100%;\r
     }\r
 \r
-    aside#sidebar details label {\r
+    aside#sidebar details:not(.param-group) label {\r
       display: flex;\r
       align-items: center;\r
       justify-content: flex-start;\r
@@ -539,174 +633,179 @@
       <a href="#toroidal-section" class="nav-pill">Z slice</a>\r
     </nav>\r
 \r
-    <div id="res-section" class="param-group">\r
-      <h2>Resolution</h2>\r
-      <label>\r
-        Canvas width:\r
-        <input type="number" id="res-width" value="800" min="1" />\r
-      </label>\r
-      <label>\r
-        Canvas height:\r
-        <input type="number" id="res-height" value="800" min="1" />\r
-      </label>\r
-      <button id="apply-res" type="button">Apply resolution</button>\r
-    </div>\r
+    <details id="res-section" class="param-group">\r
+      <summary>Resolution</summary>\r
+      <div class="param-body">\r
+        <label>\r
+          Canvas width:\r
+          <input type="number" id="res-width" value="800" min="1" />\r
+        </label>\r
+        <label>\r
+          Canvas height:\r
+          <input type="number" id="res-height" value="800" min="1" />\r
+        </label>\r
+        <button id="apply-res" type="button">Apply resolution</button>\r
+      </div>\r
+    </details>\r
 \r
-    <div id="noise-params" class="param-group">\r
-      <h2>Noise settings</h2>\r
+    <details id="noise-params" class="param-group" open>\r
+      <summary>Noise settings</summary>\r
+      <div class="param-body">\r
+        <div class="noise-modes-row">\r
+          <label class="grow">\r
+            Noise modes (additive):\r
+            <details class="grow">\r
+              <summary>Select noise types \u25BE</summary>\r
+              <div id="noise-type-list"></div>\r
+            </details>\r
+          </label>\r
+        </div>\r
 \r
-      <div class="noise-modes-row">\r
-        <label class="grow">\r
-          Noise modes (additive):\r
-          <details class="grow">\r
-            <summary>Select noise types \u25BE</summary>\r
-            <div id="noise-type-list"></div>\r
-          </details>\r
+        <label>\r
+          Seed:\r
+          <input\r
+            type="number"\r
+            step="1"\r
+            id="noise-seed"\r
+            value="1234567890"\r
+            min="1"\r
+          />\r
+        </label>\r
+        <label>\r
+          Zoom:\r
+          <input type="number" step="0.1" id="noise-zoom" value="1.0" min="0.1" />\r
+        </label>\r
+        <label>\r
+          Frequency:\r
+          <input type="number" step="0.01" id="noise-freq" value="1.0" />\r
+        </label>\r
+        <label>\r
+          Octaves:\r
+          <input type="number" step="1" id="noise-octaves" value="8" min="1" />\r
+        </label>\r
+        <label>\r
+          Lacunarity:\r
+          <input\r
+            type="number"\r
+            step="0.1"\r
+            id="noise-lacunarity"\r
+            value="2.0"\r
+            min="0.1"\r
+          />\r
+        </label>\r
+        <label>\r
+          Gain:\r
+          <input\r
+            type="number"\r
+            step="0.01"\r
+            id="noise-gain"\r
+            value="0.5"\r
+            min="0.0"\r
+          />\r
+        </label>\r
+        <label>\r
+          X shift:\r
+          <input type="number" step="0.01" id="noise-xShift" value="0" />\r
+        </label>\r
+        <label>\r
+          Y shift:\r
+          <input type="number" step="0.01" id="noise-yShift" value="0" />\r
+        </label>\r
+        <label>\r
+          Z shift:\r
+          <input type="number" step="0.01" id="noise-zShift" value="0" />\r
         </label>\r
       </div>\r
+    </details>\r
 \r
-      <label>\r
-        Seed:\r
-        <input\r
-          type="number"\r
-          step="1"\r
-          id="noise-seed"\r
-          value="1234567890"\r
-          min="1"\r
-        />\r
-      </label>\r
-      <label>\r
-        Zoom:\r
-        <input type="number" step="0.1" id="noise-zoom" value="1.0" min="0.1" />\r
-      </label>\r
-      <label>\r
-        Frequency:\r
-        <input type="number" step="0.01" id="noise-freq" value="1.0" />\r
-      </label>\r
-      <label>\r
-        Octaves:\r
-        <input type="number" step="1" id="noise-octaves" value="8" min="1" />\r
-      </label>\r
-      <label>\r
-        Lacunarity:\r
-        <input\r
-          type="number"\r
-          step="0.1"\r
-          id="noise-lacunarity"\r
-          value="2.0"\r
-          min="0.1"\r
-        />\r
-      </label>\r
-      <label>\r
-        Gain:\r
-        <input\r
-          type="number"\r
-          step="0.01"\r
-          id="noise-gain"\r
-          value="0.5"\r
-          min="0.0"\r
-        />\r
-      </label>\r
-      <label>\r
-        X shift:\r
-        <input type="number" step="0.01" id="noise-xShift" value="0" />\r
-      </label>\r
-      <label>\r
-        Y shift:\r
-        <input type="number" step="0.01" id="noise-yShift" value="0" />\r
-      </label>\r
-      <label>\r
-        Z shift:\r
-        <input type="number" step="0.01" id="noise-zShift" value="0" />\r
-      </label>\r
-    </div>\r
+    <details id="voro-params" class="param-group">\r
+      <summary>Voronoi</summary>\r
+      <div class="param-body">\r
+        <label>\r
+          Mode:\r
+          <select id="noise-voroMode" style="width: 100%">\r
+            <option value="0" selected>Granite (Cell value)</option>\r
+            <option value="5">Flat shade (Cells) [gap]</option>\r
+            <option value="6">Flat shade (Edges) [gap]</option>\r
+            <option value="4">Edge threshold (Gap gate) [gap]</option>\r
+            <option value="3">Edges (Continuous) [gap]</option>\r
+            <option value="2">Interior (F2 \u2212 F1) [gap]</option>\r
 \r
-    <div id="voro-params" class="param-group">\r
-      <h2>Voronoi</h2>\r
+            <option value="10">Flat shade (Cells) [sq]</option>\r
+            <option value="11">Flat shade (Edges) [sq]</option>\r
+            <option value="9">Edge threshold (Gap gate) [sq]</option>\r
+            <option value="8">Edges (Continuous) [sq]</option>\r
+            <option value="7">Interior (F2\xB2 \u2212 F1\xB2) [sq]</option>\r
+            <option value="1">F1 distance</option>\r
+            <option value="12">F1 threshold (Gate)</option>\r
+            <option value="13">F1 mask (Smooth)</option>\r
+            <option value="14">F1 mask (Smooth inv)</option>\r
+            <option value="15">Edge falloff (1 / (1 + gap*k))</option>\r
+            <option value="16">Edge falloff (1 / (1 + gapSq*k))</option>\r
+          </select>\r
+        </label>\r
 \r
-      <label>\r
-        Mode:\r
-        <select id="noise-voroMode" style="width: 100%">\r
-          <option value="0" selected>Granite (Cell value)</option>\r
-          <option value="5">Flat shade (Cells) [gap]</option>\r
-          <option value="6">Flat shade (Edges) [gap]</option>\r
-          <option value="4">Edge threshold (Gap gate) [gap]</option>\r
-          <option value="3">Edges (Continuous) [gap]</option>\r
-          <option value="2">Interior (F2 \u2212 F1) [gap]</option>\r
+        <label>\r
+          Threshold:\r
+          <input type="number" step="0.01" id="noise-threshold" value="0.1" />\r
+        </label>\r
 \r
-          <option value="10">Flat shade (Cells) [sq]</option>\r
-          <option value="11">Flat shade (Edges) [sq]</option>\r
-          <option value="9">Edge threshold (Gap gate) [sq]</option>\r
-          <option value="8">Edges (Continuous) [sq]</option>\r
-          <option value="7">Interior (F2\xB2 \u2212 F1\xB2) [sq]</option>\r
-          <option value="1">F1 distance</option>\r
-          <option value="12">F1 threshold (Gate)</option>\r
-          <option value="13">F1 mask (Smooth)</option>\r
-          <option value="14">F1 mask (Smooth inv)</option>\r
-          <option value="15">Edge falloff (1 / (1 + gap*k))</option>\r
-          <option value="16">Edge falloff (1 / (1 + gapSq*k))</option>\r
-        </select>\r
-      </label>\r
+        <label>\r
+          Edge softness (edgeK):\r
+          <input type="number" step="0.01" id="noise-edgeK" value="0.0" />\r
+        </label>\r
+      </div>\r
+    </details>\r
 \r
-      <label>\r
-        Threshold:\r
-        <input type="number" step="0.01" id="noise-threshold" value="0.1" />\r
-      </label>\r
+    <details id="adv-params" class="param-group">\r
+      <summary>Advanced params</summary>\r
+      <div class="param-body">\r
+        <label>\r
+          Seed angle:\r
+          <input type="number" step="0.01" id="noise-seedAngle" value="0.0" />\r
+        </label>\r
 \r
-      <label>\r
-        Edge softness (edgeK):\r
-        <input type="number" step="0.01" id="noise-edgeK" value="0.0" />\r
-      </label>\r
-    </div>\r
+        <label>\r
+          Turbulence:\r
+          <input type="checkbox" id="noise-turbulence" />\r
+        </label>\r
 \r
-    <div id="adv-params" class="param-group">\r
-      <h2>Advanced params</h2>\r
+        <label>\r
+          Time:\r
+          <input type="number" step="0.01" id="noise-time" value="0.0" />\r
+        </label>\r
 \r
-      <label>\r
-        Seed angle:\r
-        <input type="number" step="0.01" id="noise-seedAngle" value="0.0" />\r
-      </label>\r
+        <label>\r
+          Warp amp:\r
+          <input type="number" step="0.01" id="noise-warpAmp" value="0.5" />\r
+        </label>\r
 \r
-      <label>\r
-        Turbulence:\r
-        <input type="checkbox" id="noise-turbulence" />\r
-      </label>\r
+        <label>\r
+          Gabor radius:\r
+          <input type="number" step="0.01" id="noise-gaborRadius" value="4.0" />\r
+        </label>\r
 \r
-      <label>\r
-        Time:\r
-        <input type="number" step="0.01" id="noise-time" value="0.0" />\r
-      </label>\r
+        <label>\r
+          Terrace step:\r
+          <input type="number" step="0.01" id="noise-terraceStep" value="8.0" />\r
+        </label>\r
 \r
-      <label>\r
-        Warp amp:\r
-        <input type="number" step="0.01" id="noise-warpAmp" value="0.5" />\r
-      </label>\r
+        <label>\r
+          Exp1:\r
+          <input type="number" step="0.01" id="noise-exp1" value="1.0" />\r
+        </label>\r
 \r
-      <label>\r
-        Gabor radius:\r
-        <input type="number" step="0.01" id="noise-gaborRadius" value="4.0" />\r
-      </label>\r
+        <label>\r
+          Exp2:\r
+          <input type="number" step="0.01" id="noise-exp2" value="0.0" />\r
+        </label>\r
 \r
-      <label>\r
-        Terrace step:\r
-        <input type="number" step="0.01" id="noise-terraceStep" value="8.0" />\r
-      </label>\r
-\r
-      <label>\r
-        Exp1:\r
-        <input type="number" step="0.01" id="noise-exp1" value="1.0" />\r
-      </label>\r
-\r
-      <label>\r
-        Exp2:\r
-        <input type="number" step="0.01" id="noise-exp2" value="0.0" />\r
-      </label>\r
-\r
-      <label>\r
-        Ripple freq:\r
-        <input type="number" step="0.01" id="noise-rippleFreq" value="10.0" />\r
-      </label>\r
-    </div>\r
+        <label>\r
+          Ripple freq:\r
+          <input type="number" step="0.01" id="noise-rippleFreq" value="10.0" />\r
+        </label>\r
+      </div>\r
+    </details>\r
 \r
     <button id="render-btn" type="button">Render</button>\r
 \r
@@ -743,172 +842,190 @@
         White\r
       </label>\r
     </div>\r
+\r
     <button id="download-main" type="button">Save image</button>\r
     <button id="download-tile" type="button">Save tile</button>\r
     <button id="download-tileset" type="button">Save tileset</button>\r
 \r
-    <div id="overrides-group" class="param-group">\r
-      <h2>Per entry overrides</h2>\r
+    <details id="overrides-group" class="param-group">\r
+      <summary>Per entry overrides</summary>\r
+      <div class="param-body">\r
+        <label>\r
+          Entry:\r
+          <select id="override-mode" style="width: 100%"></select>\r
+        </label>\r
 \r
-      <label>\r
-        Entry:\r
-        <select id="override-mode" style="width: 100%"></select>\r
-      </label>\r
+        <label>\r
+          Zoom:\r
+          <input type="number" id="ov-zoom" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Frequency:\r
+          <input type="number" id="ov-freq" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Lacunarity:\r
+          <input type="number" id="ov-lacunarity" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Gain:\r
+          <input type="number" id="ov-gain" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Octaves:\r
+          <input type="number" id="ov-octaves" step="1" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Zoom:\r
-        <input type="number" id="ov-zoom" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Frequency:\r
-        <input type="number" id="ov-freq" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Lacunarity:\r
-        <input type="number" id="ov-lacunarity" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Gain:\r
-        <input type="number" id="ov-gain" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Octaves:\r
-        <input type="number" id="ov-octaves" step="1" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Turbulence:\r
+          <select id="ov-turbulence" style="width: 7.2em">\r
+            <option value="">inherit</option>\r
+            <option value="0">0</option>\r
+            <option value="1">1</option>\r
+          </select>\r
+        </label>\r
 \r
-      <label>\r
-        Turbulence:\r
-        <select id="ov-turbulence" style="width: 7.2em">\r
-          <option value="">inherit</option>\r
-          <option value="0">0</option>\r
-          <option value="1">1</option>\r
-        </select>\r
-      </label>\r
+        <label>\r
+          Seed angle:\r
+          <input type="number" id="ov-seedAngle" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Seed angle:\r
-        <input type="number" id="ov-seedAngle" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Exp1:\r
+          <input type="number" id="ov-exp1" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Exp2:\r
+          <input type="number" id="ov-exp2" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Ripple freq:\r
+          <input type="number" id="ov-rippleFreq" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Exp1:\r
-        <input type="number" id="ov-exp1" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Exp2:\r
-        <input type="number" id="ov-exp2" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Ripple freq:\r
-        <input type="number" id="ov-rippleFreq" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Time:\r
+          <input type="number" id="ov-time" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Time:\r
-        <input type="number" id="ov-time" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Warp amp:\r
+          <input type="number" id="ov-warp" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Warp amp:\r
-        <input type="number" id="ov-warp" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Threshold:\r
+          <input type="number" id="ov-threshold" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Threshold:\r
-        <input type="number" id="ov-threshold" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Voronoi mode:\r
+          <select id="ov-voroMode" style="width: 7.2em">\r
+            <option value="">inherit</option>\r
+            <option value="0">granite</option>\r
+            <option value="5">flat cells</option>\r
+            <option value="6">flat edges</option>\r
+            <option value="4">edge gate</option>\r
+            <option value="3">edges</option>\r
+            <option value="1">f1</option>\r
+            <option value="2">gap</option>\r
+          </select>\r
+        </label>\r
 \r
-      <label>\r
-        Voronoi mode:\r
-        <select id="ov-voroMode" style="width: 7.2em">\r
-          <option value="">inherit</option>\r
-          <option value="0">granite</option>\r
-          <option value="5">flat cells</option>\r
-          <option value="6">flat edges</option>\r
-          <option value="4">edge gate</option>\r
-          <option value="3">edges</option>\r
-          <option value="1">f1</option>\r
-          <option value="2">gap</option>\r
-        </select>\r
-      </label>\r
+        <label>\r
+          EdgeK:\r
+          <input type="number" id="ov-edgeK" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        EdgeK:\r
-        <input type="number" id="ov-edgeK" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Gabor radius:\r
+          <input type="number" id="ov-gabor" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Gabor radius:\r
-        <input type="number" id="ov-gabor" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          Terrace step:\r
+          <input type="number" id="ov-terraceStep" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        Terrace step:\r
-        <input type="number" id="ov-terraceStep" step="0.01" placeholder="" />\r
-      </label>\r
+        <label>\r
+          X shift:\r
+          <input type="number" id="ov-xShift" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Y shift:\r
+          <input type="number" id="ov-yShift" step="0.01" placeholder="" />\r
+        </label>\r
+        <label>\r
+          Z shift:\r
+          <input type="number" id="ov-zShift" step="0.01" placeholder="" />\r
+        </label>\r
 \r
-      <label>\r
-        X shift:\r
-        <input type="number" id="ov-xShift" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Y shift:\r
-        <input type="number" id="ov-yShift" step="0.01" placeholder="" />\r
-      </label>\r
-      <label>\r
-        Z shift:\r
-        <input type="number" id="ov-zShift" step="0.01" placeholder="" />\r
-      </label>\r
-\r
-      <button id="ov-clear" type="button" style="width: 100%; margin-top: 8px">\r
-        Clear overrides for entry\r
-      </button>\r
-    </div>\r
+        <button id="ov-clear" type="button" style="width: 100%; margin-top: 8px">\r
+          Clear overrides for entry\r
+        </button>\r
+      </div>\r
+    </details>\r
 \r
     <hr />\r
 \r
-    <div id="toroidal-section" class="param-group">\r
-      <h2>Toroidal slice</h2>\r
+    <details id="toroidal-section" class="param-group">\r
+      <summary>Toroidal slice</summary>\r
+      <div class="param-body">\r
+        <label class="grow">\r
+          Volume 4D modes (additive):\r
+          <details class="grow">\r
+            <summary>Select 4D types \u25BE</summary>\r
+            <div id="toroidal-type-list"></div>\r
+          </details>\r
+        </label>\r
 \r
-      <label class="grow">\r
-        Volume 4D modes (additive):\r
-        <details class="grow">\r
-          <summary>Select 4D types \u25BE</summary>\r
-          <div id="toroidal-type-list"></div>\r
-        </details>\r
-      </label>\r
-\r
-      <label>\r
-        Z slice (0 to 127):\r
-        <input type="range" id="z-slice" min="0" max="127" value="64" />\r
-      </label>\r
-      <label>\r
-        Slice index:\r
-        <input type="number" id="z-slice-num" min="0" max="127" value="64" />\r
-      </label>\r
-    </div>\r
+        <label>\r
+          Slice index:\r
+          <input type="number" id="z-slice-num" min="0" max="127" value="64" />\r
+        </label>\r
+      </div>\r
+    </details>\r
   </aside>\r
 \r
   <main id="main">\r
     <div id="view-stack" class="content">\r
-      <div class="preview-header">\r
-        <div id="preview-meta">Height field preview</div>\r
-        <div id="preview-stats"></div>\r
-      </div>\r
+      <div class="stage">\r
+        <input type="radio" name="view-tab" id="view-tab-preview" checked />\r
+        <input type="radio" name="view-tab" id="view-tab-tileset" />\r
 \r
-      <div class="squareWrap">\r
-        <canvas id="noise-canvas"></canvas>\r
-      </div>\r
-    </div>\r
+        <div class="preview-header">\r
+          <div id="preview-meta">Height field preview</div>\r
+          <div id="preview-stats"></div>\r
+        </div>\r
 \r
-    <div id="mosaic-box" class="content">\r
-      <h2>3D toroidal volume tiles (3\xD73)</h2>\r
-      <p id="mosaic-caption" class="mosaic-caption"></p>\r
-      <div id="mosaic"></div>\r
+        <div class="stage-tabs" role="tablist" aria-label="Preview tabs">\r
+          <label class="stage-tab" for="view-tab-preview">Main</label>\r
+          <label class="stage-tab" for="view-tab-tileset">Tileset</label>\r
+        </div>\r
+\r
+        <div class="squareWrap stageWrap">\r
+          <div class="stage-panel stage-preview">\r
+            <canvas id="noise-canvas"></canvas>\r
+          </div>\r
+\r
+          <div class="stage-panel stage-tileset">\r
+            \r
+        <label>\r
+          Z slice (0 to 127):\r
+          <input type="range" id="z-slice" min="0" max="127" value="64" />\r
+        </label>\r
+            <div id="mosaic"></div>\r
+          </div>\r
+        </div>\r
+\r
+        <div class="stage-footer">\r
+          <p id="mosaic-caption" class="mosaic-caption"></p>\r
+        </div>\r
+      </div>\r
     </div>\r
   </main>\r
 </div>\r
-`;var le=`const PI : f32 = 3.141592653589793;\r
+`;var xe=`const PI : f32 = 3.141592653589793;\r
 const TWO_PI : f32 = 6.283185307179586;\r
 \r
 const ANGLE_INCREMENT : f32 = PI / 4.0;\r
@@ -6165,7 +6282,7 @@ fn computeGauss5x5(\r
 \r
   storeRGBA(fx, fy, fz, outCol);\r
 }\r
-`;var Q=`// Fullscreen quad (module-scope constant)\r
+`;var re=`// Fullscreen quad (module-scope constant)\r
 const kQuad : array<vec2<f32>, 6> = array<vec2<f32>, 6>(\r
   vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),\r
   vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)\r
@@ -6210,7 +6327,7 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\r
 \r
   return vec4<f32>(clamp(v, 0.0, 1.0));\r
 }\r
-`;var J=`const kQuad : array<vec2<f32>, 6> = array<vec2<f32>, 6>(\r
+`;var ae=`const kQuad : array<vec2<f32>, 6> = array<vec2<f32>, 6>(\r
   vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),\r
   vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)\r
 );\r
@@ -6253,4 +6370,6 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\r
 \r
   return vec4<f32>(clamp(v, 0.0, 1.0));\r
 }\r
-`;var fe=8192,ee=2048,Me=8,H=class{constructor(t,e){this.device=t,this.queue=e,this.maxBufferChunkBytes=8e6,this.entryPoints=["computePerlin","computeBillow","computeAntiBillow","computeRidge","computeAntiRidge","computeRidgedMultifractal","computeRidgedMultifractal2","computeRidgedMultifractal3","computeRidgedMultifractal4","computeAntiRidgedMultifractal","computeAntiRidgedMultifractal2","computeAntiRidgedMultifractal3","computeAntiRidgedMultifractal4","computeFBM","computeFBM2","computeFBM3","computeCellularBM1","computeCellularBM2","computeCellularBM3","computeVoronoiBM1","computeVoronoiBM2","computeVoronoiBM3","computeCellular","computeWorley","computeAntiCellular","computeAntiWorley","computeLanczosBillow","computeLanczosAntiBillow","computeVoronoiTileNoise","computeVoronoiCircleNoise","computeVoronoiCircle2","computeVoronoiFlatShade","computeVoronoiRipple3D","computeVoronoiRipple3D2","computeVoronoiCircularRipple","computeFVoronoiRipple3D","computeFVoronoiCircularRipple","computeRippleNoise","computeFractalRipples","computeHexWorms","computePerlinWorms","computeWhiteNoise","computeBlueNoise","computeSimplex","computeSimplexFBM","computeCurl2D","computeCurlFBM2D","computeDomainWarpFBM1","computeDomainWarpFBM2","computeGaborAnisotropic","computeTerraceNoise","computeFoamNoise","computeTurbulence","computePerlin4D","computeWorley4D","computeAntiWorley4D","computeCellular4D","computeAntiCellular4D","computeBillow4D","computeAntiBillow4D","computeLanczosBillow4D","computeLanczosAntiBillow4D","computeFBM4D","computeVoronoi4D","computeVoronoiBM1_4D","computeVoronoiBM2_4D","computeVoronoiBM3_4D","computeVoronoiBM1_4D_vec","computeVoronoiBM2_4D_vec","computeVoronoiBM3_4D_vec","computeWorleyBM1_4D","computeWorleyBM2_4D","computeWorleyBM3_4D","computeWorleyBM1_4D_vec","computeWorleyBM2_4D_vec","computeWorleyBM3_4D_vec","computeCellularBM1_4D","computeCellularBM2_4D","computeCellularBM3_4D","computeCellularBM1_4D_vec","computeCellularBM2_4D_vec","computeCellularBM3_4D_vec","computeTerraceNoise4D","computeFoamNoise4D","computeTurbulence4D","computeGauss5x5","computeNormal","computeNormal8","computeSphereNormal","computeNormalVolume","clearTexture"],this.shaderModule=t.createShaderModule({code:le}),this.bindGroupLayout=t.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:1,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:2,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:3,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:4,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"2d-array"}},{binding:5,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:6,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:7,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"3d"}},{binding:8,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"3d"}}]}),this.pipelineLayout=t.createPipelineLayout({bindGroupLayouts:[this.bindGroupLayout]}),this.pipelines=new Map,this._texPairs=new Map,this._tid=null,this._tag=new WeakMap,this._volumeCache=new Map,this.viewA=null,this.viewB=null,this.width=0,this.height=0,this.layers=1,this.isA=!0,this._initBuffers(),this._ensureDummies(),this._ctxMap=new WeakMap}_initBuffers(){this.optionsBuffer?.destroy(),this.paramsBuffer?.destroy(),this.permBuffer?.destroy(),this.nullPosBuffer?.destroy(),this.optionsBuffer=this.device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.paramsBuffer=this.device.createBuffer({size:88,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.permBuffer=this.device.createBuffer({size:512*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.nullPosBuffer=this.device.createBuffer({size:64,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.queue.writeBuffer(this.optionsBuffer,0,new ArrayBuffer(32)),this.queue.writeBuffer(this.paramsBuffer,0,new ArrayBuffer(88)),this.queue.writeBuffer(this.permBuffer,0,new Uint32Array(512))}_ensureDummies(){this._dummy2D_sampleTex||(this._dummy2D_sampleTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy2D_sampleView=this._dummy2D_sampleTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy2D_writeTex||(this._dummy2D_writeTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy2D_writeView=this._dummy2D_writeTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy3D_sampleTex||(this._dummy3D_sampleTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy3D_sampleView=this._dummy3D_sampleTex.createView({dimension:"3d"})),this._dummy3D_writeTex||(this._dummy3D_writeTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy3D_writeView=this._dummy3D_writeTex.createView({dimension:"3d"}))}_getMaxBufferChunkBytes(t){let e=this.device?.limits?.maxBufferSize??268435456,i=Math.max(1024*1024,Math.floor(e*.9)),r=Number.isFinite(t)?Math.floor(t):this.maxBufferChunkBytes;return(!Number.isFinite(r)||r<=0)&&(r=this.maxBufferChunkBytes),r=Math.max(4,r)&-4,Math.min(i,r)}_writeBufferChunked(t,e,i,r,a,o=null){let l=a|0;if(!(l>0))return;let s=this._getMaxBufferChunkBytes(o),f=0;for(;f<l;){let p=Math.min(s,l-f)|0;if(p=p&-4,p<=0)break;this.queue.writeBuffer(t,e+f|0,i,r+f|0,p),f=f+p|0}if(f!==l)throw new Error(`_writeBufferChunked: incomplete write ${f}/${l} bytes`)}async _readBGRA8TextureToRGBA8Pixels(t,e,i,r={}){let a=Math.max(1,e|0),o=Math.max(1,i|0),l=4,s=256,f=a*l,p=Math.ceil(f/s)*s,u=this.device?.limits?.maxBufferSize??256*1024*1024,d=Math.max(1024*1024,Math.floor(u*.9)),x=this._getMaxBufferChunkBytes(r.maxBufferChunkBytes);if(x<p&&(x=p),p>d)throw new Error(`_readBGRA8TextureToRGBA8Pixels: bytesPerRow=${p} exceeds safe buffer cap=${d}`);let c=Math.max(1,Math.floor(x/p))|0,g=new Uint8ClampedArray(a*o*4),h=[],y=this.device.createCommandEncoder();for(let v=0;v<o;v+=c){let z=Math.min(c,o-v)|0,M=p*z|0,_=this.device.createBuffer({size:M,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});y.copyTextureToBuffer({texture:t,origin:{x:0,y:v,z:0}},{buffer:_,bytesPerRow:p,rowsPerImage:z},{width:a,height:z,depthOrArrayLayers:1}),h.push({readBuffer:_,y0:v,rows:z})}if(this.queue.submit([y.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}for(let v of h){let{readBuffer:z,y0:M,rows:_}=v;await z.mapAsync(GPUMapMode.READ);let B=z.getMappedRange(),P=new Uint8Array(B);for(let A=0;A<_;A++){let C=A*p,T=(M+A)*a*4;for(let q=0;q<a;q++){let S=C+q*4,R=T+q*4;g[R+0]=P[S+2],g[R+1]=P[S+1],g[R+2]=P[S+0],g[R+3]=P[S+3]}}z.unmap(),z.destroy()}return g}resize(t){this.maxConfigs=t,this._initBuffers()}setPermTable(t){this.queue.writeBuffer(this.permBuffer,0,t)}setPosBuffer(t){this.posBuffer=t}setInputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.TEXTURE_BINDING)===0){console.warn("setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.");return}}catch{}if(this.inputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}setOutputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.STORAGE_BINDING)===0){console.warn("setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.");return}}catch{}if(this.outputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}buildPermTable(t=Date.now()){let i=new te(t).perm,r=new Uint32Array(512);for(let a=0;a<512;a++)r[a]=i[a];this.setPermTable(r)}setOptions(t={}){Array.isArray(t.noiseChoices)?this.noiseChoices=t.noiseChoices:this.noiseChoices||(this.noiseChoices=[0]);let{getGradient:e=0,outputChannel:i=1,baseRadius:r=0,heightScale:a=1,useCustomPos:o=0,ioFlags:l=0}=t;this.useCustomPos=o>>>0;let s=new ArrayBuffer(32),f=new DataView(s);f.setUint32(0,e,!0),f.setUint32(4,this.useCustomPos,!0),f.setUint32(8,i,!0),f.setUint32(12,l>>>0,!0),f.setFloat32(16,r,!0),f.setFloat32(20,a,!0),f.setFloat32(24,0,!0),f.setFloat32(28,0,!0),this.queue.writeBuffer(this.optionsBuffer,0,s);for(let p of this._texPairs.values())p.bindGroupDirty=!0}setNoiseParams(t={}){let{seed:e=Date.now()|0,zoom:i=1,freq:r=1,octaves:a=8,lacunarity:o=2,gain:l=.5,xShift:s=0,yShift:f=0,zShift:p=0,turbulence:u=0,seedAngle:d=0,exp1:x=1,exp2:c=0,threshold:g=.1,rippleFreq:h=10,time:y=0,warpAmp:v=.5,gaborRadius:z=4,terraceStep:M=8,toroidal:_=0,voroMode:B=0,edgeK:P=0}=t,A=Math.max(Number(i)||0,1e-6),C=Math.max(Number(r)||0,1e-6),T=Math.max(0,Math.floor(Number(a)||0))>>>0,q=(u?1:0)>>>0,S=(_?1:0)>>>0,R=new ArrayBuffer(88),w=new DataView(R),D=0;w.setUint32(D+0,e>>>0,!0),w.setFloat32(D+4,A,!0),w.setFloat32(D+8,C,!0),w.setUint32(D+12,T,!0),w.setFloat32(D+16,o,!0),w.setFloat32(D+20,l,!0),w.setFloat32(D+24,s,!0),w.setFloat32(D+28,f,!0),w.setFloat32(D+32,p,!0),w.setUint32(D+36,q,!0),w.setFloat32(D+40,d,!0),w.setFloat32(D+44,x,!0),w.setFloat32(D+48,c,!0),w.setFloat32(D+52,g,!0),w.setFloat32(D+56,h,!0),w.setFloat32(D+60,y,!0),w.setFloat32(D+64,v,!0),w.setFloat32(D+68,z,!0),w.setFloat32(D+72,M,!0),w.setUint32(D+76,S,!0),w.setUint32(D+80,B>>>0,!0),w.setFloat32(D+84,P,!0),this.queue.writeBuffer(this.paramsBuffer,0,R);for(let m of this._texPairs.values())m.bindGroupDirty=!0;for(let[m,b]of this._volumeCache)!b||!Array.isArray(b.chunks)||(b._bindGroupsDirty=!0)}_compute2DTiling(t,e){let i=Math.min(t,fe),r=Math.min(e,fe),a=Math.ceil(t/i),o=Math.ceil(e/r),l=a*o;return{tileW:i,tileH:r,tilesX:a,tilesY:o,layers:l}}_create2DPair(t,e){let i=this._compute2DTiling(t,e),r=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST,a=()=>this.device.createTexture({size:[i.tileW,i.tileH,i.layers],format:"rgba16float",usage:r}),o={dimension:"2d-array",arrayLayerCount:i.layers},l=a(),s=a(),f=l.createView(o),p=s.createView(o);l.label=`2D texA ${t}x${e}x${i.layers}`,s.label=`2D texB ${t}x${e}x${i.layers}`,f.label="2D:viewA",p.label="2D:viewB",this._tag.set(f,"2D:A"),this._tag.set(p,"2D:B");let u=this._texPairs.size;return this._texPairs.set(u,{texA:l,texB:s,viewA:f,viewB:p,fullWidth:t,fullHeight:e,tileWidth:i.tileW,tileHeight:i.tileH,tilesX:i.tilesX,tilesY:i.tilesY,layers:i.layers,isA:!0,tiles:null,bindGroupDirty:!0}),this._tid===null&&this.setActiveTexture(u),u}createShaderTextures(t,e){this._tid!==null&&this._texPairs.has(this._tid)&&this.destroyTexturePair(this._tid);let i=this._create2DPair(t,e);return this.setActiveTexture(i),i}destroyTexturePair(t){let e=this._texPairs.get(t);if(e){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(Array.isArray(e.tiles))for(let i of e.tiles){if(Array.isArray(i.frames))for(let r of i.frames)try{r.destroy()}catch{}if(i.posBuf&&i.posBuf!==this.nullPosBuffer)try{i.posBuf.destroy()}catch{}}this._texPairs.delete(t),this._tid===t&&(this._tid=null,this.inputTextureView=null,this.outputTextureView=null,this.viewA=null,this.viewB=null)}}destroyAllTexturePairs(){let t=Array.from(this._texPairs.keys());for(let e of t)this.destroyTexturePair(e)}setActiveTexture(t){if(!this._texPairs.has(t))throw new Error("setActiveTexture: invalid id");this._tid=t;let e=this._texPairs.get(t);this.viewA=e.viewA,this.viewB=e.viewB,this.width=e.tileWidth,this.height=e.tileHeight,this.layers=e.layers,this.inputTextureView=e.isA?e.viewA:e.viewB,this.outputTextureView=e.isA?e.viewB:e.viewA}_buildPosBuffer(t,e,i){if(!(i instanceof Float32Array)||i.byteLength<=0)return this.nullPosBuffer;let r=Math.max(1,Math.floor(t)),a=Math.max(1,Math.floor(e)),l=r*a*4;if(i.length!==l)throw new Error(`_buildPosBuffer: customData length ${i.length} != expected ${l} (width=${r}, height=${a})`);let s=this.device?.limits?.maxBufferSize??2147483648,f=Math.floor(s*.98);if(i.byteLength>f)throw new Error(`_buildPosBuffer: ${i.byteLength} bytes exceeds maxBufferSize ${s} (w=${r}, h=${a})`);let p=this.device.createBuffer({size:i.byteLength,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});return this._writeBufferChunked(p,0,i.buffer,i.byteOffset,i.byteLength,this.maxBufferChunkBytes),p}_writeFrameUniform(t,e){let i=new ArrayBuffer(64),r=new DataView(i);r.setUint32(0,e.fullWidth>>>0,!0),r.setUint32(4,e.fullHeight>>>0,!0),r.setUint32(8,e.tileWidth>>>0,!0),r.setUint32(12,e.tileHeight>>>0,!0),r.setInt32(16,e.originX|0,!0),r.setInt32(20,e.originY|0,!0),r.setInt32(24,e.originZ|0,!0),r.setUint32(28,e.fullDepth>>>0,!0),r.setUint32(32,e.tileDepth>>>0,!0),r.setInt32(36,e.layerIndex|0,!0),r.setUint32(40,e.layers>>>0,!0),r.setUint32(44,0,!0),r.setFloat32(48,e.originXf??0,!0),r.setFloat32(52,e.originYf??0,!0),r.setFloat32(56,0,!0),r.setFloat32(60,0,!0),this.queue.writeBuffer(t,0,i)}_create2DTileBindGroups(t,e={}){let i=this._texPairs.get(t);if(!i)throw new Error("_create2DTileBindGroups: invalid tid");let a=((e.useCustomPos??0)|0)!==0&&e.customData instanceof Float32Array?e.customData:null,o=!!a,l=Array.isArray(i.tiles)&&i.tiles.some(f=>f&&f.posIsCustom);if(!o&&l&&(i.bindGroupDirty=!0),Array.isArray(i.tiles)&&!i.bindGroupDirty&&!o)return;let s=[];for(let f=0;f<i.tilesY;f++)for(let p=0;p<i.tilesX;p++){let u=f*i.tilesX+p,d=p*i.tileWidth,x=f*i.tileHeight,c=i.tiles&&i.tiles[u]||null,g=this.nullPosBuffer,h=!1;if(o)g=this._buildPosBuffer(i.tileWidth,i.tileHeight,a),h=g!==this.nullPosBuffer;else if(c&&c.posBuf&&!c.posIsCustom)g=c.posBuf,h=!1;else if(g=this.nullPosBuffer,h=!1,c&&c.posBuf&&c.posIsCustom)try{c.posBuf.destroy()}catch{}let y;c&&c.frames&&c.frames[0]?y=c.frames[0]:y=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let v=Number.isFinite(e.frameFullWidth)?e.frameFullWidth>>>0:i.fullWidth,z=Number.isFinite(e.frameFullHeight)?e.frameFullHeight>>>0:i.fullHeight,M=e.squareWorld||String(e.worldMode||"").toLowerCase()==="crop";if(e.squareWorld){let C=Math.max(v,z,i.fullWidth,i.fullHeight)>>>0;v=C,z=C}let _,B;if(M)_=d,B=x;else{let C=v/i.fullWidth,T=z/i.fullHeight;_=d*C,B=x*T}this._writeFrameUniform(y,{fullWidth:v,fullHeight:z,tileWidth:i.tileWidth,tileHeight:i.tileHeight,originX:d,originY:x,originZ:0,fullDepth:1,tileDepth:1,layerIndex:u,layers:i.layers,originXf:_,originYf:B});let P=c?.bgs?.[0]?.bgA??null,A=c?.bgs?.[0]?.bgB??null;(!P||!A||i.bindGroupDirty)&&(P=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewA},{binding:4,resource:i.viewB},{binding:5,resource:{buffer:g}},{binding:6,resource:{buffer:y}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]}),A=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewB},{binding:4,resource:i.viewA},{binding:5,resource:{buffer:g}},{binding:6,resource:{buffer:y}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]})),s.push({layerIndex:u,originX:d,originY:x,frames:[y],posBuf:g,posIsCustom:h,bgs:[{bgA:P,bgB:A}]})}i.tiles=s,i.bindGroupDirty=!1,this._tid===t&&(this._tiles=s)}async _runPipelines(t,e,i,r,a,o,l=1){let s=t,f=e,p=Array.isArray(o),u=0,d=this.device.createCommandEncoder(),x=d.beginComputePass();for(let c of this.noiseChoices){let g=typeof c=="number"?this.entryPoints[c]:c,h=this.pipelines.get(g);h||(h=this.device.createComputePipeline({layout:this.pipelineLayout,compute:{module:this.shaderModule,entryPoint:g}}),this.pipelines.set(g,h)),p&&this.setNoiseParams(o[u++]),x.setPipeline(h),x.setBindGroup(0,s),x.dispatchWorkgroups(Math.ceil(i/8),Math.ceil(r/8),l),[s,f]=[f,s]}return x.end(),this.queue.submit([d.finish()]),f}async computeToTexture(t,e,i={},r={}){let a=t|0,o=e|0;if(!(a>0&&o>0))throw new Error(`computeToTexture: invalid size ${t}x${e}`);if(this._tid!=null){let y=this._texPairs.get(this._tid);(!y||y.fullWidth!==a||y.fullHeight!==o)&&this.destroyTexturePair(this._tid)}if(this._tid==null){let y=this._create2DPair(a,o);this.setActiveTexture(y)}let l=this._texPairs.get(this._tid);if(!l)throw new Error("computeToTexture: failed to create 2D texture pair");i&&!Array.isArray(i)&&this.setNoiseParams(i);let s=r||{},p=((s.useCustomPos??0)|0)!==0&&s.customData instanceof Float32Array?s.customData:null,u=p?1:0;this.setOptions({...s,ioFlags:0,useCustomPos:u});let d={...s,useCustomPos:u,customData:p};(!l.tiles||l.bindGroupDirty||p)&&this._create2DTileBindGroups(this._tid,d);let x=l.isA,c=null,g=null;for(let y of l.tiles){let{bgA:v,bgB:z}=y.bgs[0],M=c?c===v?v:z:x?v:z,_=M===v?z:v;c=await this._runPipelines(M,_,l.tileWidth,l.tileHeight,1,i,1),g={bgA:v,bgB:z}}let h=c===g.bgB;return l.isA=h,this.isA=h,this.setActiveTexture(this._tid),this.getCurrentView()}getCurrentView(){let t=this._texPairs.get(this._tid);return t?t.isA?t.viewA:t.viewB:null}_compute3DTiling(t,e,i){let r=Math.min(t,ee),a=Math.min(e,ee),o=this.device?.limits?.maxBufferSize??256*1024*1024,l=r*a*Me,s=Math.max(1,Math.floor(o*.8/Math.max(1,l))),f=Math.min(i,ee,s),p=Math.ceil(t/r),u=Math.ceil(e/a),d=Math.ceil(i/f);return{tw:r,th:a,td:f,nx:p,ny:u,nz:d}}_create3DChunks(t,e,i){let r=this._compute3DTiling(t,e,i),a=[],o=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST;for(let l=0;l<r.nz;l++)for(let s=0;s<r.ny;s++)for(let f=0;f<r.nx;f++){let p=f*r.tw,u=s*r.th,d=l*r.td,x=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:o}),c=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:o}),g=x.createView({dimension:"3d"}),h=c.createView({dimension:"3d"});x.label=`3D texA ${r.tw}x${r.th}x${r.td} @ (${f},${s},${l})`,c.label=`3D texB ${r.tw}x${r.th}x${r.td} @ (${f},${s},${l})`,g.label=`3D:viewA[${f},${s},${l}]`,h.label=`3D:viewB[${f},${s},${l}]`,this._tag.set(g,`3D:A[${f},${s},${l}]`),this._tag.set(h,`3D:B[${f},${s},${l}]`),a.push({texA:x,texB:c,viewA:g,viewB:h,ox:p,oy:u,oz:d,w:r.tw,h:r.th,d:r.td,isA:!0,fb:null,posBuf:null,bgA:null,bgB:null})}return{chunks:a,tile:{w:r.tw,h:r.th,d:r.td},full:{w:t,h:e,d:i},grid:{nx:r.nx,ny:r.ny,nz:r.nz}}}_destroy3DSet(t){if(t)for(let e of t.chunks){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(e.viewA=null,e.viewB=null,e.bgA=null,e.bgB=null,e.fb){try{e.fb.destroy()}catch{}e.fb=null}if(e.posBuf&&e.posBuf!==this.nullPosBuffer){try{e.posBuf.destroy()}catch{}e.posBuf=null}}}destroyAllVolumes(){for(let[t,e]of this._volumeCache)this._destroy3DSet(e),this._volumeCache.delete(t)}get3DView(t){let e=this._volumeCache.get(String(t));if(!e)return null;let i=e.chunks.map(r=>r.isA?r.viewA:r.viewB);return i.length===1?i[0]:{views:i,meta:{full:e.full,tile:e.tile,grid:e.grid}}}destroyVolume(t){let e=String(t),i=this._volumeCache.get(e);i&&(this._destroy3DSet(i),this._volumeCache.delete(e))}_getOrCreate3DVolume(t,e,i,r=null,a=null){let o=r?String(r):`${t}x${e}x${i}`,l=this._volumeCache.get(o);if(l)return l;l=this._create3DChunks(t,e,i);for(let s of l.chunks){s.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=a&&Number.isFinite(a?.w)?a.w>>>0:l.full.w,p=a&&Number.isFinite(a?.h)?a.h>>>0:l.full.h,u=a&&Number.isFinite(a?.d)?a.d>>>0:l.full.d,d=f/l.full.w,x=p/l.full.h,c=s.ox*d,g=s.oy*x;this._writeFrameUniform(s.fb,{fullWidth:f,fullHeight:p,tileWidth:s.w,tileHeight:s.h,originX:s.ox,originY:s.oy,originZ:s.oz,fullDepth:u,tileDepth:s.d,layerIndex:0,layers:1,originXf:c,originYf:g});let h=this._buildPosBuffer(s.w,s.h,null);s.posBuf=h;try{s.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:h}},{binding:6,resource:{buffer:s.fb}},{binding:7,resource:s.viewA},{binding:8,resource:s.viewB}]}),s.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:s.posBuf}},{binding:6,resource:{buffer:s.fb}},{binding:7,resource:s.viewB},{binding:8,resource:s.viewA}]})}catch(y){throw new Error(`_getOrCreate3DVolume: createBindGroup failed: ${y?.message||y}`)}}return l._bindGroupsDirty=!1,this._volumeCache.set(o,l),l}_recreate3DBindGroups(t,e=null){if(!t||!Array.isArray(t.chunks))return;let i=e&&Number.isFinite(e.w)?e.w>>>0:t.full.w,r=e&&Number.isFinite(e.h)?e.h>>>0:t.full.h,a=e&&Number.isFinite(e.d)?e.d>>>0:t.full.d;for(let o of t.chunks){if(!o.fb){o.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=i/t.full.w,p=r/t.full.h,u=o.ox*f,d=o.oy*p;this._writeFrameUniform(o.fb,{fullWidth:i,fullHeight:r,tileWidth:o.w,tileHeight:o.h,originX:o.ox,originY:o.oy,originZ:o.oz,fullDepth:a,tileDepth:o.d,layerIndex:0,layers:1,originXf:u,originYf:d})}o.posBuf||(o.posBuf=this._buildPosBuffer(o.w,o.h,null));let l=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:o.posBuf}},{binding:6,resource:{buffer:o.fb}},{binding:7,resource:o.viewA},{binding:8,resource:o.viewB}],s=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:o.posBuf}},{binding:6,resource:{buffer:o.fb}},{binding:7,resource:o.viewB},{binding:8,resource:o.viewA}];try{o.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:l}),o.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:s})}catch(f){throw new Error(`_recreate3DBindGroups: failed to create bind groups: ${f?.message||f}`)}}t._bindGroupsDirty=!1}async computeToTexture3D(t,e,i,r={},a={}){let o=t|0,l=e|0,s=i|0;if(!(o>0&&l>0&&s>0))throw new Error(`computeToTexture3D: invalid size ${t}x${e}x${i}`);r&&!Array.isArray(r)&&this.setNoiseParams(r);let f=a||{};this.setOptions({...f,ioFlags:3,useCustomPos:f.useCustomPos??this.useCustomPos});let p=a&&(Number.isFinite(a.frameFullWidth)||Number.isFinite(a.frameFullHeight)||Number.isFinite(a.frameFullDepth))?{w:Number.isFinite(a.frameFullWidth)?a.frameFullWidth>>>0:o,h:Number.isFinite(a.frameFullHeight)?a.frameFullHeight>>>0:l,d:Number.isFinite(a.frameFullDepth)?a.frameFullDepth>>>0:s}:null,u=this._getOrCreate3DVolume(o,l,s,a.id,p);if(!u)throw new Error("computeToTexture3D: failed to create or retrieve volume");(u._bindGroupsDirty||!u.chunks[0].bgA||!u.chunks[0].bgB)&&this._recreate3DBindGroups(u,p);let d=null;for(let c of u.chunks){let g=c.isA?c.bgA:c.bgB,h=c.isA?c.bgB:c.bgA;if(!g||!h)throw new Error("computeToTexture3D: missing bind groups (volume not initialized correctly)");d=await this._runPipelines(g,h,c.w,c.h,c.d,r,c.d),c.isA=d===c.bgB}let x=u.chunks.map(c=>c.isA?c.viewA:c.viewB);return x.length===1?x[0]:{views:x,meta:{full:u.full,tile:u.tile,grid:u.grid}}}configureCanvas(t){let e=navigator.gpu.getPreferredCanvasFormat&&navigator.gpu.getPreferredCanvasFormat()||"bgra8unorm",i=t.getContext("webgpu");i.configure({device:this.device,format:e,alphaMode:"opaque",size:[t.width,t.height]}),this._ctxMap.set(t,{ctx:i,size:[t.width,t.height]})}initBlitRender(){this.sampler||(this.sampler=this.device.createSampler({magFilter:"linear",minFilter:"linear",addressModeU:"clamp-to-edge",addressModeV:"clamp-to-edge"})),this.bgl2D||(this.bgl2D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline2D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl2D]}),vertex:{module:this.device.createShaderModule({code:Q}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:Q}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit2DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})),this.bgl3D||(this.bgl3D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"3d"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline3D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl3D]}),vertex:{module:this.device.createShaderModule({code:J}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:J}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit3DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}))}_renderCommonCanvasSetup(t,e){let i="bgra8unorm",r=this._ctxMap.get(t);if(r){let l=t.width|0,s=t.height|0;(r.size[0]!==l||r.size[1]!==s)&&(r.size=[l,s],r.ctx.configure({device:this.device,format:i,alphaMode:"opaque",size:r.size}))}else{let l=t.getContext("webgpu"),s=[t.width|0,t.height|0];l.configure({device:this.device,format:i,alphaMode:"opaque",size:s}),r={ctx:l,size:s},this._ctxMap.set(t,r)}let a=this.device.createCommandEncoder(),o=a.beginRenderPass({colorAttachments:[{view:r.ctx.getCurrentTexture().createView(),loadOp:e?"clear":"load",clearValue:{r:0,g:0,b:0,a:1},storeOp:"store"}]});return{enc:a,pass:o,ctxEntry:r}}renderTextureToCanvas(t,e,i={}){let{layer:r=0,channel:a=0,preserveCanvasSize:o=!0,clear:l=!0}=i;if(this.initBlitRender(),!o)try{let d=t.texture;d&&typeof d.width=="number"&&typeof d.height=="number"&&(e.width=d.width,e.height=d.height)}catch{}let s=new Uint32Array([r>>>0,a>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,s.buffer,s.byteOffset,s.byteLength);let f=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),{enc:p,pass:u}=this._renderCommonCanvasSetup(e,l);u.setPipeline(this.pipeline2D),u.setBindGroup(0,f),u.draw(6,1,0,0),u.end(),this.queue.submit([p.finish()])}renderTexture3DSliceToCanvas(t,e,i={}){let{depth:r,slice:a=0,zNorm:o=null,channel:l=0,chunk:s=0,preserveCanvasSize:f=!0,clear:p=!0}=i;this.initBlitRender();let u,d;if(t&&t.views&&Array.isArray(t.views)?(u=t.views[Math.max(0,Math.min(s|0,t.views.length-1))],d=t.meta?.tile?.d??r):(u=t,d=r),!u||!d)throw new Error("renderTexture3DSliceToCanvas: need a 3D view and its depth");if(!f)try{let z=u.texture;z&&typeof z.width=="number"&&typeof z.height=="number"&&(e.width=z.width,e.height=z.height)}catch{}let x=o??(Math.min(Math.max(a,0),d-1)+.5)/d;x=Math.min(Math.max(x,0),1);let c=new ArrayBuffer(16),g=new DataView(c);g.setFloat32(0,x,!0),g.setUint32(4,l>>>0,!0),g.setUint32(8,0,!0),g.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,c);let h=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:u},{binding:2,resource:{buffer:this.blit3DUbo}}]}),{enc:y,pass:v}=this._renderCommonCanvasSetup(e,p);v.setPipeline(this.pipeline3D),v.setBindGroup(0,h),v.draw(6,1,0,0),v.end(),this.queue.submit([y.finish()])}setExportBackground(t="black"){this.exportBackground=t}_resolveExportBackground(t){let e=t===void 0?this.exportBackground:t;if(e==null)return{r:0,g:0,b:0,a:1,transparent:!1};if(typeof e=="string"){let r=e.trim().toLowerCase();if(r==="transparent")return{r:0,g:0,b:0,a:0,transparent:!0};if(r==="black")return{r:0,g:0,b:0,a:1,transparent:!1};if(r==="white")return{r:1,g:1,b:1,a:1,transparent:!1};if(r[0]==="#")return this._parseHexBackground(r)}let i=r=>{let a=Number(r);if(!Number.isFinite(a))return 0;let o=a>1?a/255:a;return Math.min(Math.max(o,0),1)};if(Array.isArray(e)){let r=i(e[0]),a=i(e[1]),o=i(e[2]),l=e.length>=4?i(e[3]):1;return{r,g:a,b:o,a:l,transparent:l<=0}}if(typeof e=="object"){let r=i(e.r),a=i(e.g),o=i(e.b),l=e.a===void 0?1:i(e.a);return{r,g:a,b:o,a:l,transparent:l<=0}}return{r:0,g:0,b:0,a:1,transparent:!1}}_parseHexBackground(t){let e=String(t).trim().replace(/^#/,""),i=d=>d+d,r=0,a=0,o=0,l=255;if(e.length===3||e.length===4)r=parseInt(i(e[0]),16),a=parseInt(i(e[1]),16),o=parseInt(i(e[2]),16),e.length===4&&(l=parseInt(i(e[3]),16));else if(e.length===6||e.length===8)r=parseInt(e.slice(0,2),16),a=parseInt(e.slice(2,4),16),o=parseInt(e.slice(4,6),16),e.length===8&&(l=parseInt(e.slice(6,8),16));else return{r:0,g:0,b:0,a:1,transparent:!1};let s=r/255,f=a/255,p=o/255,u=l/255;return{r:s,g:f,b:p,a:u,transparent:u<=0}}_applyExportBackground(t,e){if(!t||!e||e.transparent)return;let i=Math.round(e.r*255),r=Math.round(e.g*255),a=Math.round(e.b*255),o=Math.round((e.a??1)*255);if(o<=0)return;let l=t.length|0;if(o>=255){for(let s=0;s<l;s+=4){let f=t[s+3]|0;if(f===255)continue;if(f===0){t[s+0]=i,t[s+1]=r,t[s+2]=a,t[s+3]=255;continue}let p=255-f;t[s+0]=(t[s+0]*f+i*p)/255|0,t[s+1]=(t[s+1]*f+r*p)/255|0,t[s+2]=(t[s+2]*f+a*p)/255|0,t[s+3]=255}return}for(let s=0;s<l;s+=4){let f=t[s+0]|0,p=t[s+1]|0,u=t[s+2]|0,d=t[s+3]|0,x=d+o*(255-d)/255|0;if(x<=0){t[s+0]=0,t[s+1]=0,t[s+2]=0,t[s+3]=0;continue}let c=i*o|0,g=r*o|0,h=a*o|0,y=f*d|0,v=p*d|0,z=u*d|0,M=255-d|0,_=y+c*M/255|0,B=v+g*M/255|0,P=z+h*M/255|0;t[s+0]=Math.min(255,Math.max(0,_*255/x|0)),t[s+1]=Math.min(255,Math.max(0,B*255/x|0)),t[s+2]=Math.min(255,Math.max(0,P*255/x|0)),t[s+3]=Math.min(255,Math.max(0,x))}}_forceOpaqueAlpha(t){let e=t.length|0;for(let i=3;i<e;i+=4)t[i]=255}async export2DTextureToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export2DTextureToPNGBlob: textureView is required");let a=Math.max(1,e|0),o=Math.max(1,i|0),l=r.layer??0,s=r.channel??0,f=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let u=this.device.createTexture({size:[a,o,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),d=new Uint32Array([l>>>0,s>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,d.buffer,d.byteOffset,d.byteLength);let x=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),c=this.device.createCommandEncoder(),g=c.beginRenderPass({colorAttachments:[{view:u.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});if(g.setPipeline(this.pipeline2D),g.setBindGroup(0,x),g.draw(6,1,0,0),g.end(),this.queue.submit([c.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let h=await this._readBGRA8TextureToRGBA8Pixels(u,a,o,{maxBufferChunkBytes:r.maxBufferChunkBytes??this.maxBufferChunkBytes});u.destroy();let y=r.useAlphaForBackground===!0;f.transparent||y?this._applyExportBackground(h,f):this._forceOpaqueAlpha(h);let v=document.createElement("canvas");v.width=a,v.height=o;let z=v.getContext("2d");if(!z)throw new Error("export2DTextureToPNGBlob: unable to get 2D context");return z.putImageData(new ImageData(h,a,o),0,0),await new Promise((_,B)=>{v.toBlob(P=>{P?_(P):B(new Error("export2DTextureToPNGBlob: toBlob returned null"))},"image/png")})}async exportCurrent2DToPNGBlob(t,e,i={}){let r=this.getCurrentView();if(!r)throw new Error("exportCurrent2DToPNGBlob: no active 2D texture view");return this.export2DTextureToPNGBlob(r,t,e,i)}async export3DSliceToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DSliceToPNGBlob: target is required");let a=Math.max(1,e|0),o=Math.max(1,i|0),{depth:l,slice:s=0,zNorm:f=null,channel:p=0,chunk:u=0}=r;if(!l||l<=0)throw new Error("export3DSliceToPNGBlob: depth must be provided and > 0");let d=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let x,c;if(t&&t.views&&Array.isArray(t.views)){let N=Math.max(0,Math.min(u|0,t.views.length-1));x=t.views[N],c=t.meta?.tile?.d??l}else x=t,c=l;if(!x||!c)throw new Error("export3DSliceToPNGBlob: need a 3D view and its depth");let g=f??(Math.min(Math.max(s,0),c-1)+.5)/c;g=Math.min(Math.max(g,0),1);let y=this.device.createTexture({size:[a,o,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),v=new ArrayBuffer(16),z=new DataView(v);z.setFloat32(0,g,!0),z.setUint32(4,p>>>0,!0),z.setUint32(8,0,!0),z.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,v);let M=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:x},{binding:2,resource:{buffer:this.blit3DUbo}}]}),_=this.device.createCommandEncoder(),B=_.beginRenderPass({colorAttachments:[{view:y.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});B.setPipeline(this.pipeline3D),B.setBindGroup(0,M),B.draw(6,1,0,0),B.end();let P=4,A=256,C=a*P,T=Math.ceil(C/A)*A,q=T*o,S=this.device.createBuffer({size:q,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});_.copyTextureToBuffer({texture:y},{buffer:S,bytesPerRow:T,rowsPerImage:o},{width:a,height:o,depthOrArrayLayers:1}),this.queue.submit([_.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await S.mapAsync(GPUMapMode.READ);let R=S.getMappedRange(),w=new Uint8Array(R),D=new Uint8ClampedArray(a*o*P),m=0;for(let N=0;N<o;N++){let k=N*T;for(let I=0;I<a;I++){let F=k+I*4;D[m++]=w[F+2],D[m++]=w[F+1],D[m++]=w[F+0],D[m++]=w[F+3]}}S.unmap(),S.destroy(),y.destroy(),this._applyExportBackground(D,d);let b=document.createElement("canvas");b.width=a,b.height=o;let V=b.getContext("2d");if(!V)throw new Error("export3DSliceToPNGBlob: unable to get 2D context");return V.putImageData(new ImageData(D,a,o),0,0),await new Promise((N,k)=>{b.toBlob(I=>{I?N(I):k(new Error("export3DSliceToPNGBlob: toBlob returned null"))},"image/png")})}async _render3DSliceToRGBA8Pixels(t,e,i,r,a=0,o=null){if(!t)throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");let l=Math.max(1,e|0),s=Math.max(1,i|0);this.initBlitRender();let f=Math.min(Math.max(Number(r)||0,0),1),u=this.device.createTexture({size:[l,s,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),d=new ArrayBuffer(16),x=new DataView(d);x.setFloat32(0,f,!0),x.setUint32(4,a>>>0,!0),x.setUint32(8,0,!0),x.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,d);let c=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit3DUbo}}]}),g=this.device.createCommandEncoder(),h=g.beginRenderPass({colorAttachments:[{view:u.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});h.setPipeline(this.pipeline3D),h.setBindGroup(0,c),h.draw(6,1,0,0),h.end();let y=4,v=256,z=l*y,M=Math.ceil(z/v)*v,_=M*s,B=this.device.createBuffer({size:_,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});g.copyTextureToBuffer({texture:u},{buffer:B,bytesPerRow:M,rowsPerImage:s},{width:l,height:s,depthOrArrayLayers:1}),this.queue.submit([g.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await B.mapAsync(GPUMapMode.READ);let P=B.getMappedRange(),A=new Uint8Array(P),C=new Uint8ClampedArray(l*s*y),T=0;for(let q=0;q<s;q++){let S=q*M;for(let R=0;R<l;R++){let w=S+R*4;C[T++]=A[w+2],C[T++]=A[w+1],C[T++]=A[w+0],C[T++]=A[w+3]}}return B.unmap(),B.destroy(),u.destroy(),o&&this._applyExportBackground(C,o),C}async export3DTilesetToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DTilesetToPNGBlob: target is required");let a=Math.max(1,e|0),o=Math.max(1,(i??e)|0),{depth:l,channel:s=0,chunk:f=0,tilesAcross:p=16,tilesDown:u=null,startSlice:d=0,sliceCount:x=null}=r,c=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let g,h;if(t&&t.views&&Array.isArray(t.views)){let S=Math.max(0,Math.min(f|0,t.views.length-1));g=t.views[S],h=t.meta?.tile?.d??l}else g=t,h=l;if(!g)throw new Error("export3DTilesetToPNGBlob: missing 3D view");if(!h||h<=0)throw new Error("export3DTilesetToPNGBlob: depth must be provided and > 0");let y=Math.max(1,p|0),v=u!=null?Math.max(1,u|0):Math.ceil(h/y),z=Math.min(Math.max(d|0,0),h-1),M=x!=null?Math.max(0,x|0):h-z,_=a*y,B=o*v,P=new Uint8ClampedArray(_*B*4),A=Math.min(h,z+M);for(let S=z;S<A;S++){let R=S-z,w=R%y,D=R/y|0;if(D>=v)break;let m=(S+.5)/h,b=await this._render3DSliceToRGBA8Pixels(g,a,o,m,s,c),V=w*a,L=D*o;for(let N=0;N<o;N++){let k=N*a*4,I=((L+N)*_+V)*4;P.set(b.subarray(k,k+a*4),I)}}let C=document.createElement("canvas");C.width=_,C.height=B;let T=C.getContext("2d");if(!T)throw new Error("export3DTilesetToPNGBlob: unable to get 2D context");return T.putImageData(new ImageData(P,_,B),0,0),await new Promise((S,R)=>{C.toBlob(w=>{w?S(w):R(new Error("export3DTilesetToPNGBlob: toBlob returned null"))},"image/png")})}},te=class{constructor(t=Date.now()){t<1e7&&(t*=1e7),this.seedN=t,this.seedK=t,this.perm=new Uint8Array(512),this.seed(t)}seed(t){let e=this.xorshift(t);for(let i=0;i<256;i++)this.perm[i]=i;for(let i=255;i>0;i--){let r=Math.floor(e()*(i+1));[this.perm[i],this.perm[r]]=[this.perm[r],this.perm[i]]}for(let i=0;i<256;i++)this.perm[i+256]=this.perm[i]}setSeed(t){this.seedN=t,this.seed(t),this.resetSeed()}random(t,e,i){let r;return typeof i=="number"?r=this.perm[(t&255)+this.perm[(e&255)+this.perm[i&255]]]&255:r=this.perm[(t&255)+this.perm[e&255]]&255,this.perm[r]/255*2-1}seededRandom(){this.seedK+=Math.E;let t=1e9*Math.sin(this.seedK);return t-Math.floor(t)}resetSeed(){this.seedK=this.seedN}xorshift(t){let e=t;return function(){return e^=e<<13,e^=e>>17,e^=e<<5,(e<0?1+~e:e)/4294967295}}dot(t,e=0,i=0,r=0){return t[0]*e+t[1]*i+t[2]*r}};document.body.insertAdjacentHTML("afterbegin",se);var Be=6,Pe={computeCellular:"CellularPattern",computeWorley:"WorleyPattern",computeAntiCellular:"AntiCellularPattern",computeAntiWorley:"AntiWorleyPattern",computeWhiteNoise:"White Noise",computeBlueNoise:"Blue Noise"},Ce={computeRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeAntiRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeRidgedMultifractal:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal2:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal3:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal4:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeFBM:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM2:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM3:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeVoronoiBM1:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM2:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM3:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeCellular:{clamp:{threshold:[0,1]}},computeWorley:{clamp:{threshold:[0,1]}},computeAntiCellular:{clamp:{threshold:[0,1]}},computeAntiWorley:{clamp:{threshold:[0,1]}},computeSimplexFBM:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurl2D:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurlFBM2D:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM1:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM2:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeGaborAnisotropic:{clamp:{gaborRadius:[.5,6]}},computeFoamNoise:{force:{turbulence:1},clamp:{gain:[.5,.95]}}},E=128,pe="toroidalDemo",Y=new Map,G=[],X=Object.create(null);function Z(n){let t=String(n||""),e=Pe[t];if(e)return e;let i=t;return i.startsWith("compute")&&(i=i.slice(7)),i||t}function Ae(n,t){let e=Object.create(null),i=Array.isArray(n)?n:[],r=Math.max(0,t|0),a=Math.max(0,i.length-r);for(let o=0;o<a;o++)e[o]=Z(i[o]);return e}function Te(){return Object.keys(X).map(n=>Number(n)).filter(n=>Number.isInteger(n)&&n>=0).sort((n,t)=>n-t)}function qe(){let n=[];for(let t=0;t<G.length;t++){let e=G[t];typeof e!="string"||!e||e!=="clearTexture"&&n.push(t)}return n}function Ne(n){let t=G[n];return t&&Ce[String(t)]||null}function O(n,t,e,i){if(!Object.prototype.hasOwnProperty.call(n,t))return;let r=Number(n[t]);if(!Number.isFinite(r))return;let a=Number(e),o=Number(i);n[t]=Math.min(Math.max(r,a),o)}function ce(n,t){let e={...t},i=Ne(n);if(i&&i.clamp){let a=i.clamp;a.freq&&O(e,"freq",a.freq[0],a.freq[1]),a.gain&&O(e,"gain",a.gain[0],a.gain[1]),a.octaves&&O(e,"octaves",a.octaves[0],a.octaves[1]),a.threshold&&O(e,"threshold",a.threshold[0],a.threshold[1]),a.warpAmp&&O(e,"warpAmp",a.warpAmp[0],a.warpAmp[1]),a.gaborRadius&&O(e,"gaborRadius",a.gaborRadius[0],a.gaborRadius[1]),a.edgeK&&O(e,"edgeK",a.edgeK[0],a.edgeK[1])}if(i&&i.force)for(let[a,o]of Object.entries(i.force))e[a]=o;let r=Y.get(n);if(r)for(let[a,o]of Object.entries(r))typeof o=="number"&&Number.isFinite(o)&&(e[a]=o);return e}function oe(){let n=(a,o)=>{let l=document.getElementById(a);if(!l)return o;let s=Number(l.value);return Number.isFinite(s)?s:o},t=(a,o)=>{let l=n(a,o);return Number.isFinite(l)?Math.max(0,Math.floor(l)):o},e=Math.max(1,Math.floor(n("noise-seed",1234567890))),i=document.getElementById("noise-turbulence"),r=i&&i.checked?1:0;return{seed:e,zoom:n("noise-zoom",1),freq:n("noise-freq",1),octaves:Math.max(1,Math.floor(n("noise-octaves",8))),lacunarity:n("noise-lacunarity",2),gain:n("noise-gain",.5),xShift:n("noise-xShift",0),yShift:n("noise-yShift",0),zShift:n("noise-zShift",0),turbulence:r,seedAngle:n("noise-seedAngle",0),exp1:n("noise-exp1",1),exp2:n("noise-exp2",0),threshold:n("noise-threshold",.1),rippleFreq:n("noise-rippleFreq",10),time:n("noise-time",0),warpAmp:n("noise-warpAmp",.5),gaborRadius:n("noise-gaborRadius",4),terraceStep:n("noise-terraceStep",8),toroidal:0,voroMode:t("noise-voroMode",0),edgeK:n("noise-edgeK",0)}}function Ee(){let n=document.querySelectorAll('input[type="checkbox"][name="noise-type"]'),t=[];return n.forEach(e=>{if(e.checked){let i=Number(e.dataset.bit);Number.isInteger(i)&&t.push(i)}}),t}function me(){let n=document.getElementById("z-slice"),t=document.getElementById("z-slice-num"),e=0;return n?e=Number(n.value):t&&(e=Number(t.value)),Number.isFinite(e)||(e=0),e=Math.min(Math.max(Math.round(e),0),E-1),n&&String(n.value)!==String(e)&&(n.value=String(e)),t&&String(t.value)!==String(e)&&(t.value=String(e)),e}function $(n,t=null,e=null){n.style.display="block",n.style.margin="0",n.style.padding="0",n.style.border="0",n.style.outline="0",n.style.background="transparent",n.style.width=t!=null?`${t}px`:"100%",n.style.height=e!=null?`${e}px`:"100%",n.style.objectFit="contain",n.style.objectPosition="center",n.style.imageRendering="crisp-edges",n.style.imageRendering="pixelated"}function ne(n,t,e,i,r=null,a=null){let o=Math.max(1,e|0),l=Math.max(1,i|0);$(t,r,a);let s=!1;return(t.width!==o||t.height!==l)&&(t.width=o,t.height=l,s=!0),n&&typeof n.configureCanvas=="function"&&s&&n.configureCanvas(t),s}function Re(n,t,e,i){let r=Math.max(1,i|0),a=Math.max(1,Math.round(Math.sqrt(r))),o=Math.ceil(r/a);n.style.display="grid",n.style.gridTemplateColumns=`repeat(${a}, ${t}px)`,n.style.gridAutoRows=`${e}px`,n.style.gap="0px",n.style.padding="0",n.style.margin="0",n.style.border="0",n.style.lineHeight="0",n.style.fontSize="0",n.style.alignItems="start",n.style.justifyItems="start",n.style.placeItems="start",n.style.overflow="hidden"}function ke(){let n=document.getElementById("noise-canvas"),t=document.getElementById("view-stack");if(!n&&t&&(n=document.createElement("canvas"),n.id="noise-canvas",n.width=800,n.height=800,t.appendChild(n)),!n)throw new Error("Missing main preview canvas (#noise-canvas)");$(n);let e=document.getElementById("mosaic");if(!e)throw new Error("Missing #mosaic container");let i=[],r=e.querySelectorAll("canvas");if(r.length)r.forEach(a=>{$(a),i.push(a)});else for(let a=0;a<9;a++){let o=document.createElement("canvas");o.width=E,o.height=E,$(o),e.appendChild(o),i.push(o)}return Re(e,E,E,i.length||9),{mainCanvas:n,mosaicCanvases:i}}function Ve(n){return n.length?n.map(e=>X[e]||String(e)).join(", "):X[0]||"Perlin"}function de(n){let t=document.getElementById(n);if(!t)throw new Error(`Missing #${n}`);return t}function Le(){let n=de("noise-type-list");n.innerHTML="";let t=Te();for(let e of t){let i=document.createElement("label"),r=document.createElement("input");r.type="checkbox",r.name="noise-type",r.dataset.bit=String(e),e===0&&(r.checked=!0),i.appendChild(r),i.appendChild(document.createTextNode(" "+(X[e]||String(e)))),n.appendChild(i)}}function Ie(n){return(Array.isArray(n)?n:[]).filter(e=>typeof e=="string"&&/4D/.test(e)&&e!=="clearTexture").slice()}function Ge(n){let t=de("toroidal-type-list");t.innerHTML="";let e=Ie(n),i=new Set(["computePerlin4D","computeWorley4D"]),r=!1;for(let a of e){let o=document.createElement("label"),l=document.createElement("input");l.type="checkbox",l.name="toroidal-type",l.dataset.entry=a;let s=G.indexOf(a);Number.isInteger(s)&&s>=0&&(l.dataset.bit=String(s)),i.has(a)&&(l.checked=!0,r=!0),o.appendChild(l),o.appendChild(document.createTextNode(" "+Z(a))),t.appendChild(o)}if(!r&&e.length){let a=t.querySelector('input[type="checkbox"][name="toroidal-type"]');a&&(a.checked=!0)}}function ae(){let n=document.querySelectorAll('input[type="checkbox"][name="toroidal-type"]'),t=[];if(n.forEach(e=>{if(!e.checked)return;let i=String(e.dataset.entry||"");if(!i)return;let r=Number(e.dataset.bit);Number.isInteger(r)||(r=G.indexOf(i)),Number.isInteger(r)||(r=-1),t.push({bit:r,entry:i})}),!t.length){let e=["computePerlin4D","computeWorley4D"];for(let i of e){if(!G.includes(i))continue;let r=G.indexOf(i);t.push({bit:r,entry:i})}}return t}function ge(n){let t=document.getElementById("mosaic-caption");if(!t)return;let e=Array.isArray(n)?n:[],i=e.length?e.map(r=>Z(r)).join(" + "):"None";t.textContent=`A single toroidal Z slice from a 4D volume. Modes: ${i}. Repeated in X and Y. Use the Z slice control to see different slices.`}function Fe(){let n=document.getElementById("override-mode");if(!n)return;n.innerHTML="";let t=qe();for(let e of t){let i=G[e],r=document.createElement("option");r.value=String(e),r.textContent=`${e}: ${Z(i)}`,n.appendChild(r)}t.length&&(n.value=String(t[0]))}function ie(n){let t=Y.get(n)||{},e=(r,a)=>{let o=document.getElementById(r);if(!o)return;let l=t[a];o.value=typeof l=="number"&&Number.isFinite(l)?String(l):""},i=(r,a)=>{let o=document.getElementById(r);if(!o)return;let l=t[a];o.value=typeof l=="number"&&Number.isFinite(l)?String(l):""};e("ov-zoom","zoom"),e("ov-freq","freq"),e("ov-lacunarity","lacunarity"),e("ov-gain","gain"),e("ov-octaves","octaves"),i("ov-turbulence","turbulence"),e("ov-seedAngle","seedAngle"),e("ov-exp1","exp1"),e("ov-exp2","exp2"),e("ov-rippleFreq","rippleFreq"),e("ov-time","time"),e("ov-warp","warpAmp"),e("ov-threshold","threshold"),i("ov-voroMode","voroMode"),e("ov-edgeK","edgeK"),e("ov-gabor","gaborRadius"),e("ov-terraceStep","terraceStep"),e("ov-xShift","xShift"),e("ov-yShift","yShift"),e("ov-zShift","zShift")}function K(){let n=document.getElementById("override-mode");if(!n)return;let t=Number(n.value);if(!Number.isInteger(t))return;let e=C=>{let T=document.getElementById(C);if(!T)return null;let q=String(T.value).trim();if(!q)return null;let S=Number(q);return Number.isFinite(S)?S:null},i=C=>{let T=document.getElementById(C);if(!T)return null;let q=String(T.value).trim();if(!q)return null;let S=Number(q);return Number.isFinite(S)?S:null},r={},a=e("ov-zoom"),o=e("ov-freq"),l=e("ov-lacunarity"),s=e("ov-gain"),f=e("ov-octaves"),p=i("ov-turbulence"),u=e("ov-seedAngle"),d=e("ov-exp1"),x=e("ov-exp2"),c=e("ov-rippleFreq"),g=e("ov-time"),h=e("ov-warp"),y=e("ov-threshold"),v=i("ov-voroMode"),z=e("ov-edgeK"),M=e("ov-gabor"),_=e("ov-terraceStep"),B=e("ov-xShift"),P=e("ov-yShift"),A=e("ov-zShift");a!==null&&(r.zoom=a),o!==null&&(r.freq=o),l!==null&&(r.lacunarity=l),s!==null&&(r.gain=s),f!==null&&(r.octaves=f),p!==null&&(r.turbulence=Math.max(0,Math.floor(p))),u!==null&&(r.seedAngle=u),d!==null&&(r.exp1=d),x!==null&&(r.exp2=x),c!==null&&(r.rippleFreq=c),g!==null&&(r.time=g),h!==null&&(r.warpAmp=h),y!==null&&(r.threshold=y),v!==null&&(r.voroMode=Math.max(0,Math.floor(v))),z!==null&&(r.edgeK=z),M!==null&&(r.gaborRadius=M),_!==null&&(r.terraceStep=_),B!==null&&(r.xShift=B),P!==null&&(r.yShift=P),A!==null&&(r.zShift=A),Object.keys(r).length?Y.set(t,r):Y.delete(t)}function ue(n){return typeof n=="string"&&/4d/i.test(n)}function We(n,t=800){let e=document.getElementById("res-width"),i=document.getElementById("res-height"),r=(u,d)=>{let x=Number(u);return Number.isFinite(x)?Math.max(1,Math.floor(x)):d|0},a=n?.device?.limits||{},o=a.maxTextureDimension2D??8192,l=a.maxStorageTextureDimension2D??o,s=Math.min(o,l)|0,f=r(e?.value,t),p=r(i?.value,t);return f=Math.min(f,s),p=Math.min(p,s),e&&String(e.value)!==String(f)&&(e.value=String(f)),i&&String(i.value)!==String(p)&&(i.value=String(p)),{w:f,h:p}}function Ue(n,t,e,i){let a=Math.min(e,2048),o=Math.min(i,2048);ne(n,t,a,o)}async function re(n,t){let{w:e,h:i}=We(n,800);Ue(n,t,e,i);let r=document.getElementById("preview-meta"),a=document.getElementById("preview-stats"),o=oe();n.buildPermTable(o.seed|0);let l=Ee(),s=l.length?l:[0],f={getGradient:0,outputChannel:1,baseRadius:0,heightScale:1,useCustomPos:0,squareWorld:!0,worldMode:"crop"},p=performance.now();await n.computeToTexture(e,i,o,{...f,noiseChoices:["clearTexture"]});for(let g of s){let h=G[g],y=ce(g,o);y.toroidal=ue(h)?1:0,await n.computeToTexture(e,i,y,{...f,noiseChoices:[g]})}let u=performance.now(),d=n.getCurrentView(),x=performance.now();d&&n.renderTextureToCanvas(d,t,{layer:0,channel:0,preserveCanvasSize:!0,clear:!0});let c=performance.now();if(r){let h=s.some(v=>ue(G[v]))?" \xB7 toroidal(4D)":"",y=Math.max(e,i)|0;r.textContent=`Height field preview \xB7 ${e}\xD7${i} \xB7 world ${y}\xD7${y} \xB7 modes: ${Ve(s)}${h}`}if(a){let g=(u-p).toFixed(1),h=(c-x).toFixed(1);a.textContent=`GPU compute ${g} ms \xB7 blit ${h} ms`}return{resW:e,resH:i,noiseBits:s}}async function j(n,t,e){let i=oe();n.buildPermTable(i.seed|0);let r={...i,toroidal:1},a=ae();ge(a.map(f=>f.entry));let o=performance.now(),l=await n.computeToTexture3D(E,E,E,r,{noiseChoices:["clearTexture"],outputChannel:1,id:pe});for(let f of a){let p=f.bit,u=f.entry,d=Number.isInteger(p)&&p>=0?ce(p,r):{...r};d.toroidal=1,l=await n.computeToTexture3D(E,E,E,d,{noiseChoices:[u],outputChannel:1,id:pe})}let s=performance.now();e.lastToroidalVolumeView=l,e.lastToroidalComputeMs=s-o,he(n,l,new Array(9).fill(0).map((f,p)=>t[p]))}function he(n,t,e){if(!t)return;let i=E,a=(me()+.5)/i,o=Array.isArray(e)?e:[],l=o.length||9;for(let s=0;s<l;s++){let f=o[s];f&&(ne(n,f,E,E),n.renderTexture3DSliceToCanvas(t,f,{depth:i,zNorm:a,channel:0,chunk:0,preserveCanvasSize:!0,clear:!0}))}}async function Oe(){let n=document.getElementById("preview-stats");if(!navigator.gpu){console.error("WebGPU not available in this browser."),n&&(n.textContent="WebGPU not available in this browser.");return}let t=await navigator.gpu.requestAdapter();if(!t){console.error("Failed to get GPU adapter."),n&&(n.textContent="Failed to get GPU adapter.");return}let e=await t.requestDevice({requiredLimits:{maxBufferSize:t.limits.maxBufferSize}}),i=new H(e,e.queue);G=Array.isArray(i.entryPoints)?i.entryPoints.slice():[],X=Ae(G,Be),Le(),Ge(G),Fe();let{mainCanvas:r,mosaicCanvases:a}=ke();i.configureCanvas(r),a.forEach(m=>i.configureCanvas(m));let o=document.getElementById("override-mode");if(o){let m=Number(o.value);Number.isInteger(m)&&ie(m)}let l={lastToroidalVolumeView:null,lastToroidalComputeMs:0},s=!1,f=!1,p=()=>{s||(s=!0,requestAnimationFrame(()=>{s=!1,re(i,r).catch(m=>{console.error(m),n&&(n.textContent=String(m))})}))},u=()=>{f||(f=!0,requestAnimationFrame(()=>{f=!1,j(i,a,l).catch(m=>{console.error(m),n&&(n.textContent=String(m))})}))},d=()=>{p(),u()};["ov-zoom","ov-freq","ov-lacunarity","ov-gain","ov-octaves","ov-turbulence","ov-seedAngle","ov-exp1","ov-exp2","ov-rippleFreq","ov-time","ov-warp","ov-threshold","ov-voroMode","ov-edgeK","ov-gabor","ov-terraceStep","ov-xShift","ov-yShift","ov-zShift"].forEach(m=>{let b=document.getElementById(m);b&&b.addEventListener("change",()=>{K(),p(),u()})}),o&&o.addEventListener("change",()=>{let m=Number(o.value);Number.isInteger(m)&&ie(m)});let c=document.getElementById("ov-clear");c&&c.addEventListener("click",()=>{let m=document.getElementById("override-mode");if(!m)return;let b=Number(m.value);Number.isInteger(b)&&(Y.delete(b),ie(b),p(),u())});let g=document.getElementById("render-btn");g&&g.addEventListener("click",()=>{d()});let h=document.getElementById("apply-res");h&&h.addEventListener("click",()=>{d()}),["noise-seed","noise-zoom","noise-freq","noise-octaves","noise-lacunarity","noise-gain","noise-xShift","noise-yShift","noise-zShift","noise-voroMode","noise-threshold","noise-edgeK","noise-seedAngle","noise-turbulence","noise-time","noise-warpAmp","noise-gaborRadius","noise-terraceStep","noise-exp1","noise-exp2","noise-rippleFreq"].forEach(m=>{let b=document.getElementById(m);b&&(b.addEventListener("input",()=>{p(),u()}),b.addEventListener("change",()=>{p(),u()}))});let v=document.getElementById("noise-type-list");v&&v.addEventListener("change",m=>{let b=m.target;!b||b.name!=="noise-type"||p()});let z=document.getElementById("toroidal-type-list");z&&z.addEventListener("change",m=>{let b=m.target;!b||b.name!=="toroidal-type"||u()});let M=document.getElementById("z-slice"),_=document.getElementById("z-slice-num"),B=()=>{l.lastToroidalVolumeView&&he(i,l.lastToroidalVolumeView,a)};M&&M.addEventListener("input",()=>{let m=Number(M.value);_&&(_.value=String(m)),B()}),_&&_.addEventListener("change",()=>{let m=Number(_.value);Number.isFinite(m)||(m=0),m=Math.min(Math.max(Math.round(m),0),E-1),_.value=String(m),M&&(M.value=String(m)),B()});let P=document.getElementById("download-main");P&&P.addEventListener("click",async()=>{try{K();let m=w(i),b=Number(document.getElementById("res-width")?.value)||800,V=Number(document.getElementById("res-height")?.value)||800;ne(i,r,b,V),await re(i,r);let L=await i.exportCurrent2DToPNGBlob(b,V,{layer:0,channel:0,background:m}),N=URL.createObjectURL(L),k=document.createElement("a");k.href=N,k.download="noise-main.png",document.body.appendChild(k),k.click(),k.remove(),URL.revokeObjectURL(N)}catch(m){console.error("download-main failed:",m),n&&(n.textContent="Export main PNG failed: "+m)}});let A=document.getElementById("download-tile");A&&A.addEventListener("click",async()=>{try{K();let m=w(i);if(await j(i,a,l),!l.lastToroidalVolumeView){console.warn("No toroidal volume available for export");return}let b=(a&&a.length?a[0]:null)||document.getElementById("tile-canvas");if(!b){console.warn("No tile canvas found for export");return}let V=b.width||E,L=b.height||E,N=E,I=(me()+.5)/N,F=await i.export3DSliceToPNGBlob(l.lastToroidalVolumeView,V,L,{depth:N,zNorm:I,channel:0,chunk:0,background:m}),U=URL.createObjectURL(F),W=document.createElement("a");W.href=U,W.download="noise-tile.png",document.body.appendChild(W),W.click(),W.remove(),URL.revokeObjectURL(U)}catch(m){console.error("download-tile failed:",m),n&&(n.textContent="Export tile PNG failed: "+m)}});function C(m,b){let V=URL.createObjectURL(m),L=document.createElement("a");L.href=V,L.download=b,document.body.appendChild(L),L.click(),L.remove(),URL.revokeObjectURL(V)}function T(m){return String(m||"").trim().replace(/\s+/g,"_").replace(/[^a-zA-Z0-9._-]+/g,"").slice(0,120)}async function q(m,b){if(!b||!b.lastToroidalVolumeView){console.warn("No toroidal volume available for tileset export");return}K();let V=w(m);await j(m,a,b);let L=oe(),N=ae().map(be=>be.entry),k=16,I=E,F=E,U=E,W=Math.ceil(U/k),xe=await m.export3DTilesetToPNGBlob(b.lastToroidalVolumeView,I,F,{depth:U,channel:0,chunk:0,tilesAcross:k,tilesDown:W,startSlice:0,sliceCount:U,background:V}),ve=T(N.map(Z).join("+"))||"tileset",ye=T(L.seed),ze=`noise-tileset_${ve}_seed${ye}_${I}x${F}_z${U}_${k}x${W}.png`;C(xe,ze)}let S=document.getElementById("download-tileset");S&&S.addEventListener("click",async()=>{try{await q(i,l)}catch(m){console.error("download-tileset failed:",m),n&&(n.textContent="Export tileset failed: "+m)}});function R(){let m=document.querySelector('input[type="radio"][name="export-bg"]:checked'),b=String(m?.value||"transparent");return b==="black"||b==="white"||b==="transparent"?b:"transparent"}function w(m){let b=R();return m&&typeof m.setExportBackground=="function"&&m.setExportBackground(b),b}function D(m){w(m),document.querySelectorAll('input[type="radio"][name="export-bg"]').forEach(V=>{V.addEventListener("change",()=>{w(m)})})}D(i),ge(ae().map(m=>m.entry)),await re(i,r),await j(i,a,l)}document.addEventListener("DOMContentLoaded",()=>{Oe().catch(n=>console.error(n))});})();
+`;var he=8192,oe=2048,Ee=8,Q=class{constructor(t,e){this.device=t,this.queue=e,this.maxBufferChunkBytes=8e6,this.entryPoints=["computePerlin","computeBillow","computeAntiBillow","computeRidge","computeAntiRidge","computeRidgedMultifractal","computeRidgedMultifractal2","computeRidgedMultifractal3","computeRidgedMultifractal4","computeAntiRidgedMultifractal","computeAntiRidgedMultifractal2","computeAntiRidgedMultifractal3","computeAntiRidgedMultifractal4","computeFBM","computeFBM2","computeFBM3","computeCellularBM1","computeCellularBM2","computeCellularBM3","computeVoronoiBM1","computeVoronoiBM2","computeVoronoiBM3","computeCellular","computeWorley","computeAntiCellular","computeAntiWorley","computeLanczosBillow","computeLanczosAntiBillow","computeVoronoiTileNoise","computeVoronoiCircleNoise","computeVoronoiCircle2","computeVoronoiFlatShade","computeVoronoiRipple3D","computeVoronoiRipple3D2","computeVoronoiCircularRipple","computeFVoronoiRipple3D","computeFVoronoiCircularRipple","computeRippleNoise","computeFractalRipples","computeHexWorms","computePerlinWorms","computeWhiteNoise","computeBlueNoise","computeSimplex","computeSimplexFBM","computeCurl2D","computeCurlFBM2D","computeDomainWarpFBM1","computeDomainWarpFBM2","computeGaborAnisotropic","computeTerraceNoise","computeFoamNoise","computeTurbulence","computePerlin4D","computeWorley4D","computeAntiWorley4D","computeCellular4D","computeAntiCellular4D","computeBillow4D","computeAntiBillow4D","computeLanczosBillow4D","computeLanczosAntiBillow4D","computeFBM4D","computeVoronoi4D","computeVoronoiBM1_4D","computeVoronoiBM2_4D","computeVoronoiBM3_4D","computeVoronoiBM1_4D_vec","computeVoronoiBM2_4D_vec","computeVoronoiBM3_4D_vec","computeWorleyBM1_4D","computeWorleyBM2_4D","computeWorleyBM3_4D","computeWorleyBM1_4D_vec","computeWorleyBM2_4D_vec","computeWorleyBM3_4D_vec","computeCellularBM1_4D","computeCellularBM2_4D","computeCellularBM3_4D","computeCellularBM1_4D_vec","computeCellularBM2_4D_vec","computeCellularBM3_4D_vec","computeTerraceNoise4D","computeFoamNoise4D","computeTurbulence4D","computeGauss5x5","computeNormal","computeNormal8","computeSphereNormal","computeNormalVolume","clearTexture"],this.shaderModule=t.createShaderModule({code:xe}),this.bindGroupLayout=t.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:1,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:2,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:3,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:4,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"2d-array"}},{binding:5,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:6,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:7,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"3d"}},{binding:8,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"3d"}}]}),this.pipelineLayout=t.createPipelineLayout({bindGroupLayouts:[this.bindGroupLayout]}),this.pipelines=new Map,this._texPairs=new Map,this._tid=null,this._tag=new WeakMap,this._volumeCache=new Map,this.viewA=null,this.viewB=null,this.width=0,this.height=0,this.layers=1,this.isA=!0,this._initBuffers(),this._ensureDummies(),this._ctxMap=new WeakMap}_initBuffers(){this.optionsBuffer?.destroy(),this.paramsBuffer?.destroy(),this.permBuffer?.destroy(),this.nullPosBuffer?.destroy(),this.optionsBuffer=this.device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.paramsBuffer=this.device.createBuffer({size:88,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.permBuffer=this.device.createBuffer({size:512*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.nullPosBuffer=this.device.createBuffer({size:64,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.queue.writeBuffer(this.optionsBuffer,0,new ArrayBuffer(32)),this.queue.writeBuffer(this.paramsBuffer,0,new ArrayBuffer(88)),this.queue.writeBuffer(this.permBuffer,0,new Uint32Array(512))}_ensureDummies(){this._dummy2D_sampleTex||(this._dummy2D_sampleTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy2D_sampleView=this._dummy2D_sampleTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy2D_writeTex||(this._dummy2D_writeTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy2D_writeView=this._dummy2D_writeTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy3D_sampleTex||(this._dummy3D_sampleTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy3D_sampleView=this._dummy3D_sampleTex.createView({dimension:"3d"})),this._dummy3D_writeTex||(this._dummy3D_writeTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy3D_writeView=this._dummy3D_writeTex.createView({dimension:"3d"}))}_getMaxBufferChunkBytes(t){let e=this.device?.limits?.maxBufferSize??268435456,i=Math.max(1024*1024,Math.floor(e*.9)),r=Number.isFinite(t)?Math.floor(t):this.maxBufferChunkBytes;return(!Number.isFinite(r)||r<=0)&&(r=this.maxBufferChunkBytes),r=Math.max(4,r)&-4,Math.min(i,r)}_writeBufferChunked(t,e,i,r,a,o=null){let l=a|0;if(!(l>0))return;let n=this._getMaxBufferChunkBytes(o),f=0;for(;f<l;){let p=Math.min(n,l-f)|0;if(p=p&-4,p<=0)break;this.queue.writeBuffer(t,e+f|0,i,r+f|0,p),f=f+p|0}if(f!==l)throw new Error(`_writeBufferChunked: incomplete write ${f}/${l} bytes`)}async _readBGRA8TextureToRGBA8Pixels(t,e,i,r={}){let a=Math.max(1,e|0),o=Math.max(1,i|0),l=4,n=256,f=a*l,p=Math.ceil(f/n)*n,u=this.device?.limits?.maxBufferSize??256*1024*1024,m=Math.max(1024*1024,Math.floor(u*.9)),d=this._getMaxBufferChunkBytes(r.maxBufferChunkBytes);if(d<p&&(d=p),p>m)throw new Error(`_readBGRA8TextureToRGBA8Pixels: bytesPerRow=${p} exceeds safe buffer cap=${m}`);let c=Math.max(1,Math.floor(d/p))|0,v=new Uint8ClampedArray(a*o*4),x=[],h=this.device.createCommandEncoder();for(let y=0;y<o;y+=c){let b=Math.min(c,o-y)|0,P=p*b|0,_=this.device.createBuffer({size:P,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});h.copyTextureToBuffer({texture:t,origin:{x:0,y,z:0}},{buffer:_,bytesPerRow:p,rowsPerImage:b},{width:a,height:b,depthOrArrayLayers:1}),x.push({readBuffer:_,y0:y,rows:b})}if(this.queue.submit([h.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}for(let y of x){let{readBuffer:b,y0:P,rows:_}=y;await b.mapAsync(GPUMapMode.READ);let D=b.getMappedRange(),B=new Uint8Array(D);for(let A=0;A<_;A++){let C=A*p,T=(P+A)*a*4;for(let q=0;q<a;q++){let S=C+q*4,E=T+q*4;v[E+0]=B[S+2],v[E+1]=B[S+1],v[E+2]=B[S+0],v[E+3]=B[S+3]}}b.unmap(),b.destroy()}return v}resize(t){this.maxConfigs=t,this._initBuffers()}setPermTable(t){this.queue.writeBuffer(this.permBuffer,0,t)}setPosBuffer(t){this.posBuffer=t}setInputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.TEXTURE_BINDING)===0){console.warn("setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.");return}}catch{}if(this.inputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}setOutputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.STORAGE_BINDING)===0){console.warn("setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.");return}}catch{}if(this.outputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}buildPermTable(t=Date.now()){let i=new ne(t).perm,r=new Uint32Array(512);for(let a=0;a<512;a++)r[a]=i[a];this.setPermTable(r)}setOptions(t={}){Array.isArray(t.noiseChoices)?this.noiseChoices=t.noiseChoices:this.noiseChoices||(this.noiseChoices=[0]);let{getGradient:e=0,outputChannel:i=1,baseRadius:r=0,heightScale:a=1,useCustomPos:o=0,ioFlags:l=0}=t;this.useCustomPos=o>>>0;let n=new ArrayBuffer(32),f=new DataView(n);f.setUint32(0,e,!0),f.setUint32(4,this.useCustomPos,!0),f.setUint32(8,i,!0),f.setUint32(12,l>>>0,!0),f.setFloat32(16,r,!0),f.setFloat32(20,a,!0),f.setFloat32(24,0,!0),f.setFloat32(28,0,!0),this.queue.writeBuffer(this.optionsBuffer,0,n);for(let p of this._texPairs.values())p.bindGroupDirty=!0}setNoiseParams(t={}){let{seed:e=Date.now()|0,zoom:i=1,freq:r=1,octaves:a=8,lacunarity:o=2,gain:l=.5,xShift:n=0,yShift:f=0,zShift:p=0,turbulence:u=0,seedAngle:m=0,exp1:d=1,exp2:c=0,threshold:v=.1,rippleFreq:x=10,time:h=0,warpAmp:y=.5,gaborRadius:b=4,terraceStep:P=8,toroidal:_=0,voroMode:D=0,edgeK:B=0}=t,A=Math.max(Number(i)||0,1e-6),C=Math.max(Number(r)||0,1e-6),T=Math.max(0,Math.floor(Number(a)||0))>>>0,q=(u?1:0)>>>0,S=(_?1:0)>>>0,E=new ArrayBuffer(88),w=new DataView(E),M=0;w.setUint32(M+0,e>>>0,!0),w.setFloat32(M+4,A,!0),w.setFloat32(M+8,C,!0),w.setUint32(M+12,T,!0),w.setFloat32(M+16,o,!0),w.setFloat32(M+20,l,!0),w.setFloat32(M+24,n,!0),w.setFloat32(M+28,f,!0),w.setFloat32(M+32,p,!0),w.setUint32(M+36,q,!0),w.setFloat32(M+40,m,!0),w.setFloat32(M+44,d,!0),w.setFloat32(M+48,c,!0),w.setFloat32(M+52,v,!0),w.setFloat32(M+56,x,!0),w.setFloat32(M+60,h,!0),w.setFloat32(M+64,y,!0),w.setFloat32(M+68,b,!0),w.setFloat32(M+72,P,!0),w.setUint32(M+76,S,!0),w.setUint32(M+80,D>>>0,!0),w.setFloat32(M+84,B,!0),this.queue.writeBuffer(this.paramsBuffer,0,E);for(let L of this._texPairs.values())L.bindGroupDirty=!0;for(let[L,V]of this._volumeCache)!V||!Array.isArray(V.chunks)||(V._bindGroupsDirty=!0)}_compute2DTiling(t,e){let i=Math.min(t,he),r=Math.min(e,he),a=Math.ceil(t/i),o=Math.ceil(e/r),l=a*o;return{tileW:i,tileH:r,tilesX:a,tilesY:o,layers:l}}_create2DPair(t,e){let i=this._compute2DTiling(t,e),r=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST,a=()=>this.device.createTexture({size:[i.tileW,i.tileH,i.layers],format:"rgba16float",usage:r}),o={dimension:"2d-array",arrayLayerCount:i.layers},l=a(),n=a(),f=l.createView(o),p=n.createView(o);l.label=`2D texA ${t}x${e}x${i.layers}`,n.label=`2D texB ${t}x${e}x${i.layers}`,f.label="2D:viewA",p.label="2D:viewB",this._tag.set(f,"2D:A"),this._tag.set(p,"2D:B");let u=this._texPairs.size;return this._texPairs.set(u,{texA:l,texB:n,viewA:f,viewB:p,fullWidth:t,fullHeight:e,tileWidth:i.tileW,tileHeight:i.tileH,tilesX:i.tilesX,tilesY:i.tilesY,layers:i.layers,isA:!0,tiles:null,bindGroupDirty:!0}),this._tid===null&&this.setActiveTexture(u),u}createShaderTextures(t,e){this._tid!==null&&this._texPairs.has(this._tid)&&this.destroyTexturePair(this._tid);let i=this._create2DPair(t,e);return this.setActiveTexture(i),i}destroyTexturePair(t){let e=this._texPairs.get(t);if(e){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(Array.isArray(e.tiles))for(let i of e.tiles){if(Array.isArray(i.frames))for(let r of i.frames)try{r.destroy()}catch{}if(i.posBuf&&i.posBuf!==this.nullPosBuffer)try{i.posBuf.destroy()}catch{}}this._texPairs.delete(t),this._tid===t&&(this._tid=null,this.inputTextureView=null,this.outputTextureView=null,this.viewA=null,this.viewB=null)}}destroyAllTexturePairs(){let t=Array.from(this._texPairs.keys());for(let e of t)this.destroyTexturePair(e)}setActiveTexture(t){if(!this._texPairs.has(t))throw new Error("setActiveTexture: invalid id");this._tid=t;let e=this._texPairs.get(t);this.viewA=e.viewA,this.viewB=e.viewB,this.width=e.tileWidth,this.height=e.tileHeight,this.layers=e.layers,this.inputTextureView=e.isA?e.viewA:e.viewB,this.outputTextureView=e.isA?e.viewB:e.viewA}_buildPosBuffer(t,e,i){if(!(i instanceof Float32Array)||i.byteLength<=0)return this.nullPosBuffer;let r=Math.max(1,Math.floor(t)),a=Math.max(1,Math.floor(e)),l=r*a*4;if(i.length!==l)throw new Error(`_buildPosBuffer: customData length ${i.length} != expected ${l} (width=${r}, height=${a})`);let n=this.device?.limits?.maxBufferSize??2147483648,f=Math.floor(n*.98);if(i.byteLength>f)throw new Error(`_buildPosBuffer: ${i.byteLength} bytes exceeds maxBufferSize ${n} (w=${r}, h=${a})`);let p=this.device.createBuffer({size:i.byteLength,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});return this._writeBufferChunked(p,0,i.buffer,i.byteOffset,i.byteLength,this.maxBufferChunkBytes),p}_writeFrameUniform(t,e){let i=new ArrayBuffer(64),r=new DataView(i);r.setUint32(0,e.fullWidth>>>0,!0),r.setUint32(4,e.fullHeight>>>0,!0),r.setUint32(8,e.tileWidth>>>0,!0),r.setUint32(12,e.tileHeight>>>0,!0),r.setInt32(16,e.originX|0,!0),r.setInt32(20,e.originY|0,!0),r.setInt32(24,e.originZ|0,!0),r.setUint32(28,e.fullDepth>>>0,!0),r.setUint32(32,e.tileDepth>>>0,!0),r.setInt32(36,e.layerIndex|0,!0),r.setUint32(40,e.layers>>>0,!0),r.setUint32(44,0,!0),r.setFloat32(48,e.originXf??0,!0),r.setFloat32(52,e.originYf??0,!0),r.setFloat32(56,0,!0),r.setFloat32(60,0,!0),this.queue.writeBuffer(t,0,i)}_create2DTileBindGroups(t,e={}){let i=this._texPairs.get(t);if(!i)throw new Error("_create2DTileBindGroups: invalid tid");let a=((e.useCustomPos??0)|0)!==0&&e.customData instanceof Float32Array?e.customData:null,o=!!a,l=Array.isArray(i.tiles)&&i.tiles.some(f=>f&&f.posIsCustom);if(!o&&l&&(i.bindGroupDirty=!0),Array.isArray(i.tiles)&&!i.bindGroupDirty&&!o)return;let n=[];for(let f=0;f<i.tilesY;f++)for(let p=0;p<i.tilesX;p++){let u=f*i.tilesX+p,m=p*i.tileWidth,d=f*i.tileHeight,c=i.tiles&&i.tiles[u]||null,v=this.nullPosBuffer,x=!1;if(o)v=this._buildPosBuffer(i.tileWidth,i.tileHeight,a),x=v!==this.nullPosBuffer;else if(c&&c.posBuf&&!c.posIsCustom)v=c.posBuf,x=!1;else if(v=this.nullPosBuffer,x=!1,c&&c.posBuf&&c.posIsCustom)try{c.posBuf.destroy()}catch{}let h;c&&c.frames&&c.frames[0]?h=c.frames[0]:h=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let y=Number.isFinite(e.frameFullWidth)?e.frameFullWidth>>>0:i.fullWidth,b=Number.isFinite(e.frameFullHeight)?e.frameFullHeight>>>0:i.fullHeight,P=e.squareWorld||String(e.worldMode||"").toLowerCase()==="crop";if(e.squareWorld){let C=Math.max(y,b,i.fullWidth,i.fullHeight)>>>0;y=C,b=C}let _,D;if(P)_=m,D=d;else{let C=y/i.fullWidth,T=b/i.fullHeight;_=m*C,D=d*T}this._writeFrameUniform(h,{fullWidth:y,fullHeight:b,tileWidth:i.tileWidth,tileHeight:i.tileHeight,originX:m,originY:d,originZ:0,fullDepth:1,tileDepth:1,layerIndex:u,layers:i.layers,originXf:_,originYf:D});let B=c?.bgs?.[0]?.bgA??null,A=c?.bgs?.[0]?.bgB??null;(!B||!A||i.bindGroupDirty)&&(B=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewA},{binding:4,resource:i.viewB},{binding:5,resource:{buffer:v}},{binding:6,resource:{buffer:h}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]}),A=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewB},{binding:4,resource:i.viewA},{binding:5,resource:{buffer:v}},{binding:6,resource:{buffer:h}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]})),n.push({layerIndex:u,originX:m,originY:d,frames:[h],posBuf:v,posIsCustom:x,bgs:[{bgA:B,bgB:A}]})}i.tiles=n,i.bindGroupDirty=!1,this._tid===t&&(this._tiles=n)}async _runPipelines(t,e,i,r,a,o,l=1){let n=t,f=e,p=Array.isArray(o),u=0,m=this.device.createCommandEncoder(),d=m.beginComputePass();for(let c of this.noiseChoices){let v=typeof c=="number"?this.entryPoints[c]:c,x=this.pipelines.get(v);x||(x=this.device.createComputePipeline({layout:this.pipelineLayout,compute:{module:this.shaderModule,entryPoint:v}}),this.pipelines.set(v,x)),p&&this.setNoiseParams(o[u++]),d.setPipeline(x),d.setBindGroup(0,n),d.dispatchWorkgroups(Math.ceil(i/8),Math.ceil(r/8),l),[n,f]=[f,n]}return d.end(),this.queue.submit([m.finish()]),f}async computeToTexture(t,e,i={},r={}){let a=t|0,o=e|0;if(!(a>0&&o>0))throw new Error(`computeToTexture: invalid size ${t}x${e}`);if(this._tid!=null){let h=this._texPairs.get(this._tid);(!h||h.fullWidth!==a||h.fullHeight!==o)&&this.destroyTexturePair(this._tid)}if(this._tid==null){let h=this._create2DPair(a,o);this.setActiveTexture(h)}let l=this._texPairs.get(this._tid);if(!l)throw new Error("computeToTexture: failed to create 2D texture pair");i&&!Array.isArray(i)&&this.setNoiseParams(i);let n=r||{},p=((n.useCustomPos??0)|0)!==0&&n.customData instanceof Float32Array?n.customData:null,u=p?1:0;this.setOptions({...n,ioFlags:0,useCustomPos:u});let m={...n,useCustomPos:u,customData:p};(!l.tiles||l.bindGroupDirty||p)&&this._create2DTileBindGroups(this._tid,m);let d=l.isA,c=null,v=null;for(let h of l.tiles){let{bgA:y,bgB:b}=h.bgs[0],P=c?c===y?y:b:d?y:b,_=P===y?b:y;c=await this._runPipelines(P,_,l.tileWidth,l.tileHeight,1,i,1),v={bgA:y,bgB:b}}let x=c===v.bgB;return l.isA=x,this.isA=x,this.setActiveTexture(this._tid),this.getCurrentView()}getCurrentView(){let t=this._texPairs.get(this._tid);return t?t.isA?t.viewA:t.viewB:null}_compute3DTiling(t,e,i){let r=Math.min(t,oe),a=Math.min(e,oe),o=this.device?.limits?.maxBufferSize??256*1024*1024,l=r*a*Ee,n=Math.max(1,Math.floor(o*.8/Math.max(1,l))),f=Math.min(i,oe,n),p=Math.ceil(t/r),u=Math.ceil(e/a),m=Math.ceil(i/f);return{tw:r,th:a,td:f,nx:p,ny:u,nz:m}}_create3DChunks(t,e,i){let r=this._compute3DTiling(t,e,i),a=[],o=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST;for(let l=0;l<r.nz;l++)for(let n=0;n<r.ny;n++)for(let f=0;f<r.nx;f++){let p=f*r.tw,u=n*r.th,m=l*r.td,d=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:o}),c=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:o}),v=d.createView({dimension:"3d"}),x=c.createView({dimension:"3d"});d.label=`3D texA ${r.tw}x${r.th}x${r.td} @ (${f},${n},${l})`,c.label=`3D texB ${r.tw}x${r.th}x${r.td} @ (${f},${n},${l})`,v.label=`3D:viewA[${f},${n},${l}]`,x.label=`3D:viewB[${f},${n},${l}]`,this._tag.set(v,`3D:A[${f},${n},${l}]`),this._tag.set(x,`3D:B[${f},${n},${l}]`),a.push({texA:d,texB:c,viewA:v,viewB:x,ox:p,oy:u,oz:m,w:r.tw,h:r.th,d:r.td,isA:!0,fb:null,posBuf:null,bgA:null,bgB:null})}return{chunks:a,tile:{w:r.tw,h:r.th,d:r.td},full:{w:t,h:e,d:i},grid:{nx:r.nx,ny:r.ny,nz:r.nz}}}_destroy3DSet(t){if(t)for(let e of t.chunks){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(e.viewA=null,e.viewB=null,e.bgA=null,e.bgB=null,e.fb){try{e.fb.destroy()}catch{}e.fb=null}if(e.posBuf&&e.posBuf!==this.nullPosBuffer){try{e.posBuf.destroy()}catch{}e.posBuf=null}}}destroyAllVolumes(){for(let[t,e]of this._volumeCache)this._destroy3DSet(e),this._volumeCache.delete(t)}get3DView(t){let e=this._volumeCache.get(String(t));if(!e)return null;let i=e.chunks.map(r=>r.isA?r.viewA:r.viewB);return i.length===1?i[0]:{views:i,meta:{full:e.full,tile:e.tile,grid:e.grid}}}destroyVolume(t){let e=String(t),i=this._volumeCache.get(e);i&&(this._destroy3DSet(i),this._volumeCache.delete(e))}_getOrCreate3DVolume(t,e,i,r=null,a=null){let o=r?String(r):`${t}x${e}x${i}`,l=this._volumeCache.get(o);if(l)return l;l=this._create3DChunks(t,e,i);for(let n of l.chunks){n.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=a&&Number.isFinite(a?.w)?a.w>>>0:l.full.w,p=a&&Number.isFinite(a?.h)?a.h>>>0:l.full.h,u=a&&Number.isFinite(a?.d)?a.d>>>0:l.full.d,m=f/l.full.w,d=p/l.full.h,c=n.ox*m,v=n.oy*d;this._writeFrameUniform(n.fb,{fullWidth:f,fullHeight:p,tileWidth:n.w,tileHeight:n.h,originX:n.ox,originY:n.oy,originZ:n.oz,fullDepth:u,tileDepth:n.d,layerIndex:0,layers:1,originXf:c,originYf:v});let x=this._buildPosBuffer(n.w,n.h,null);n.posBuf=x;try{n.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:x}},{binding:6,resource:{buffer:n.fb}},{binding:7,resource:n.viewA},{binding:8,resource:n.viewB}]}),n.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:n.posBuf}},{binding:6,resource:{buffer:n.fb}},{binding:7,resource:n.viewB},{binding:8,resource:n.viewA}]})}catch(h){throw new Error(`_getOrCreate3DVolume: createBindGroup failed: ${h?.message||h}`)}}return l._bindGroupsDirty=!1,this._volumeCache.set(o,l),l}_recreate3DBindGroups(t,e=null){if(!t||!Array.isArray(t.chunks))return;let i=e&&Number.isFinite(e.w)?e.w>>>0:t.full.w,r=e&&Number.isFinite(e.h)?e.h>>>0:t.full.h,a=e&&Number.isFinite(e.d)?e.d>>>0:t.full.d;for(let o of t.chunks){if(!o.fb){o.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=i/t.full.w,p=r/t.full.h,u=o.ox*f,m=o.oy*p;this._writeFrameUniform(o.fb,{fullWidth:i,fullHeight:r,tileWidth:o.w,tileHeight:o.h,originX:o.ox,originY:o.oy,originZ:o.oz,fullDepth:a,tileDepth:o.d,layerIndex:0,layers:1,originXf:u,originYf:m})}o.posBuf||(o.posBuf=this._buildPosBuffer(o.w,o.h,null));let l=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:o.posBuf}},{binding:6,resource:{buffer:o.fb}},{binding:7,resource:o.viewA},{binding:8,resource:o.viewB}],n=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:o.posBuf}},{binding:6,resource:{buffer:o.fb}},{binding:7,resource:o.viewB},{binding:8,resource:o.viewA}];try{o.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:l}),o.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:n})}catch(f){throw new Error(`_recreate3DBindGroups: failed to create bind groups: ${f?.message||f}`)}}t._bindGroupsDirty=!1}async computeToTexture3D(t,e,i,r={},a={}){let o=t|0,l=e|0,n=i|0;if(!(o>0&&l>0&&n>0))throw new Error(`computeToTexture3D: invalid size ${t}x${e}x${i}`);r&&!Array.isArray(r)&&this.setNoiseParams(r);let f=a||{};this.setOptions({...f,ioFlags:3,useCustomPos:f.useCustomPos??this.useCustomPos});let p=a&&(Number.isFinite(a.frameFullWidth)||Number.isFinite(a.frameFullHeight)||Number.isFinite(a.frameFullDepth))?{w:Number.isFinite(a.frameFullWidth)?a.frameFullWidth>>>0:o,h:Number.isFinite(a.frameFullHeight)?a.frameFullHeight>>>0:l,d:Number.isFinite(a.frameFullDepth)?a.frameFullDepth>>>0:n}:null,u=this._getOrCreate3DVolume(o,l,n,a.id,p);if(!u)throw new Error("computeToTexture3D: failed to create or retrieve volume");(u._bindGroupsDirty||!u.chunks[0].bgA||!u.chunks[0].bgB)&&this._recreate3DBindGroups(u,p);let m=null;for(let c of u.chunks){let v=c.isA?c.bgA:c.bgB,x=c.isA?c.bgB:c.bgA;if(!v||!x)throw new Error("computeToTexture3D: missing bind groups (volume not initialized correctly)");m=await this._runPipelines(v,x,c.w,c.h,c.d,r,c.d),c.isA=m===c.bgB}let d=u.chunks.map(c=>c.isA?c.viewA:c.viewB);return d.length===1?d[0]:{views:d,meta:{full:u.full,tile:u.tile,grid:u.grid}}}configureCanvas(t){let e=navigator.gpu.getPreferredCanvasFormat&&navigator.gpu.getPreferredCanvasFormat()||"bgra8unorm",i=t.getContext("webgpu");i.configure({device:this.device,format:e,alphaMode:"opaque",size:[t.width,t.height]}),this._ctxMap.set(t,{ctx:i,size:[t.width,t.height]})}initBlitRender(){this.sampler||(this.sampler=this.device.createSampler({magFilter:"linear",minFilter:"linear",addressModeU:"clamp-to-edge",addressModeV:"clamp-to-edge"})),this.bgl2D||(this.bgl2D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline2D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl2D]}),vertex:{module:this.device.createShaderModule({code:re}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:re}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit2DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})),this.bgl3D||(this.bgl3D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"3d"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline3D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl3D]}),vertex:{module:this.device.createShaderModule({code:ae}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:ae}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit3DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}))}_renderCommonCanvasSetup(t,e){let i="bgra8unorm",r=this._ctxMap.get(t);if(r){let l=t.width|0,n=t.height|0;(r.size[0]!==l||r.size[1]!==n)&&(r.size=[l,n],r.ctx.configure({device:this.device,format:i,alphaMode:"opaque",size:r.size}))}else{let l=t.getContext("webgpu"),n=[t.width|0,t.height|0];l.configure({device:this.device,format:i,alphaMode:"opaque",size:n}),r={ctx:l,size:n},this._ctxMap.set(t,r)}let a=this.device.createCommandEncoder(),o=a.beginRenderPass({colorAttachments:[{view:r.ctx.getCurrentTexture().createView(),loadOp:e?"clear":"load",clearValue:{r:0,g:0,b:0,a:1},storeOp:"store"}]});return{enc:a,pass:o,ctxEntry:r}}renderTextureToCanvas(t,e,i={}){let{layer:r=0,channel:a=0,preserveCanvasSize:o=!0,clear:l=!0}=i;if(this.initBlitRender(),!o)try{let m=t.texture;m&&typeof m.width=="number"&&typeof m.height=="number"&&(e.width=m.width,e.height=m.height)}catch{}let n=new Uint32Array([r>>>0,a>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,n.buffer,n.byteOffset,n.byteLength);let f=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),{enc:p,pass:u}=this._renderCommonCanvasSetup(e,l);u.setPipeline(this.pipeline2D),u.setBindGroup(0,f),u.draw(6,1,0,0),u.end(),this.queue.submit([p.finish()])}renderTexture3DSliceToCanvas(t,e,i={}){let{depth:r,slice:a=0,zNorm:o=null,channel:l=0,chunk:n=0,preserveCanvasSize:f=!0,clear:p=!0}=i;this.initBlitRender();let u,m;if(t&&t.views&&Array.isArray(t.views)?(u=t.views[Math.max(0,Math.min(n|0,t.views.length-1))],m=t.meta?.tile?.d??r):(u=t,m=r),!u||!m)throw new Error("renderTexture3DSliceToCanvas: need a 3D view and its depth");if(!f)try{let b=u.texture;b&&typeof b.width=="number"&&typeof b.height=="number"&&(e.width=b.width,e.height=b.height)}catch{}let d=o??(Math.min(Math.max(a,0),m-1)+.5)/m;d=Math.min(Math.max(d,0),1);let c=new ArrayBuffer(16),v=new DataView(c);v.setFloat32(0,d,!0),v.setUint32(4,l>>>0,!0),v.setUint32(8,0,!0),v.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,c);let x=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:u},{binding:2,resource:{buffer:this.blit3DUbo}}]}),{enc:h,pass:y}=this._renderCommonCanvasSetup(e,p);y.setPipeline(this.pipeline3D),y.setBindGroup(0,x),y.draw(6,1,0,0),y.end(),this.queue.submit([h.finish()])}setExportBackground(t="black"){this.exportBackground=t}_resolveExportBackground(t){let e=t===void 0?this.exportBackground:t;if(e==null)return{r:0,g:0,b:0,a:1,transparent:!1};if(typeof e=="string"){let r=e.trim().toLowerCase();if(r==="transparent")return{r:0,g:0,b:0,a:0,transparent:!0};if(r==="black")return{r:0,g:0,b:0,a:1,transparent:!1};if(r==="white")return{r:1,g:1,b:1,a:1,transparent:!1};if(r[0]==="#")return this._parseHexBackground(r)}let i=r=>{let a=Number(r);if(!Number.isFinite(a))return 0;let o=a>1?a/255:a;return Math.min(Math.max(o,0),1)};if(Array.isArray(e)){let r=i(e[0]),a=i(e[1]),o=i(e[2]),l=e.length>=4?i(e[3]):1;return{r,g:a,b:o,a:l,transparent:l<=0}}if(typeof e=="object"){let r=i(e.r),a=i(e.g),o=i(e.b),l=e.a===void 0?1:i(e.a);return{r,g:a,b:o,a:l,transparent:l<=0}}return{r:0,g:0,b:0,a:1,transparent:!1}}_parseHexBackground(t){let e=String(t).trim().replace(/^#/,""),i=m=>m+m,r=0,a=0,o=0,l=255;if(e.length===3||e.length===4)r=parseInt(i(e[0]),16),a=parseInt(i(e[1]),16),o=parseInt(i(e[2]),16),e.length===4&&(l=parseInt(i(e[3]),16));else if(e.length===6||e.length===8)r=parseInt(e.slice(0,2),16),a=parseInt(e.slice(2,4),16),o=parseInt(e.slice(4,6),16),e.length===8&&(l=parseInt(e.slice(6,8),16));else return{r:0,g:0,b:0,a:1,transparent:!1};let n=r/255,f=a/255,p=o/255,u=l/255;return{r:n,g:f,b:p,a:u,transparent:u<=0}}_applyExportBackground(t,e){if(!t||!e||e.transparent)return;let i=Math.round(e.r*255),r=Math.round(e.g*255),a=Math.round(e.b*255),o=Math.round((e.a??1)*255);if(o<=0)return;let l=t.length|0;if(o>=255){for(let n=0;n<l;n+=4){let f=t[n+3]|0;if(f===255)continue;if(f===0){t[n+0]=i,t[n+1]=r,t[n+2]=a,t[n+3]=255;continue}let p=255-f;t[n+0]=(t[n+0]*f+i*p)/255|0,t[n+1]=(t[n+1]*f+r*p)/255|0,t[n+2]=(t[n+2]*f+a*p)/255|0,t[n+3]=255}return}for(let n=0;n<l;n+=4){let f=t[n+0]|0,p=t[n+1]|0,u=t[n+2]|0,m=t[n+3]|0,d=m+o*(255-m)/255|0;if(d<=0){t[n+0]=0,t[n+1]=0,t[n+2]=0,t[n+3]=0;continue}let c=i*o|0,v=r*o|0,x=a*o|0,h=f*m|0,y=p*m|0,b=u*m|0,P=255-m|0,_=h+c*P/255|0,D=y+v*P/255|0,B=b+x*P/255|0;t[n+0]=Math.min(255,Math.max(0,_*255/d|0)),t[n+1]=Math.min(255,Math.max(0,D*255/d|0)),t[n+2]=Math.min(255,Math.max(0,B*255/d|0)),t[n+3]=Math.min(255,Math.max(0,d))}}_forceOpaqueAlpha(t){let e=t.length|0;for(let i=3;i<e;i+=4)t[i]=255}async export2DTextureToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export2DTextureToPNGBlob: textureView is required");let a=Math.max(1,e|0),o=Math.max(1,i|0),l=r.layer??0,n=r.channel??0,f=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let u=this.device.createTexture({size:[a,o,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),m=new Uint32Array([l>>>0,n>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,m.buffer,m.byteOffset,m.byteLength);let d=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),c=this.device.createCommandEncoder(),v=c.beginRenderPass({colorAttachments:[{view:u.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});if(v.setPipeline(this.pipeline2D),v.setBindGroup(0,d),v.draw(6,1,0,0),v.end(),this.queue.submit([c.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let x=await this._readBGRA8TextureToRGBA8Pixels(u,a,o,{maxBufferChunkBytes:r.maxBufferChunkBytes??this.maxBufferChunkBytes});u.destroy();let h=r.useAlphaForBackground===!0;f.transparent||h?this._applyExportBackground(x,f):this._forceOpaqueAlpha(x);let y=document.createElement("canvas");y.width=a,y.height=o;let b=y.getContext("2d");if(!b)throw new Error("export2DTextureToPNGBlob: unable to get 2D context");return b.putImageData(new ImageData(x,a,o),0,0),await new Promise((_,D)=>{y.toBlob(B=>{B?_(B):D(new Error("export2DTextureToPNGBlob: toBlob returned null"))},"image/png")})}async exportCurrent2DToPNGBlob(t,e,i={}){let r=this.getCurrentView();if(!r)throw new Error("exportCurrent2DToPNGBlob: no active 2D texture view");return this.export2DTextureToPNGBlob(r,t,e,i)}async export3DSliceToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DSliceToPNGBlob: target is required");let a=Math.max(1,e|0),o=Math.max(1,i|0),{depth:l,slice:n=0,zNorm:f=null,channel:p=0,chunk:u=0}=r;if(!l||l<=0)throw new Error("export3DSliceToPNGBlob: depth must be provided and > 0");let m=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let d,c;if(t&&t.views&&Array.isArray(t.views)){let k=Math.max(0,Math.min(u|0,t.views.length-1));d=t.views[k],c=t.meta?.tile?.d??l}else d=t,c=l;if(!d||!c)throw new Error("export3DSliceToPNGBlob: need a 3D view and its depth");let v=f??(Math.min(Math.max(n,0),c-1)+.5)/c;v=Math.min(Math.max(v,0),1);let h=this.device.createTexture({size:[a,o,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),y=new ArrayBuffer(16),b=new DataView(y);b.setFloat32(0,v,!0),b.setUint32(4,p>>>0,!0),b.setUint32(8,0,!0),b.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,y);let P=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:d},{binding:2,resource:{buffer:this.blit3DUbo}}]}),_=this.device.createCommandEncoder(),D=_.beginRenderPass({colorAttachments:[{view:h.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});D.setPipeline(this.pipeline3D),D.setBindGroup(0,P),D.draw(6,1,0,0),D.end();let B=4,A=256,C=a*B,T=Math.ceil(C/A)*A,q=T*o,S=this.device.createBuffer({size:q,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});_.copyTextureToBuffer({texture:h},{buffer:S,bytesPerRow:T,rowsPerImage:o},{width:a,height:o,depthOrArrayLayers:1}),this.queue.submit([_.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await S.mapAsync(GPUMapMode.READ);let E=S.getMappedRange(),w=new Uint8Array(E),M=new Uint8ClampedArray(a*o*B),L=0;for(let k=0;k<o;k++){let g=k*T;for(let z=0;z<a;z++){let R=g+z*4;M[L++]=w[R+2],M[L++]=w[R+1],M[L++]=w[R+0],M[L++]=w[R+3]}}S.unmap(),S.destroy(),h.destroy(),this._applyExportBackground(M,m);let V=document.createElement("canvas");V.width=a,V.height=o;let W=V.getContext("2d");if(!W)throw new Error("export3DSliceToPNGBlob: unable to get 2D context");return W.putImageData(new ImageData(M,a,o),0,0),await new Promise((k,g)=>{V.toBlob(z=>{z?k(z):g(new Error("export3DSliceToPNGBlob: toBlob returned null"))},"image/png")})}async _render3DSliceToRGBA8Pixels(t,e,i,r,a=0,o=null){if(!t)throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");let l=Math.max(1,e|0),n=Math.max(1,i|0);this.initBlitRender();let f=Math.min(Math.max(Number(r)||0,0),1),u=this.device.createTexture({size:[l,n,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),m=new ArrayBuffer(16),d=new DataView(m);d.setFloat32(0,f,!0),d.setUint32(4,a>>>0,!0),d.setUint32(8,0,!0),d.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,m);let c=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit3DUbo}}]}),v=this.device.createCommandEncoder(),x=v.beginRenderPass({colorAttachments:[{view:u.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});x.setPipeline(this.pipeline3D),x.setBindGroup(0,c),x.draw(6,1,0,0),x.end();let h=4,y=256,b=l*h,P=Math.ceil(b/y)*y,_=P*n,D=this.device.createBuffer({size:_,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});v.copyTextureToBuffer({texture:u},{buffer:D,bytesPerRow:P,rowsPerImage:n},{width:l,height:n,depthOrArrayLayers:1}),this.queue.submit([v.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await D.mapAsync(GPUMapMode.READ);let B=D.getMappedRange(),A=new Uint8Array(B),C=new Uint8ClampedArray(l*n*h),T=0;for(let q=0;q<n;q++){let S=q*P;for(let E=0;E<l;E++){let w=S+E*4;C[T++]=A[w+2],C[T++]=A[w+1],C[T++]=A[w+0],C[T++]=A[w+3]}}return D.unmap(),D.destroy(),u.destroy(),o&&this._applyExportBackground(C,o),C}async export3DTilesetToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DTilesetToPNGBlob: target is required");let a=Math.max(1,e|0),o=Math.max(1,(i??e)|0),{depth:l,channel:n=0,chunk:f=0,tilesAcross:p=16,tilesDown:u=null,startSlice:m=0,sliceCount:d=null}=r,c=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let v,x;if(t&&t.views&&Array.isArray(t.views)){let S=Math.max(0,Math.min(f|0,t.views.length-1));v=t.views[S],x=t.meta?.tile?.d??l}else v=t,x=l;if(!v)throw new Error("export3DTilesetToPNGBlob: missing 3D view");if(!x||x<=0)throw new Error("export3DTilesetToPNGBlob: depth must be provided and > 0");let h=Math.max(1,p|0),y=u!=null?Math.max(1,u|0):Math.ceil(x/h),b=Math.min(Math.max(m|0,0),x-1),P=d!=null?Math.max(0,d|0):x-b,_=a*h,D=o*y,B=new Uint8ClampedArray(_*D*4),A=Math.min(x,b+P);for(let S=b;S<A;S++){let E=S-b,w=E%h,M=E/h|0;if(M>=y)break;let L=(S+.5)/x,V=await this._render3DSliceToRGBA8Pixels(v,a,o,L,n,c),W=w*a,K=M*o;for(let k=0;k<o;k++){let g=k*a*4,z=((K+k)*_+W)*4;B.set(V.subarray(g,g+a*4),z)}}let C=document.createElement("canvas");C.width=_,C.height=D;let T=C.getContext("2d");if(!T)throw new Error("export3DTilesetToPNGBlob: unable to get 2D context");return T.putImageData(new ImageData(B,_,D),0,0),await new Promise((S,E)=>{C.toBlob(w=>{w?S(w):E(new Error("export3DTilesetToPNGBlob: toBlob returned null"))},"image/png")})}_installAllocDebug(t=256*1024*1024){if(this._allocDebugInstalled)return;this._allocDebugInstalled=!0;let e=this.device,i=e.createBuffer.bind(e);e.createBuffer=a=>{let o=Number(a?.size??0);return Number.isFinite(o)&&o>=t&&console.warn("[alloc] createBuffer",{size:o,usage:a?.usage,mappedAtCreation:a?.mappedAtCreation},`
+`,new Error().stack),i(a)};let r=e.createTexture.bind(e);e.createTexture=a=>{let o=r(a);try{let l=a?.format,n=l==="rgba16float"?8:l==="rgba8unorm"||l==="bgra8unorm"?4:0,f=a?.dimension||"2d",p=a?.size,u=0,m=0,d=1;if(Array.isArray(p)?(u=p[0]|0,m=p[1]|0,d=(p[2]??1)|0):p&&typeof p=="object"&&(u=p.width|0,m=p.height|0,d=(p.depthOrArrayLayers??1)|0),n&&u>0&&m>0&&d>0){let c=u*m*d*n;c>=t&&console.warn("[alloc] createTexture",{format:l,dimension:f,size:a?.size,approxBytes:c,usage:a?.usage},`
+`,new Error().stack)}}catch{}return o}}},ne=class{constructor(t=Date.now()){t<1e7&&(t*=1e7),this.seedN=t,this.seedK=t,this.perm=new Uint8Array(512),this.seed(t)}seed(t){let e=this.xorshift(t);for(let i=0;i<256;i++)this.perm[i]=i;for(let i=255;i>0;i--){let r=Math.floor(e()*(i+1));[this.perm[i],this.perm[r]]=[this.perm[r],this.perm[i]]}for(let i=0;i<256;i++)this.perm[i+256]=this.perm[i]}setSeed(t){this.seedN=t,this.seed(t),this.resetSeed()}random(t,e,i){let r;return typeof i=="number"?r=this.perm[(t&255)+this.perm[(e&255)+this.perm[i&255]]]&255:r=this.perm[(t&255)+this.perm[e&255]]&255,this.perm[r]/255*2-1}seededRandom(){this.seedK+=Math.E;let t=1e9*Math.sin(this.seedK);return t-Math.floor(t)}resetSeed(){this.seedK=this.seedN}xorshift(t){let e=t;return function(){return e^=e<<13,e^=e>>17,e^=e<<5,(e<0?1+~e:e)/4294967295}}dot(t,e=0,i=0,r=0){return t[0]*e+t[1]*i+t[2]*r}};document.body.insertAdjacentHTML("afterbegin",ve);var Re=6,ke={computeCellular:"CellularPattern",computeWorley:"WorleyPattern",computeAntiCellular:"AntiCellularPattern",computeAntiWorley:"AntiWorleyPattern",computeWhiteNoise:"White Noise",computeBlueNoise:"Blue Noise"},Ve={computeRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeAntiRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeRidgedMultifractal:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal2:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal3:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal4:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeFBM:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM2:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM3:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeVoronoiBM1:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM2:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM3:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeCellular:{clamp:{threshold:[0,1]}},computeWorley:{clamp:{threshold:[0,1]}},computeAntiCellular:{clamp:{threshold:[0,1]}},computeAntiWorley:{clamp:{threshold:[0,1]}},computeSimplexFBM:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurl2D:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurlFBM2D:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM1:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM2:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeGaborAnisotropic:{clamp:{gaborRadius:[.5,6]}},computeFoamNoise:{force:{turbulence:1},clamp:{gain:[.5,.95]}}},N=128,ye="toroidalDemo",Z=new Map,I=[],H=Object.create(null);function Y(s){let t=String(s||""),e=ke[t];if(e)return e;let i=t;return i.startsWith("compute")&&(i=i.slice(7)),i||t}function Ie(s,t){let e=Object.create(null),i=Array.isArray(s)?s:[],r=Math.max(0,t|0),a=Math.max(0,i.length-r);for(let o=0;o<a;o++)e[o]=Y(i[o]);return e}function Le(){return Object.keys(H).map(s=>Number(s)).filter(s=>Number.isInteger(s)&&s>=0).sort((s,t)=>s-t)}function Fe(){let s=[];for(let t=0;t<I.length;t++){let e=I[t];typeof e!="string"||!e||e!=="clearTexture"&&s.push(t)}return s}function Ge(s){let t=I[s];return t&&Ve[String(t)]||null}function U(s,t,e,i){if(!Object.prototype.hasOwnProperty.call(s,t))return;let r=Number(s[t]);if(!Number.isFinite(r))return;let a=Number(e),o=Number(i);s[t]=Math.min(Math.max(r,a),o)}function _e(s,t){let e={...t},i=Ge(s);if(i&&i.clamp){let a=i.clamp;a.freq&&U(e,"freq",a.freq[0],a.freq[1]),a.gain&&U(e,"gain",a.gain[0],a.gain[1]),a.octaves&&U(e,"octaves",a.octaves[0],a.octaves[1]),a.threshold&&U(e,"threshold",a.threshold[0],a.threshold[1]),a.warpAmp&&U(e,"warpAmp",a.warpAmp[0],a.warpAmp[1]),a.gaborRadius&&U(e,"gaborRadius",a.gaborRadius[0],a.gaborRadius[1]),a.edgeK&&U(e,"edgeK",a.edgeK[0],a.edgeK[1])}if(i&&i.force)for(let[a,o]of Object.entries(i.force))e[a]=o;let r=Z.get(s);if(r)for(let[a,o]of Object.entries(r))typeof o=="number"&&Number.isFinite(o)&&(e[a]=o);return e}function ue(){let s=(a,o)=>{let l=document.getElementById(a);if(!l)return o;let n=Number(l.value);return Number.isFinite(n)?n:o},t=(a,o)=>{let l=s(a,o);return Number.isFinite(l)?Math.max(0,Math.floor(l)):o},e=Math.max(1,Math.floor(s("noise-seed",1234567890))),i=document.getElementById("noise-turbulence"),r=i&&i.checked?1:0;return{seed:e,zoom:s("noise-zoom",1),freq:s("noise-freq",1),octaves:Math.max(1,Math.floor(s("noise-octaves",8))),lacunarity:s("noise-lacunarity",2),gain:s("noise-gain",.5),xShift:s("noise-xShift",0),yShift:s("noise-yShift",0),zShift:s("noise-zShift",0),turbulence:r,seedAngle:s("noise-seedAngle",0),exp1:s("noise-exp1",1),exp2:s("noise-exp2",0),threshold:s("noise-threshold",.1),rippleFreq:s("noise-rippleFreq",10),time:s("noise-time",0),warpAmp:s("noise-warpAmp",.5),gaborRadius:s("noise-gaborRadius",4),terraceStep:s("noise-terraceStep",8),toroidal:0,voroMode:t("noise-voroMode",0),edgeK:s("noise-edgeK",0)}}function We(){let s=document.querySelectorAll('input[type="checkbox"][name="noise-type"]'),t=[];return s.forEach(e=>{if(e.checked){let i=Number(e.dataset.bit);Number.isInteger(i)&&t.push(i)}}),t}function X(){let s=document.getElementById("z-slice"),t=document.getElementById("z-slice-num"),e=0;return s?e=Number(s.value):t&&(e=Number(t.value)),Number.isFinite(e)||(e=0),e=Math.min(Math.max(Math.round(e),0),N-1),s&&String(s.value)!==String(e)&&(s.value=String(e)),t&&String(t.value)!==String(e)&&(t.value=String(e)),e}function J(s,t=null,e=null){s.style.display="block",s.style.margin="0",s.style.padding="0",s.style.border="0",s.style.outline="0",s.style.background="transparent",s.style.width=t!=null?`${t}px`:"100%",s.style.height=e!=null?`${e}px`:"100%",s.style.objectFit="contain",s.style.objectPosition="center",s.style.imageRendering="crisp-edges",s.style.imageRendering="pixelated"}function ce(s,t,e,i,r=null,a=null){let o=Math.max(1,e|0),l=Math.max(1,i|0);J(t,r,a);let n=!1;return(t.width!==o||t.height!==l)&&(t.width=o,t.height=l,n=!0),s&&typeof s.configureCanvas=="function"&&n&&s.configureCanvas(t),n}function Ue(s,t){let e=Math.max(1,t|0),i=Math.round(Math.sqrt(e)),r=Math.ceil(e/i);s.style.display="grid",s.style.width="100%",s.style.height="100%",s.style.gridTemplateColumns=`repeat(${i}, 1fr)`,s.style.gridTemplateRows=`repeat(${r}, 1fr)`,s.style.gap="0",s.style.padding="0",s.style.margin="0",s.style.border="0",s.style.lineHeight="0",s.style.fontSize="0",s.style.placeItems="stretch"}function Ye(){let s=document.getElementById("noise-canvas"),t=document.getElementById("view-stack");if(!s&&t&&(s=document.createElement("canvas"),s.id="noise-canvas",s.width=800,s.height=800,t.appendChild(s)),!s)throw new Error("Missing main preview canvas (#noise-canvas)");J(s);let e=document.getElementById("mosaic");if(!e)throw new Error("Missing #mosaic container");let i=[],r=e.querySelectorAll("canvas");if(r.length)r.forEach(a=>{J(a),i.push(a)});else for(let a=0;a<9;a++){let o=document.createElement("canvas");o.width=N,o.height=N,J(o),e.appendChild(o),i.push(o)}return Ue(e,i.length||9),{mainCanvas:s,mosaicCanvases:i}}function Oe(s){return s.length?s.map(e=>H[e]||String(e)).join(", "):H[0]||"Perlin"}function De(s){let t=document.getElementById(s);if(!t)throw new Error(`Missing #${s}`);return t}function Xe(){let s=De("noise-type-list");s.innerHTML="";let t=Le();for(let e of t){let i=document.createElement("label"),r=document.createElement("input");r.type="checkbox",r.name="noise-type",r.dataset.bit=String(e),e===0&&(r.checked=!0),i.appendChild(r),i.appendChild(document.createTextNode(" "+(H[e]||String(e)))),s.appendChild(i)}}function Ze(s){return(Array.isArray(s)?s:[]).filter(e=>typeof e=="string"&&/4D/.test(e)&&e!=="clearTexture").slice()}function He(s){let t=De("toroidal-type-list");t.innerHTML="";let e=Ze(s),i=new Set(["computePerlin4D","computeWorley4D"]),r=!1;for(let a of e){let o=document.createElement("label"),l=document.createElement("input");l.type="checkbox",l.name="toroidal-type",l.dataset.entry=a;let n=I.indexOf(a);Number.isInteger(n)&&n>=0&&(l.dataset.bit=String(n)),i.has(a)&&(l.checked=!0,r=!0),o.appendChild(l),o.appendChild(document.createTextNode(" "+Y(a))),t.appendChild(o)}if(!r&&e.length){let a=t.querySelector('input[type="checkbox"][name="toroidal-type"]');a&&(a.checked=!0)}}function ee(){let s=document.querySelectorAll('input[type="checkbox"][name="toroidal-type"]'),t=[];if(s.forEach(e=>{if(!e.checked)return;let i=String(e.dataset.entry||"");if(!i)return;let r=Number(e.dataset.bit);Number.isInteger(r)||(r=I.indexOf(i)),Number.isInteger(r)||(r=-1),t.push({bit:r,entry:i})}),!t.length){let e=["computePerlin4D","computeWorley4D"];for(let i of e){if(!I.includes(i))continue;let r=I.indexOf(i);t.push({bit:r,entry:i})}}return t}function fe(s){let t=document.getElementById("mosaic-caption");if(!t)return;let e=Array.isArray(s)?s:[],i=e.length?e.map(r=>Y(r)).join(" + "):"None";t.textContent=`A single toroidal Z slice from a 4D volume. Modes: ${i}. Repeated in X and Y. Use the Z slice control to see different slices.`}function Ke(){let s=document.getElementById("override-mode");if(!s)return;s.innerHTML="";let t=Fe();for(let e of t){let i=I[e],r=document.createElement("option");r.value=String(e),r.textContent=`${e}: ${Y(i)}`,s.appendChild(r)}t.length&&(s.value=String(t[0]))}function se(s){let t=Z.get(s)||{},e=(r,a)=>{let o=document.getElementById(r);if(!o)return;let l=t[a];o.value=typeof l=="number"&&Number.isFinite(l)?String(l):""},i=(r,a)=>{let o=document.getElementById(r);if(!o)return;let l=t[a];o.value=typeof l=="number"&&Number.isFinite(l)?String(l):""};e("ov-zoom","zoom"),e("ov-freq","freq"),e("ov-lacunarity","lacunarity"),e("ov-gain","gain"),e("ov-octaves","octaves"),i("ov-turbulence","turbulence"),e("ov-seedAngle","seedAngle"),e("ov-exp1","exp1"),e("ov-exp2","exp2"),e("ov-rippleFreq","rippleFreq"),e("ov-time","time"),e("ov-warp","warpAmp"),e("ov-threshold","threshold"),i("ov-voroMode","voroMode"),e("ov-edgeK","edgeK"),e("ov-gabor","gaborRadius"),e("ov-terraceStep","terraceStep"),e("ov-xShift","xShift"),e("ov-yShift","yShift"),e("ov-zShift","zShift")}function le(){let s=document.getElementById("override-mode");if(!s)return;let t=Number(s.value);if(!Number.isInteger(t))return;let e=C=>{let T=document.getElementById(C);if(!T)return null;let q=String(T.value).trim();if(!q)return null;let S=Number(q);return Number.isFinite(S)?S:null},i=C=>{let T=document.getElementById(C);if(!T)return null;let q=String(T.value).trim();if(!q)return null;let S=Number(q);return Number.isFinite(S)?S:null},r={},a=e("ov-zoom"),o=e("ov-freq"),l=e("ov-lacunarity"),n=e("ov-gain"),f=e("ov-octaves"),p=i("ov-turbulence"),u=e("ov-seedAngle"),m=e("ov-exp1"),d=e("ov-exp2"),c=e("ov-rippleFreq"),v=e("ov-time"),x=e("ov-warp"),h=e("ov-threshold"),y=i("ov-voroMode"),b=e("ov-edgeK"),P=e("ov-gabor"),_=e("ov-terraceStep"),D=e("ov-xShift"),B=e("ov-yShift"),A=e("ov-zShift");a!==null&&(r.zoom=a),o!==null&&(r.freq=o),l!==null&&(r.lacunarity=l),n!==null&&(r.gain=n),f!==null&&(r.octaves=f),p!==null&&(r.turbulence=Math.max(0,Math.floor(p))),u!==null&&(r.seedAngle=u),m!==null&&(r.exp1=m),d!==null&&(r.exp2=d),c!==null&&(r.rippleFreq=c),v!==null&&(r.time=v),x!==null&&(r.warpAmp=x),h!==null&&(r.threshold=h),y!==null&&(r.voroMode=Math.max(0,Math.floor(y))),b!==null&&(r.edgeK=b),P!==null&&(r.gaborRadius=P),_!==null&&(r.terraceStep=_),D!==null&&(r.xShift=D),B!==null&&(r.yShift=B),A!==null&&(r.zShift=A),Object.keys(r).length?Z.set(t,r):Z.delete(t)}function be(s){return typeof s=="string"&&/4d/i.test(s)}function $e(s,t=800){let e=document.getElementById("res-width"),i=document.getElementById("res-height"),r=(u,m)=>{let d=Number(u);return Number.isFinite(d)?Math.max(1,Math.floor(d)):m|0},a=s?.device?.limits||{},o=a.maxTextureDimension2D??8192,l=a.maxStorageTextureDimension2D??o,n=Math.min(o,l)|0,f=r(e?.value,t),p=r(i?.value,t);return f=Math.min(f,n),p=Math.min(p,n),e&&String(e.value)!==String(f)&&(e.value=String(f)),i&&String(i.value)!==String(p)&&(i.value=String(p)),{w:f,h:p}}function je(s,t,e,i){let a=Math.min(e,2048),o=Math.min(i,2048);ce(s,t,a,o)}function te(s){let t=document.getElementById("preview-meta");t&&(t.textContent=s)}function ie(s){let t=document.getElementById("preview-stats");t&&(t.textContent=s)}async function ze(s,t,e={}){let i=e.updateUI!==!1,{w:r,h:a}=$e(s,800);je(s,t,r,a);let o=ue();s.buildPermTable(o.seed|0);let l=We(),n=l.length?l:[0],f={getGradient:0,outputChannel:1,baseRadius:0,heightScale:1,useCustomPos:0,squareWorld:!0,worldMode:"crop"},p=performance.now();await s.computeToTexture(r,a,o,{...f,noiseChoices:["clearTexture"]});for(let v of n){let x=I[v],h=_e(v,o);h.toroidal=be(x)?1:0,await s.computeToTexture(r,a,h,{...f,noiseChoices:[v]})}let u=performance.now(),m=s.getCurrentView(),d=performance.now();m&&s.renderTextureToCanvas(m,t,{layer:0,channel:0,preserveCanvasSize:!0,clear:!0});let c=performance.now();if(i){let x=n.some(P=>be(I[P]))?" \xB7 toroidal(4D)":"",h=Math.max(r,a)|0;te(`Height field preview \xB7 ${r}\xD7${a} \xB7 world ${h}\xD7${h} \xB7 modes: ${Oe(n)}${x}`);let y=(u-p).toFixed(1),b=(c-d).toFixed(1);ie(`GPU compute ${y} ms \xB7 blit ${b} ms`)}return{resW:r,resH:a,noiseBits:n}}function pe(s,t,e,i={}){if(!t)return 0;let r=N,o=(X()+.5)/r,l=Array.isArray(e)?e:[],n=l.length||9,f=performance.now();for(let u=0;u<n;u++){let m=l[u];m&&(ce(s,m,N,N),s.renderTexture3DSliceToCanvas(t,m,{depth:r,zNorm:o,channel:0,chunk:0,preserveCanvasSize:!0,clear:!0}))}return performance.now()-f}async function we(s,t,e,i={}){let r=i.draw!==!1,a=i.updateUI!==!1,o=ue();s.buildPermTable(o.seed|0);let l={...o,toroidal:1},n=ee();fe(n.map(d=>d.entry));let f=performance.now(),p=await s.computeToTexture3D(N,N,N,l,{noiseChoices:["clearTexture"],outputChannel:1,id:ye});for(let d of n){let c=d.bit,v=d.entry,x=Number.isInteger(c)&&c>=0?_e(c,l):{...l};x.toroidal=1,p=await s.computeToTexture3D(N,N,N,x,{noiseChoices:[v],outputChannel:1,id:ye})}let u=performance.now();e.lastToroidalVolumeView=p,e.lastToroidalComputeMs=u-f;let m=0;if(r&&(m=pe(s,p,t)),a){let d=n.length?n.map(x=>Y(x.entry)).join(" + "):"None";te(`Toroidal tiles \xB7 ${N}\xB3 \xB7 modes: ${d} \xB7 Z slice: ${X()}`);let c=e.lastToroidalComputeMs.toFixed(1),v=m.toFixed(1);ie(r?`GPU volume compute ${c} ms \xB7 slice blit ${v} ms`:`GPU volume compute ${c} ms`)}return{computeMs:e.lastToroidalComputeMs,sliceBlitMs:m}}function G(){let s=document.getElementById("view-tab-tileset");return s&&s.checked?"tileset":"main"}async function Qe(){let s=document.getElementById("preview-stats");if(!navigator.gpu){console.error("WebGPU not available in this browser."),s&&(s.textContent="WebGPU not available in this browser.");return}let t=await navigator.gpu.requestAdapter();if(!t){console.error("Failed to get GPU adapter."),s&&(s.textContent="Failed to get GPU adapter.");return}let e=await t.requestDevice({requiredLimits:{maxBufferSize:t.limits.maxBufferSize}}),i=new Q(e,e.queue);I=Array.isArray(i.entryPoints)?i.entryPoints.slice():[],H=Ie(I,Re),Xe(),He(I),Ke();let{mainCanvas:r,mosaicCanvases:a}=Ye();i.configureCanvas(r),a.forEach(g=>i.configureCanvas(g));let o=document.getElementById("override-mode");if(o){let g=Number(o.value);Number.isInteger(g)&&se(g)}let l={lastToroidalVolumeView:null,lastToroidalComputeMs:0},n={main:!0,tileset:!0},f=!1,p=!1,u=()=>{p=!0,!f&&(f=!0,requestAnimationFrame(async()=>{p=!1;let g=G();try{if(g==="main")n.main&&(n.main=!1,await ze(i,r,{updateUI:!0}));else if(n.tileset||!l.lastToroidalVolumeView)n.tileset=!1,await we(i,a,l,{draw:!0,updateUI:!0});else{let z=pe(i,l.lastToroidalVolumeView,a);te(`Toroidal tiles \xB7 ${N}\xB3 \xB7 Z slice: ${X()}`),ie(`GPU volume compute ${l.lastToroidalComputeMs.toFixed(1)} ms \xB7 slice blit ${z.toFixed(1)} ms`)}}catch(z){console.error(z),s&&(s.textContent=String(z))}f=!1,p&&u()}))},m=(g=!0)=>{n.main=!0,g&&G()==="main"&&u()},d=(g=!0)=>{n.tileset=!0,g&&G()==="tileset"&&u()},c=()=>{n.main=!0,n.tileset=!0,u()};["ov-zoom","ov-freq","ov-lacunarity","ov-gain","ov-octaves","ov-turbulence","ov-seedAngle","ov-exp1","ov-exp2","ov-rippleFreq","ov-time","ov-warp","ov-threshold","ov-voroMode","ov-edgeK","ov-gabor","ov-terraceStep","ov-xShift","ov-yShift","ov-zShift"].forEach(g=>{let z=document.getElementById(g);z&&z.addEventListener("change",()=>{le(),c()})}),o&&o.addEventListener("change",()=>{let g=Number(o.value);Number.isInteger(g)&&se(g)});let x=document.getElementById("ov-clear");x&&x.addEventListener("click",()=>{let g=document.getElementById("override-mode");if(!g)return;let z=Number(g.value);Number.isInteger(z)&&(Z.delete(z),se(z),c())});let h=document.getElementById("render-btn");h&&h.addEventListener("click",()=>{G()==="main"?m(!0):d(!0)});let y=document.getElementById("apply-res");y&&y.addEventListener("click",()=>{m(!0)}),["noise-seed","noise-zoom","noise-freq","noise-octaves","noise-lacunarity","noise-gain","noise-xShift","noise-yShift","noise-zShift","noise-voroMode","noise-threshold","noise-edgeK","noise-seedAngle","noise-turbulence","noise-time","noise-warpAmp","noise-gaborRadius","noise-terraceStep","noise-exp1","noise-exp2","noise-rippleFreq"].forEach(g=>{let z=document.getElementById(g);z&&(z.addEventListener("input",()=>{n.main=!0,n.tileset=!0,u()}),z.addEventListener("change",()=>{n.main=!0,n.tileset=!0,u()}))});let P=document.getElementById("noise-type-list");P&&P.addEventListener("change",g=>{let z=g.target;!z||z.name!=="noise-type"||m(!0)});let _=document.getElementById("toroidal-type-list");_&&_.addEventListener("change",g=>{let z=g.target;!z||z.name!=="toroidal-type"||(fe(ee().map(R=>R.entry)),d(!0))});let D=document.getElementById("z-slice"),B=document.getElementById("z-slice-num"),A=()=>{if(G()!=="tileset"||!l.lastToroidalVolumeView)return;let g=pe(i,l.lastToroidalVolumeView,a);te(`Toroidal tiles \xB7 ${N}\xB3 \xB7 Z slice: ${X()}`),ie(`GPU volume compute ${l.lastToroidalComputeMs.toFixed(1)} ms \xB7 slice blit ${g.toFixed(1)} ms`)};D&&D.addEventListener("input",()=>{let g=Number(D.value);B&&(B.value=String(g)),A()}),B&&B.addEventListener("change",()=>{let g=Number(B.value);Number.isFinite(g)||(g=0),g=Math.min(Math.max(Math.round(g),0),N-1),B.value=String(g),D&&(D.value=String(g)),A()});let C=document.getElementById("view-tab-preview"),T=document.getElementById("view-tab-tileset");C&&C.addEventListener("change",()=>{u()}),T&&T.addEventListener("change",()=>{u()});function q(g,z){let R=URL.createObjectURL(g),F=document.createElement("a");F.href=R,F.download=z,document.body.appendChild(F),F.click(),F.remove(),URL.revokeObjectURL(R)}function S(g){return String(g||"").trim().replace(/\s+/g,"_").replace(/[^a-zA-Z0-9._-]+/g,"").slice(0,120)}function E(){let g=document.querySelector('input[type="radio"][name="export-bg"]:checked'),z=String(g?.value||"transparent");return z==="black"||z==="white"||z==="transparent"?z:"transparent"}function w(g){let z=E();return g&&typeof g.setExportBackground=="function"&&g.setExportBackground(z),z}function M(g){w(g),document.querySelectorAll('input[type="radio"][name="export-bg"]').forEach(R=>{R.addEventListener("change",()=>{w(g)})})}async function L(){le(),await we(i,a,l,{draw:G()==="tileset",updateUI:G()==="tileset"})}let V=document.getElementById("download-main");V&&V.addEventListener("click",async()=>{try{le();let g=w(i),z=Number(document.getElementById("res-width")?.value)||800,R=Number(document.getElementById("res-height")?.value)||800;ce(i,r,z,R),await ze(i,r,{updateUI:G()==="main"});let F=await i.exportCurrent2DToPNGBlob(z,R,{layer:0,channel:0,background:g});q(F,"noise-main.png")}catch(g){console.error("download-main failed:",g),s&&(s.textContent="Export main PNG failed: "+g)}});let W=document.getElementById("download-tile");W&&W.addEventListener("click",async()=>{try{let g=w(i);if(await L(),!l.lastToroidalVolumeView){console.warn("No toroidal volume available for export");return}let z=N,R=N,F=N,O=(X()+.5)/F,$=await i.export3DSliceToPNGBlob(l.lastToroidalVolumeView,z,R,{depth:F,zNorm:O,channel:0,chunk:0,background:g});q($,"noise-tile.png")}catch(g){console.error("download-tile failed:",g),s&&(s.textContent="Export tile PNG failed: "+g)}});async function K(g,z){if(!z)return;let R=w(g);if(await L(),!z.lastToroidalVolumeView){console.warn("No toroidal volume available for tileset export");return}let F=ue(),me=ee().map(Ce=>Ce.entry),O=16,$=N,de=N,j=N,ge=Math.ceil(j/O),Me=await g.export3DTilesetToPNGBlob(z.lastToroidalVolumeView,$,de,{depth:j,channel:0,chunk:0,tilesAcross:O,tilesDown:ge,startSlice:0,sliceCount:j,background:R}),Be=S(me.map(Y).join("+"))||"tileset",Se=S(F.seed),Pe=`noise-tileset_${Be}_seed${Se}_${$}x${de}_z${j}_${O}x${ge}.png`;q(Me,Pe)}let k=document.getElementById("download-tileset");k&&k.addEventListener("click",async()=>{try{await K(i,l)}catch(g){console.error("download-tileset failed:",g),s&&(s.textContent="Export tileset failed: "+g)}}),M(i),fe(ee().map(g=>g.entry)),u()}document.addEventListener("DOMContentLoaded",()=>{Qe().catch(s=>console.error(s))});})();
