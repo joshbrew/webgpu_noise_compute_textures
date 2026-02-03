@@ -276,7 +276,7 @@ function getZSliceIndexFromUI() {
   return idx;
 }
 
-function applyCanvasCSS(canvas, cssW = null, cssH = null) {
+function applyCanvasCSS(canvas, cssW = null, cssH = null, fit = "contain") {
   canvas.style.display = "block";
   canvas.style.margin = "0";
   canvas.style.padding = "0";
@@ -287,7 +287,7 @@ function applyCanvasCSS(canvas, cssW = null, cssH = null) {
   canvas.style.width = cssW != null ? `${cssW}px` : "100%";
   canvas.style.height = cssH != null ? `${cssH}px` : "100%";
 
-  canvas.style.objectFit = "contain";
+  canvas.style.objectFit = fit;
   canvas.style.objectPosition = "center";
 
   canvas.style.imageRendering = "crisp-edges";
@@ -315,29 +315,30 @@ function ensureCanvasSize(builder, canvas, w, h, cssW = null, cssH = null) {
   return changed;
 }
 
-function configureMosaicLayout(mosaicRoot, count) {
-  const n = Math.max(1, count | 0);
-  const cols = Math.round(Math.sqrt(n));
-  const rows = Math.ceil(n / cols);
-
+function configureMosaicLayout(mosaicRoot) {
   mosaicRoot.style.display = "grid";
 
-  /* fully fill the squareWrap */
   mosaicRoot.style.width = "100%";
   mosaicRoot.style.height = "100%";
+  mosaicRoot.style.aspectRatio = "1 / 1";
 
-  /* equal fractional cells */
-  mosaicRoot.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  mosaicRoot.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-
+  mosaicRoot.style.gridTemplateColumns = "repeat(3, 1fr)";
+  mosaicRoot.style.gridTemplateRows = "repeat(3, 1fr)";
   mosaicRoot.style.gap = "0";
+
   mosaicRoot.style.padding = "0";
   mosaicRoot.style.margin = "0";
   mosaicRoot.style.border = "0";
   mosaicRoot.style.lineHeight = "0";
   mosaicRoot.style.fontSize = "0";
 
-  mosaicRoot.style.placeItems = "stretch";
+  mosaicRoot.style.alignItems = "stretch";
+  mosaicRoot.style.justifyItems = "stretch";
+  mosaicRoot.style.alignContent = "stretch";
+  mosaicRoot.style.justifyContent = "stretch";
+
+  mosaicRoot.style.overflow = "hidden";
+  mosaicRoot.style.background = "#000";
 }
 
 function initMainAndMosaicCanvases() {
@@ -356,35 +357,34 @@ function initMainAndMosaicCanvases() {
     throw new Error("Missing main preview canvas (#noise-canvas)");
   }
 
-  applyCanvasCSS(mainCanvas);
+  applyCanvasCSS(mainCanvas, null, null, "contain");
 
   const mosaicRoot = document.getElementById("mosaic");
   if (!mosaicRoot) {
     throw new Error("Missing #mosaic container");
   }
 
-  const mosaicCanvases = [];
-  const existing = mosaicRoot.querySelectorAll("canvas");
+  const desired = 9;
+  let existing = Array.from(mosaicRoot.querySelectorAll("canvas"));
 
-  if (!existing.length) {
-    for (let i = 0; i < 9; i++) {
+  if (existing.length !== desired) {
+    mosaicRoot.innerHTML = "";
+    existing = [];
+    for (let i = 0; i < desired; i++) {
       const c = document.createElement("canvas");
       c.width = TOROIDAL_SIZE;
       c.height = TOROIDAL_SIZE;
-      applyCanvasCSS(c);
+      applyCanvasCSS(c, null, null, "fill");
       mosaicRoot.appendChild(c);
-      mosaicCanvases.push(c);
+      existing.push(c);
     }
   } else {
-    existing.forEach((c) => {
-      applyCanvasCSS(c);
-      mosaicCanvases.push(c);
-    });
+    existing.forEach((c) => applyCanvasCSS(c, null, null, "fill"));
   }
 
-  configureMosaicLayout(mosaicRoot, mosaicCanvases.length || 9);
+  configureMosaicLayout(mosaicRoot);
 
-  return { mainCanvas, mosaicCanvases };
+  return { mainCanvas, mosaicCanvases: existing };
 }
 
 function buildModeLabelList(bits) {
@@ -713,6 +713,31 @@ function setPreviewStats(text) {
   if (previewStats) previewStats.textContent = text;
 }
 
+function syncMainHeaderFromCache(info) {
+  if (!info) return;
+
+  const resW = info.resW | 0;
+  const resH = info.resH | 0;
+  const noiseBits = Array.isArray(info.noiseBits) ? info.noiseBits : [];
+
+  const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
+  const tileTag = any4D ? " · toroidal(4D)" : "";
+  const worldDim = Math.max(resW, resH) | 0;
+
+  setPreviewHeader(
+    `Height field preview · ${resW}×${resH} · world ${worldDim}×${worldDim} · modes: ` +
+      `${buildModeLabelList(noiseBits)}${tileTag}`,
+  );
+
+  if (typeof info.computeMs === "number" && typeof info.blitMs === "number") {
+    setPreviewStats(
+      `GPU compute ${info.computeMs.toFixed(1)} ms · blit ${info.blitMs.toFixed(1)} ms`,
+    );
+  } else {
+    setPreviewStats("");
+  }
+}
+
 async function renderMainNoise(builder, mainCanvas, opts = {}) {
   const updateUI = opts.updateUI !== false;
 
@@ -768,6 +793,9 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
   }
   const tBlitEnd = performance.now();
 
+  const computeMs = tComputeEnd - tComputeStart;
+  const blitMs = tBlitEnd - tBlitStart;
+
   if (updateUI) {
     const any4D = noiseBits.some((b) => _isEntryPoint4D(ENTRY_POINTS[b]));
     const tileTag = any4D ? " · toroidal(4D)" : "";
@@ -778,12 +806,12 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
         `${buildModeLabelList(noiseBits)}${tileTag}`,
     );
 
-    const computeMs = (tComputeEnd - tComputeStart).toFixed(1);
-    const blitMs = (tBlitEnd - tBlitStart).toFixed(1);
-    setPreviewStats(`GPU compute ${computeMs} ms · blit ${blitMs} ms`);
+    setPreviewStats(
+      `GPU compute ${computeMs.toFixed(1)} ms · blit ${blitMs.toFixed(1)} ms`,
+    );
   }
 
-  return { resW, resH, noiseBits };
+  return { resW, resH, noiseBits, computeMs, blitMs };
 }
 
 function renderToroidalSlice(builder, volumeView, mosaicCanvases, opts = {}) {
@@ -956,6 +984,7 @@ async function initNoiseDemo() {
   const state = {
     lastToroidalVolumeView: null,
     lastToroidalComputeMs: 0,
+    lastMainInfo: null,
   };
 
   const dirty = {
@@ -980,7 +1009,11 @@ async function initNoiseDemo() {
         if (view === "main") {
           if (dirty.main) {
             dirty.main = false;
-            await renderMainNoise(builder, mainCanvas, { updateUI: true });
+            state.lastMainInfo = await renderMainNoise(builder, mainCanvas, {
+              updateUI: true,
+            });
+          } else {
+            syncMainHeaderFromCache(state.lastMainInfo);
           }
         } else {
           if (dirty.tileset || !state.lastToroidalVolumeView) {
@@ -995,8 +1028,16 @@ async function initNoiseDemo() {
               state.lastToroidalVolumeView,
               mosaicCanvases,
             );
+
+            const modes = collectSelectedToroidalModesFromUI();
+            const modeTag = modes.length
+              ? modes
+                  .map((m) => makeNoiseLabelFromEntryPoint(m.entry))
+                  .join(" + ")
+              : "None";
+
             setPreviewHeader(
-              `Toroidal tiles · ${TOROIDAL_SIZE}³ · Z slice: ${getZSliceIndexFromUI()}`,
+              `Toroidal tiles · ${TOROIDAL_SIZE}³ · modes: ${modeTag} · Z slice: ${getZSliceIndexFromUI()}`,
             );
             setPreviewStats(
               `GPU volume compute ${state.lastToroidalComputeMs.toFixed(1)} ms · slice blit ${blitMs.toFixed(1)} ms`,
