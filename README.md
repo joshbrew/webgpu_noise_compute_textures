@@ -1,6 +1,5 @@
 
-# WebGPU Noise Playground
-
+# WebGPU Noise Compute Shaders
 
 ### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
 
@@ -8,8 +7,7 @@
 
 ##### And for a use case: [Procedural WebGPU volumetric clouds](https://webgpuclouds.netlify.app/)
 
-
-GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
+GPU driven noise toolkit for 2D and 3D generative texture tiling. Contains dozens of optimized compute shaders for 2D, 3D, and 4D (toroidal/tiling) variants from classic Perlin to custom Voronoi Fractal Brownian Motion and so on. You can make some gorgeous tilesets.
 
 This repo has two main parts:
 
@@ -24,6 +22,15 @@ The helper aims to:
 - Reuse GPU resources where possible and dispose them explicitly when you are done
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you do not have it. You can also locally host `index.html` with prebuilt files.
+
+| Cellular Noise Tiling | Voronoi variant |
+|---|---|
+| ![1](https://github.com/user-attachments/assets/8085fb7f-a982-40ba-80cc-ef4ce056e8e8) | ![7](https://github.com/user-attachments/assets/4a3e1772-be95-48b9-aa14-fcd450c4e14d) |
+
+| Voronoi variant | Voronoi variant |
+|---|---|
+| ![6](https://github.com/user-attachments/assets/082248d7-a0ee-4399-b128-d86416a914ba) | ![8](https://github.com/user-attachments/assets/19776136-85ff-40af-b458-722450e8908a) |
+
 
 ---
 
@@ -276,5 +283,6 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
+
 
 
