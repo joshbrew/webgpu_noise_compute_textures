@@ -23,6 +23,8 @@ The helper aims to:
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you do not have it. You can also locally host `index.html` with prebuilt files.
 
+Known limits: Current compositing technique limits us to about 5700x5700 just because the buffer sizes start to blow up too much. This is fixable as the theoretical limit is 8K-16K depending on hardware. 
+
 e.g. mixed Billow noise
 ![2](https://github.com/user-attachments/assets/18958887-cd2b-4d54-affa-dd293c93b676)
 
@@ -286,6 +288,7 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
+
 
 
 
