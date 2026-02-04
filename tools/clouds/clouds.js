@@ -1,7 +1,10 @@
 // clouds.js
-// Streamlined CloudComputeBuilder with CloudTuning (TUNE) UBO support
+// CloudComputeBuilder matching updated clouds.wgsl uniform layout (CloudOptions, CloudParams, NoiseTransforms, CloudTuning)
+
 import cloudWGSL from "./clouds.wgsl";
 import previewWGSL from "./cloudsRender.wgsl";
+
+const _has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
 
 export class CloudComputeBuilder {
   constructor(device, queue) {
@@ -12,12 +15,14 @@ export class CloudComputeBuilder {
     this.weatherView = null;
     this.shape3DView = null;
     this.detail3DView = null;
-    this.blueTex = null; // optionally owned
+    this.blueTex = null;
     this.blueView = null;
     this.motionView = null;
     this.depthPrevView = null;
     this.historyPrevView = null;
     this.historyOutView = null;
+    this._retiredTextures = [];
+    this._retireFlushPromise = null;
 
     // ---- outputs / sizes ----
     this.outTexture = null;
@@ -33,6 +38,7 @@ export class CloudComputeBuilder {
     this._coarseW = 0;
     this._coarseH = 0;
     this._coarseLayers = 0;
+    this._coarseFormat = this.outFormat;
 
     // workgroups
     this._wgX = 1;
@@ -50,61 +56,78 @@ export class CloudComputeBuilder {
     this._sampDetail = null;
     this._sampBN = null;
 
-    // buffers (UBOs, staging ABs)
-    // sizes chosen to match prior layout, keep for compatibility
+    // staging ABs (match WGSL layouts)
     this._abOptions = new ArrayBuffer(32);
     this._dvOptions = new DataView(this._abOptions);
 
-    // NOTE: extended CloudParams to 96 bytes to include shapeScale & detailScale
-    this._abParams = new ArrayBuffer(96);
-    this._dvParams = new DataView(this._abParams); // CloudParams (96 bytes)
+    // CloudParams (updated shader): 80 bytes
+    this._abParams = new ArrayBuffer(80);
+    this._dvParams = new DataView(this._abParams);
 
-    this._abOffsets = new ArrayBuffer(48);
-    this._dvOffsets = new DataView(this._abOffsets);
+    // NoiseTransforms (updated shader): 112 bytes
+    this._abNTransform = new ArrayBuffer(112);
+    this._dvNTransform = new DataView(this._abNTransform);
+
+    // Frame: 64 bytes
     this._abFrame = new ArrayBuffer(64);
     this._dvFrame = new DataView(this._abFrame);
+
+    // Light: 32 bytes
     this._abLight = new ArrayBuffer(32);
     this._dvLight = new DataView(this._abLight);
+
+    // View: 128 bytes
     this._abView = new ArrayBuffer(128);
     this._dvView = new DataView(this._abView);
+
+    // Box: 32 bytes
     this._abBox = new ArrayBuffer(32);
     this._dvBox = new DataView(this._abBox);
-    this._abSampling = new ArrayBuffer(16);
-    this._dvSampling = new DataView(this._abSampling);
+
+    // Reproj: 48 bytes (40 used, 8 padding)
     this._abReproj = new ArrayBuffer(48);
     this._dvReproj = new DataView(this._abReproj);
+
+    // Perf: 16 bytes
     this._abPerf = new ArrayBuffer(16);
     this._dvPerf = new DataView(this._abPerf);
 
-    // TUNE staging - roomy (256) to match prior
+    // TUNE: 256 bytes
     this._abTuning = new ArrayBuffer(256);
     this._dvTuning = new DataView(this._abTuning);
 
+    // Preview render params: 128 bytes
     this._abRender = new ArrayBuffer(128);
     this._dvRender = new DataView(this._abRender);
-    // useful small buffers
-    this._abDummy32 = new ArrayBuffer(4);
 
-    // actual GPU buffers (created in _initBuffers)
+    // Upsample params: 32 bytes
+    this._abUpsample = new ArrayBuffer(32);
+    this._dvUpsample = new DataView(this._abUpsample);
+
+    // GPU buffers (created in _initBuffers)
     this.optionsBuffer = null;
     this.paramsBuffer = null;
-    this.offsetsBuffer = null;
+    this.nTransformBuffer = null;
     this.dummyBuffer = null;
     this.posBuffer = null;
     this.frameBuffer = null;
     this.lightBuffer = null;
     this.viewBuffer = null;
     this.boxBuffer = null;
-    this.samplingBuffer = null;
     this.reprojBuffer = null;
     this.perfBuffer = null;
     this.tuningBuffer = null;
     this.renderParams = null;
 
+    // upsample resources
+    this._upsample = null; // { pipe, bgl, samp, format, bgCache: Map }
+    this._upsampleParamsBuffer = null;
+
     // bookkeeping & caches
     this._lastSums = new Map();
     this._resId = new WeakMap();
     this._nextResId = 1;
+
     this._bg0Cache = new Map();
     this._bg0Keys = [];
     this._bg1Cache = new Map();
@@ -113,12 +136,12 @@ export class CloudComputeBuilder {
     this._bg1Dirty = true;
     this._currentBg0 = null;
     this._currentBg1 = null;
+
     this._render = null;
     this._ctxCache = new WeakMap();
     this._canvasStates = new WeakMap();
     this._renderBgCache = new WeakMap();
     this._renderBundleCache = new WeakMap();
-    this._upsampleBgCache = new Map();
 
     // tiny dummies
     this._ownsBlue = false;
@@ -136,34 +159,123 @@ export class CloudComputeBuilder {
     this._reprojFullW = 0;
     this._reprojFullH = 0;
 
-    // init GPU objects
+    // sticky state
+    this._state = {
+      options: {
+        useCustomPos: false,
+        outputChannel: 0,
+        writeRGB: true,
+        r0: 0.0,
+        r1: 0.0,
+        r2: 0.0,
+        r3: 0.0,
+      },
+      params: {
+        globalCoverage: 0.6,
+        globalDensity: 1.0,
+        cloudAnvilAmount: 0.0,
+        cloudBeer: 6.0,
+        attenuationClamp: 0.2,
+        inScatterG: 0.2,
+        silverIntensity: 2.5,
+        silverExponent: 2.0,
+        outScatterG: 0.1,
+        inVsOut: 0.5,
+        outScatterAmbientAmt: 0.9,
+        ambientMinimum: 0.2,
+        sunColor: [1.0, 0.95, 0.9],
+        densityDivMin: 0.001,
+        silverDirectionBias: 0.0,
+        silverHorizonBoost: 0.0,
+      },
+      ntransform: {
+        shapeOffsetWorld: [0, 0, 0],
+        detailOffsetWorld: [0, 0, 0],
+        shapeScale: 0.1,
+        detailScale: 1.0,
+        weatherScale: 1.0,
+        shapeAxisScale: [1, 1, 1],
+        detailAxisScale: [1, 1, 1],
+        weatherOffsetWorld: [0, 0, 0],
+        weatherAxisScale: [1, 1, 1],
+      },
+      reproj: {
+        enabled: 0,
+        subsample: 1,
+        sampleOffset: 0,
+        motionIsNormalized: 0,
+        temporalBlend: 0.0,
+        depthTest: 0,
+        depthTolerance: 0.0,
+        frameIndex: 0,
+        fullWidth: 0,
+        fullHeight: 0,
+      },
+      perf: {
+        lodBiasMul: 1.0,
+        coarseMipBias: 0.0,
+      },
+      light: {
+        sunDir: [-0.4, 0.8, 0.45],
+        camPos: [0, 0, 2],
+      },
+      box: {
+        center: [0, 0, 0],
+        half: [1, 0.6, 1],
+        uvScale: 1.5,
+      },
+      tuning: {
+        maxSteps: 256,
+        minStep: 0.003,
+        maxStep: 0.1,
+        sunSteps: 4,
+        sunStride: 4,
+        sunMinTr: 0.005,
+        phaseJitter: 1.0,
+        stepJitter: 0.08,
+        baseJitterFrac: 0.15,
+        topJitterFrac: 0.1,
+        lodBiasWeather: 1.5,
+        aabbFaceOffset: 0.0015,
+        weatherRejectGate: 0.99,
+        weatherRejectMip: 1.0,
+        emptySkipMult: 3.0,
+        nearFluffDist: 60.0,
+        nearStepScale: 0.3,
+        nearLodBias: -1.5,
+        nearDensityMult: 2.5,
+        nearDensityRange: 45.0,
+        lodBlendThreshold: 0.05,
+        sunDensityGate: 0.015,
+        fflyRelClamp: 2.5,
+        fflyAbsFloor: 1.5,
+        taaRelMin: 0.22,
+        taaRelMax: 1.1,
+        taaAbsEps: 0.02,
+        farStart: 800.0,
+        farFull: 2500.0,
+        farLodPush: 0.8,
+        farDetailAtten: 0.5,
+        farStepMult: 1.6,
+        bnFarScale: 0.35,
+        farTaaHistoryBoost: 1.35,
+        raySmoothDens: 0.5,
+        raySmoothSun: 0.5,
+      },
+    };
+
     this._initCompute();
     this._initBuffers();
 
     // defaults & initial uploads
     this.setOptions();
     this.setParams();
-    this.setTileScaling({
-      shapeOffsetWorld: [0, 0],
-      detailOffsetWorld: [0, 0],
-    });
-    this.setSamplingOpts({ useManualWrap: 0, weatherLayer: 0 });
-    this.setReprojSettings({
-      enabled: 0,
-      subsample: 1,
-      sampleOffset: 0,
-      motionIsNormalized: 0,
-      temporalBlend: 0.0,
-      depthTest: 0,
-      depthTolerance: 0.0,
-      frameIndex: 0,
-      fullWidth: 0,
-      fullHeight: 0,
-    });
-    this.setPerfParams();
+    this.setNoiseTransforms(this._state.ntransform);
+    this.setReprojSettings(this._state.reproj);
+    this.setPerfParams(this._state.perf);
     this.setSunByAngles();
-    this.setBox();
-    this.setTuning(); // write initial TUNE defaults
+    this.setBox(this._state.box);
+    this.setTuning(this._state.tuning);
   }
 
   // -------------------- helpers --------------------
@@ -194,40 +306,37 @@ export class CloudComputeBuilder {
     }
   }
 
-  _forceWrite(tag, gpuBuf, ab) {
-    this.queue.writeBuffer(gpuBuf, 0, new Uint8Array(ab));
-    const sum = this._sum32(ab);
-    this._lastSums.set(tag, { sum, len: ab.byteLength });
-  }
+  _ensureComputeFormat(format) {
+    const fmt = format || this.outFormat;
+    if (fmt === this.outFormat && this.pipeline && this.bgl0) return;
+    this.outFormat = fmt;
 
-  // -------------------- init compute + resources --------------------
-  _initCompute() {
     const d = this.device;
-    this.module = d.createShaderModule({ code: cloudWGSL });
 
-    // bgl0: UBOs + writable out + historyOut + reproj + perf + TUNE @10
+    // group(0) bindings must match updated shader:
+    // 0 opt, 1 C, 2 unused storage, 3 NTransform, 4 outTex, 5 posBuf, 6 frame, 7 historyOut, 8 reproj, 9 perf, 10 TUNE
     this.bgl0 = d.createBindGroupLayout({
       entries: [
         {
           binding: 0,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        }, // options
+        },
         {
           binding: 1,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        }, // params
+        },
         {
           binding: 2,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "read-only-storage" },
-        }, // dummy storage
+        },
         {
           binding: 3,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        }, // offsets
+        },
         {
           binding: 4,
           visibility: GPUShaderStage.COMPUTE,
@@ -236,17 +345,17 @@ export class CloudComputeBuilder {
             format: this.outFormat,
             viewDimension: "2d-array",
           },
-        }, // out
+        },
         {
           binding: 5,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "read-only-storage" },
-        }, // pos
+        },
         {
           binding: 6,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        }, // frame
+        },
         {
           binding: 7,
           visibility: GPUShaderStage.COMPUTE,
@@ -255,112 +364,21 @@ export class CloudComputeBuilder {
             format: this.outFormat,
             viewDimension: "2d-array",
           },
-        }, // historyOut or dummy
-        {
-          binding: 8,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        }, // reproj
-        {
-          binding: 9,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        }, // perf
-        {
-          binding: 10,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        }, // tuning
-      ],
-    });
-
-    // bgl1: textures, samplers, light, view, box, historyPrev, motion, depth
-    this.bgl1 = d.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d-array" },
-        }, // weather
-        {
-          binding: 1,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "3d" },
-        }, // shape3D
-        {
-          binding: 3,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 4,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d-array" },
-        }, // blue
-        {
-          binding: 5,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 6,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "3d" },
-        }, // detail3D
-        {
-          binding: 7,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
         },
         {
           binding: 8,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        }, // light
+        },
         {
           binding: 9,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        }, // view
+        },
         {
           binding: 10,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        }, // box
-        {
-          binding: 11,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d-array" },
-        }, // historyPrev
-        {
-          binding: 12,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 13,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d" },
-        }, // motion
-        {
-          binding: 14,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 15,
-          visibility: GPUShaderStage.COMPUTE,
-          texture: { sampleType: "float", viewDimension: "2d" },
-        }, // depthPrev
-        {
-          binding: 16,
-          visibility: GPUShaderStage.COMPUTE,
-          sampler: { type: "filtering" },
         },
       ],
     });
@@ -372,60 +390,36 @@ export class CloudComputeBuilder {
       compute: { module: this.module, entryPoint: "computeCloud" },
     });
 
-    // samplers
-    this._samp2D = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-    });
-    this._sampShape = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-      addressModeW: "repeat",
-    });
-    this._sampDetail = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-      addressModeW: "repeat",
-    });
-    this._sampBN = d.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      addressModeU: "repeat",
-      addressModeV: "repeat",
-    });
+    this._destroyDummyHistory();
+    this._createDummyHistory();
 
-    // small dummy textures: motion/depth and tiny history
-    const tex2Desc = {
-      size: [1, 1, 1],
-      format: "r8unorm",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    };
-    this._dummy2DMotion = d.createTexture(tex2Desc);
-    this._dummy2DMotionView = this._dummy2DMotion.createView({
-      dimension: "2d",
-    });
-    this._dummy2DDepth = d.createTexture(tex2Desc);
-    this._dummy2DDepthView = this._dummy2DDepth.createView({ dimension: "2d" });
-    this.queue.writeTexture(
-      { texture: this._dummy2DMotion },
-      new Uint8Array([128]),
-      { bytesPerRow: 1 },
-      { width: 1, height: 1, depthOrArrayLayers: 1 },
-    );
-    this.queue.writeTexture(
-      { texture: this._dummy2DDepth },
-      new Uint8Array([128]),
-      { bytesPerRow: 1 },
-      { width: 1, height: 1, depthOrArrayLayers: 1 },
-    );
+    this._bg0Cache.clear();
+    this._bg0Keys.length = 0;
+    this._bg0Dirty = true;
+    this._currentBg0 = null;
 
-    // tiny dummy historyPrev/out (rgba16float 1x1)
+    this._ensureUpsamplePipeline(this.outFormat);
+  }
+
+  _destroyDummyHistory() {
+    const prev = this._dummyHistoryPrev;
+    const out = this._dummyHistoryOut;
+
+    this._dummyHistoryPrev = null;
+    this._dummyHistoryPrevView = null;
+    this._dummyHistoryOut = null;
+    this._dummyHistoryOutView = null;
+
+    try {
+      if (prev) this._retireTexture(prev);
+    } catch (_) {}
+    try {
+      if (out) this._retireTexture(out);
+    } catch (_) {}
+  }
+
+  _createDummyHistory() {
+    const d = this.device;
     const histDesc = {
       size: [1, 1, 1],
       format: this.outFormat,
@@ -458,8 +452,163 @@ export class CloudComputeBuilder {
     );
   }
 
+  // -------------------- init compute + resources --------------------
+  _initCompute() {
+    const d = this.device;
+    this.module = d.createShaderModule({ code: cloudWGSL });
+
+    // group(1) must match updated shader:
+    // 0 weather2D, 1 samp2D, 2 shape3D, 3 sampShape, 4 blueTex, 5 sampBN, 6 detail3D, 7 sampDetail,
+    // 8 L, 9 V, 10 B, 11 historyPrev, 12 sampHistory, 13 motionTex, 14 sampMotion, 15 depthPrev, 16 sampDepth
+    this.bgl1 = d.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "2d-array" },
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "3d" },
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 4,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "2d-array" },
+        },
+        {
+          binding: 5,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 6,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "3d" },
+        },
+        {
+          binding: 7,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 8,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: { type: "uniform" },
+        },
+        {
+          binding: 9,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: { type: "uniform" },
+        },
+        {
+          binding: 10,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: { type: "uniform" },
+        },
+        {
+          binding: 11,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "2d-array" },
+        },
+        {
+          binding: 12,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 13,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "2d" },
+        },
+        {
+          binding: 14,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 15,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "2d" },
+        },
+        {
+          binding: 16,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+      ],
+    });
+
+    // samplers (shader uses manual wrap helpers anyway, keep repeat for maps)
+    this._samp2D = d.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "repeat",
+      addressModeV: "repeat",
+    });
+    this._sampShape = d.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "repeat",
+      addressModeV: "repeat",
+      addressModeW: "repeat",
+    });
+    this._sampDetail = d.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "repeat",
+      addressModeV: "repeat",
+      addressModeW: "repeat",
+    });
+    this._sampBN = d.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "repeat",
+      addressModeV: "repeat",
+    });
+
+    // dummy motion/depth textures
+    const tex2Desc = {
+      size: [1, 1, 1],
+      format: "r8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    };
+    this._dummy2DMotion = d.createTexture(tex2Desc);
+    this._dummy2DMotionView = this._dummy2DMotion.createView({
+      dimension: "2d",
+    });
+    this._dummy2DDepth = d.createTexture(tex2Desc);
+    this._dummy2DDepthView = this._dummy2DDepth.createView({ dimension: "2d" });
+    this.queue.writeTexture(
+      { texture: this._dummy2DMotion },
+      new Uint8Array([128]),
+      { bytesPerRow: 1 },
+      { width: 1, height: 1, depthOrArrayLayers: 1 },
+    );
+    this.queue.writeTexture(
+      { texture: this._dummy2DDepth },
+      new Uint8Array([128]),
+      { bytesPerRow: 1 },
+      { width: 1, height: 1, depthOrArrayLayers: 1 },
+    );
+
+    this._ensureComputeFormat(this.outFormat);
+  }
+
   _initBuffers() {
     const d = this.device;
+
     this.optionsBuffer = d.createBuffer({
       size: 32,
       usage:
@@ -468,31 +617,34 @@ export class CloudComputeBuilder {
         GPUBufferUsage.COPY_SRC,
     });
 
-    // paramsBuffer expanded to 96 to match new CloudParams layout
     this.paramsBuffer = d.createBuffer({
-      size: 96,
+      size: 80,
       usage:
         GPUBufferUsage.UNIFORM |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
     });
 
-    this.offsetsBuffer = d.createBuffer({
-      size: 48,
+    this.nTransformBuffer = d.createBuffer({
+      size: 112,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
     this.dummyBuffer = d.createBuffer({
       size: 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
     this.posBuffer = d.createBuffer({
       size: 16,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
     this.frameBuffer = d.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
     this.lightBuffer = d.createBuffer({
       size: 32,
       usage:
@@ -500,23 +652,22 @@ export class CloudComputeBuilder {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
     });
+
     this.viewBuffer = d.createBuffer({
       size: 128,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
     this.boxBuffer = d.createBuffer({
       size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    this.samplingBuffer = d.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
     this.reprojBuffer = d.createBuffer({
       size: 48,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
     this.perfBuffer = d.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -532,236 +683,317 @@ export class CloudComputeBuilder {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // write a zero to dummy buffer
+    this._upsampleParamsBuffer = d.createBuffer({
+      size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
     this.queue.writeBuffer(this.dummyBuffer, 0, new Uint8Array(4));
   }
 
   // -------------------- UBO setters --------------------
-  setOptions({
-    useCustomPos = false,
-    outputChannel = 0,
-    writeRGB = true,
-    debugForceFog = 0,
-    temporalSeed = 0,
-    windDisp = 0.0,
-    windAngleRad = 0.0,
-  } = {}) {
+  setOptions(opts = {}) {
+    const s = this._state.options;
+
+    if (_has(opts, "useCustomPos")) s.useCustomPos = !!opts.useCustomPos;
+    if (_has(opts, "outputChannel"))
+      s.outputChannel = opts.outputChannel >>> 0 || 0;
+    if (_has(opts, "writeRGB")) s.writeRGB = !!opts.writeRGB;
+
+    // Accept either r0..r3, or legacy names mapped into _r0.._r3
+    if (_has(opts, "r0")) s.r0 = +opts.r0 || 0.0;
+    else if (_has(opts, "debugForceFog")) s.r0 = +opts.debugForceFog || 0.0;
+
+    if (_has(opts, "r1")) s.r1 = +opts.r1 || 0.0;
+    else if (_has(opts, "temporalSeed")) s.r1 = +opts.temporalSeed || 0.0;
+
+    if (_has(opts, "r2")) s.r2 = +opts.r2 || 0.0;
+    else if (_has(opts, "windDisp")) s.r2 = +opts.windDisp || 0.0;
+
+    if (_has(opts, "r3")) s.r3 = +opts.r3 || 0.0;
+    else if (_has(opts, "windAngleRad")) s.r3 = +opts.windAngleRad || 0.0;
+
     const dv = this._dvOptions;
-    dv.setUint32(0, useCustomPos ? 1 : 0, true);
-    dv.setUint32(4, outputChannel >>> 0, true);
-    dv.setUint32(8, writeRGB ? 1 : 0, true);
+    dv.setUint32(0, s.useCustomPos ? 1 : 0, true);
+    dv.setUint32(4, s.outputChannel >>> 0, true);
+    dv.setUint32(8, s.writeRGB ? 1 : 0, true);
     dv.setUint32(12, 0, true);
-    dv.setFloat32(16, debugForceFog, true);
-    dv.setFloat32(20, temporalSeed, true);
-    dv.setFloat32(24, windDisp, true);
-    dv.setFloat32(28, windAngleRad, true);
+    dv.setFloat32(16, s.r0, true);
+    dv.setFloat32(20, s.r1, true);
+    dv.setFloat32(24, s.r2, true);
+    dv.setFloat32(28, s.r3, true);
+
     this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
     this._bg0Dirty = true;
   }
+
   setTemporalSeed(seed = 0) {
-    this._dvOptions.setFloat32(20, seed, true);
-    this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
-    this._bg0Dirty = true;
+    this.setOptions({ r1: seed });
   }
 
   setParams(p = {}) {
-    // defaults updated to include the new CloudParams tunables
-    const defaults = {
-      globalCoverage: 0.6,
-      globalDensity: 1.0,
-      cloudAnvilAmount: 0.0,
-      cloudBeer: 6.0,
-      attenuationClamp: 0.2,
-      inScatterG: 0.2,
-      silverIntensity: 2.5,
-      silverExponent: 2.0,
-      outScatterG: 0.1,
-      inVsOut: 0.5,
-      outScatterAmbientAmt: 0.9,
-      ambientMinimum: 0.2,
-      sunColor: [1.0, 0.95, 0.9],
-      // new fields (defaults chosen to be sensible; tweak as needed)
-      densityDivMin: 0.001, // corresponds to thesis divmin (Eq.36)
-      silverDirectionBias: 0.0, // bias applied to silver/backscatter dot
-      silverHorizonBoost: 0.0,
-      // tiling scales (new artist controls)
-      shapeScale: 1.0,
-      detailScale: 1.0,
-    };
-    const c = Object.assign({}, defaults, p);
+    const s = this._state.params;
+
+    if (_has(p, "globalCoverage")) s.globalCoverage = +p.globalCoverage;
+    if (_has(p, "globalDensity")) s.globalDensity = +p.globalDensity;
+    if (_has(p, "cloudAnvilAmount")) s.cloudAnvilAmount = +p.cloudAnvilAmount;
+    if (_has(p, "cloudBeer")) s.cloudBeer = +p.cloudBeer;
+
+    if (_has(p, "attenuationClamp")) s.attenuationClamp = +p.attenuationClamp;
+    if (_has(p, "inScatterG")) s.inScatterG = +p.inScatterG;
+    if (_has(p, "silverIntensity")) s.silverIntensity = +p.silverIntensity;
+    if (_has(p, "silverExponent")) s.silverExponent = +p.silverExponent;
+
+    if (_has(p, "outScatterG")) s.outScatterG = +p.outScatterG;
+    if (_has(p, "inVsOut")) s.inVsOut = +p.inVsOut;
+    if (_has(p, "outScatterAmbientAmt"))
+      s.outScatterAmbientAmt = +p.outScatterAmbientAmt;
+    if (_has(p, "ambientMinimum")) s.ambientMinimum = +p.ambientMinimum;
+
+    if (_has(p, "sunColor")) {
+      const sc = p.sunColor || [1, 1, 1];
+      s.sunColor = [+(sc[0] ?? 1), +(sc[1] ?? 1), +(sc[2] ?? 1)];
+    }
+
+    if (_has(p, "densityDivMin")) s.densityDivMin = +p.densityDivMin;
+    if (_has(p, "silverDirectionBias"))
+      s.silverDirectionBias = +p.silverDirectionBias;
+    if (_has(p, "silverHorizonBoost"))
+      s.silverHorizonBoost = +p.silverHorizonBoost;
+
     const dv = this._dvParams;
 
-    // CloudParams layout (bytes):
-    //  0..15   -> globalCoverage, globalDensity, cloudAnvilAmount, cloudBeer
-    // 16..31   -> attenuationClamp, inScatterG, silverIntensity, silverExponent
-    // 32..47   -> outScatterG, inVsOut, outScatterAmbientAmt, ambientMinimum
-    // 48..63   -> sunColor (vec3) + padding at 60
-    // 64..95   -> densityDivMin, silverDirectionBias, silverHorizonBoost, shapeScale, detailScale, padding...
+    // 0..47
+    dv.setFloat32(0, s.globalCoverage, true);
+    dv.setFloat32(4, s.globalDensity, true);
+    dv.setFloat32(8, s.cloudAnvilAmount, true);
+    dv.setFloat32(12, s.cloudBeer, true);
 
-    dv.setFloat32(0, c.globalCoverage, true); // 0
-    dv.setFloat32(4, c.globalDensity, true); // 4
-    dv.setFloat32(8, c.cloudAnvilAmount, true); // 8
-    dv.setFloat32(12, c.cloudBeer, true); // 12
+    dv.setFloat32(16, s.attenuationClamp, true);
+    dv.setFloat32(20, s.inScatterG, true);
+    dv.setFloat32(24, s.silverIntensity, true);
+    dv.setFloat32(28, s.silverExponent, true);
 
-    dv.setFloat32(16, c.attenuationClamp, true); // 16
-    dv.setFloat32(20, c.inScatterG, true); // 20
-    dv.setFloat32(24, c.silverIntensity, true); // 24
-    dv.setFloat32(28, c.silverExponent, true); // 28
+    dv.setFloat32(32, s.outScatterG, true);
+    dv.setFloat32(36, s.inVsOut, true);
+    dv.setFloat32(40, s.outScatterAmbientAmt, true);
+    dv.setFloat32(44, s.ambientMinimum, true);
 
-    dv.setFloat32(32, c.outScatterG, true); // 32
-    dv.setFloat32(36, c.inVsOut, true); // 36
-    dv.setFloat32(40, c.outScatterAmbientAmt, true); // 40
-    dv.setFloat32(44, c.ambientMinimum, true); // 44
+    // sunColor vec3 + pad
+    dv.setFloat32(48, s.sunColor[0], true);
+    dv.setFloat32(52, s.sunColor[1], true);
+    dv.setFloat32(56, s.sunColor[2], true);
+    dv.setFloat32(60, 0.0, true);
 
-    // sunColor is a vec3<f32> (occupies 16 bytes). write RGB into 48/52/56 and clear padding at 60.
-    dv.setFloat32(48, c.sunColor[0], true); // 48
-    dv.setFloat32(52, c.sunColor[1], true); // 52
-    dv.setFloat32(56, c.sunColor[2], true); // 56
-    dv.setFloat32(60, 0.0, true); // 60 padding (vec3 -> vec4 slot)
+    // tail (16 bytes)
+    dv.setFloat32(64, s.densityDivMin, true);
+    dv.setFloat32(68, s.silverDirectionBias, true);
+    dv.setFloat32(72, s.silverHorizonBoost, true);
+    dv.setFloat32(76, 0.0, true);
 
-    // new CloudParams fields begin at byte 64
-    dv.setFloat32(64, c.densityDivMin, true); // 64
-    dv.setFloat32(68, c.silverDirectionBias, true); // 68
-    dv.setFloat32(72, c.silverHorizonBoost, true); // 72
-    dv.setFloat32(76, c.shapeScale, true); // 76
-    dv.setFloat32(80, c.detailScale, true); // 80
-
-    // pad out remaining bytes to keep buffer deterministic
-    dv.setFloat32(84, 0.0, true); // 84
-    dv.setFloat32(88, 0.0, true); // 88
-    dv.setFloat32(92, 0.0, true); // 92
-
-    // commit if changed
     this._writeIfChanged("params", this.paramsBuffer, this._abParams);
     this._bg0Dirty = true;
   }
 
-  setTileScaling({
-    shapeOffsetWorld = [0, 0, 0],
-    detailOffsetWorld = [0, 0, 0],
-    shapeScale = 0.1,
-    detailScale = 1.0,
-  } = {}) {
-    const dv = this._dvOffsets;
-    // shapeOffsetWorld : vec3<f32> at bytes 0..11
-    dv.setFloat32(0, shapeOffsetWorld[0] || 0.0, true);
-    dv.setFloat32(4, shapeOffsetWorld[1] || 0.0, true);
-    dv.setFloat32(8, shapeOffsetWorld[2] || 0.0, true);
-    // _pad0 : f32 at bytes 12..15
+  _retireTexture(tex) {
+    if (!tex || typeof tex.destroy !== "function") return;
+    if (!this._retiredTextures) this._retiredTextures = [];
+    this._retiredTextures.push(tex);
+
+    if (this._retireFlushPromise) return;
+    if (typeof this.queue.onSubmittedWorkDone !== "function") {
+      const list = this._retiredTextures.splice(0);
+      for (const t of list) {
+        try {
+          t.destroy();
+        } catch (_) {}
+      }
+      return;
+    }
+
+    this._retireFlushPromise = this.queue
+      .onSubmittedWorkDone()
+      .then(() => {
+        this._retireFlushPromise = null;
+        const list = this._retiredTextures.splice(0);
+        for (const t of list) {
+          try {
+            t.destroy();
+          } catch (_) {}
+        }
+      })
+      .catch(() => {
+        this._retireFlushPromise = null;
+      });
+  }
+
+  // NoiseTransforms (binding 3)
+  setNoiseTransforms(v = {}) {
+    const s = this._state.ntransform;
+
+    const v3 = (a, d0, d1, d2) => [
+      +(a?.[0] ?? d0),
+      +(a?.[1] ?? d1),
+      +(a?.[2] ?? d2),
+    ];
+
+    if (_has(v, "shapeOffsetWorld"))
+      s.shapeOffsetWorld = v3(v.shapeOffsetWorld, 0, 0, 0);
+    if (_has(v, "detailOffsetWorld"))
+      s.detailOffsetWorld = v3(v.detailOffsetWorld, 0, 0, 0);
+    if (_has(v, "shapeScale")) s.shapeScale = +v.shapeScale;
+    if (_has(v, "detailScale")) s.detailScale = +v.detailScale;
+    if (_has(v, "weatherScale")) s.weatherScale = +v.weatherScale;
+
+    if (_has(v, "shapeAxisScale"))
+      s.shapeAxisScale = v3(v.shapeAxisScale, 1, 1, 1);
+    if (_has(v, "detailAxisScale"))
+      s.detailAxisScale = v3(v.detailAxisScale, 1, 1, 1);
+    if (_has(v, "weatherOffsetWorld"))
+      s.weatherOffsetWorld = v3(v.weatherOffsetWorld, 0, 0, 0);
+    if (_has(v, "weatherAxisScale"))
+      s.weatherAxisScale = v3(v.weatherAxisScale, 1, 1, 1);
+
+    const dv = this._dvNTransform;
+
+    // shapeOffsetWorld (0..15)
+    dv.setFloat32(0, s.shapeOffsetWorld[0] || 0.0, true);
+    dv.setFloat32(4, s.shapeOffsetWorld[1] || 0.0, true);
+    dv.setFloat32(8, s.shapeOffsetWorld[2] || 0.0, true);
     dv.setFloat32(12, 0.0, true);
 
-    // detailOffsetWorld : vec3<f32> at bytes 16..27
-    dv.setFloat32(16, detailOffsetWorld[0] || 0.0, true);
-    dv.setFloat32(20, detailOffsetWorld[1] || 0.0, true);
-    dv.setFloat32(24, detailOffsetWorld[2] || 0.0, true);
-    // _pad1 : f32 at bytes 28..31
+    // detailOffsetWorld (16..31)
+    dv.setFloat32(16, s.detailOffsetWorld[0] || 0.0, true);
+    dv.setFloat32(20, s.detailOffsetWorld[1] || 0.0, true);
+    dv.setFloat32(24, s.detailOffsetWorld[2] || 0.0, true);
     dv.setFloat32(28, 0.0, true);
 
-    // shapeScale, detailScale and pad2 (vec2) at bytes 32..47
-    dv.setFloat32(32, shapeScale, true); // shapeScale
-    dv.setFloat32(36, detailScale, true); // detailScale
-    dv.setFloat32(40, 0.0, true); // _pad2.x
-    dv.setFloat32(44, 0.0, true); // _pad2.y
+    // shapeScale, detailScale, weatherScale, pad (32..47)
+    dv.setFloat32(32, +s.shapeScale || 0.0, true);
+    dv.setFloat32(36, +s.detailScale || 0.0, true);
+    dv.setFloat32(40, +s.weatherScale || 0.0, true);
+    dv.setFloat32(44, 0.0, true);
 
-    this._writeIfChanged("offsets", this.offsetsBuffer, this._abOffsets);
+    // shapeAxisScale (48..63)
+    dv.setFloat32(48, s.shapeAxisScale[0] || 1.0, true);
+    dv.setFloat32(52, s.shapeAxisScale[1] || 1.0, true);
+    dv.setFloat32(56, s.shapeAxisScale[2] || 1.0, true);
+    dv.setFloat32(60, 0.0, true);
+
+    // detailAxisScale (64..79)
+    dv.setFloat32(64, s.detailAxisScale[0] || 1.0, true);
+    dv.setFloat32(68, s.detailAxisScale[1] || 1.0, true);
+    dv.setFloat32(72, s.detailAxisScale[2] || 1.0, true);
+    dv.setFloat32(76, 0.0, true);
+
+    // weatherOffsetWorld (80..95)
+    dv.setFloat32(80, s.weatherOffsetWorld[0] || 0.0, true);
+    dv.setFloat32(84, s.weatherOffsetWorld[1] || 0.0, true);
+    dv.setFloat32(88, s.weatherOffsetWorld[2] || 0.0, true);
+    dv.setFloat32(92, 0.0, true);
+
+    // weatherAxisScale (96..111)
+    dv.setFloat32(96, s.weatherAxisScale[0] || 1.0, true);
+    dv.setFloat32(100, s.weatherAxisScale[1] || 1.0, true);
+    dv.setFloat32(104, s.weatherAxisScale[2] || 1.0, true);
+    dv.setFloat32(108, 0.0, true);
+
+    this._writeIfChanged(
+      "ntransform",
+      this.nTransformBuffer,
+      this._abNTransform,
+    );
     this._bg0Dirty = true;
   }
 
-  setSamplingOpts({ useManualWrap = 0, weatherLayer = 0 } = {}) {
-    const dv = this._dvSampling;
-    dv.setUint32(0, useManualWrap >>> 0, true);
-    dv.setUint32(4, weatherLayer >>> 0, true);
-    dv.setUint32(8, 0, true);
-    dv.setUint32(12, 0, true);
-    this._writeIfChanged("sampling", this.samplingBuffer, this._abSampling);
-  }
-  setWeatherLayer(layer = 0) {
-    this.setSamplingOpts({
-      useManualWrap: this._dvSampling.getUint32(0, true),
-      weatherLayer: layer,
-    });
-  }
-  setManualWrap(on = true) {
-    this.setSamplingOpts({
-      useManualWrap: on ? 1 : 0,
-      weatherLayer: this.getWeatherLayer(),
-    });
-  }
-  getWeatherLayer() {
-    return this._dvSampling.getUint32(4, true) || 0;
+  // Back-compat alias
+  setTileScaling(v = {}) {
+    this.setNoiseTransforms(v);
   }
 
-  setReprojSettings({
-    enabled = 0,
-    subsample = 1,
-    sampleOffset = 0,
-    motionIsNormalized = 0,
-    temporalBlend = 0.0,
-    depthTest = 0,
-    depthTolerance = 0.0,
-    frameIndex = 0,
-    fullWidth = 0,
-    fullHeight = 0,
-  } = {}) {
+  setReprojSettings(v = {}) {
+    const s = this._state.reproj;
+
+    if (_has(v, "enabled")) s.enabled = v.enabled >>> 0;
+    if (_has(v, "subsample")) s.subsample = v.subsample >>> 0;
+    if (_has(v, "sampleOffset")) s.sampleOffset = v.sampleOffset >>> 0;
+    if (_has(v, "motionIsNormalized"))
+      s.motionIsNormalized = v.motionIsNormalized >>> 0;
+    if (_has(v, "temporalBlend")) s.temporalBlend = +v.temporalBlend;
+    if (_has(v, "depthTest")) s.depthTest = v.depthTest >>> 0;
+    if (_has(v, "depthTolerance")) s.depthTolerance = +v.depthTolerance;
+    if (_has(v, "frameIndex")) s.frameIndex = v.frameIndex >>> 0;
+    if (_has(v, "fullWidth")) s.fullWidth = v.fullWidth >>> 0;
+    if (_has(v, "fullHeight")) s.fullHeight = v.fullHeight >>> 0;
+
     const dv = this._dvReproj;
-    dv.setUint32(0, enabled >>> 0, true);
-    dv.setUint32(4, subsample >>> 0, true);
-    dv.setUint32(8, sampleOffset >>> 0, true);
-    dv.setUint32(12, motionIsNormalized >>> 0, true);
-    dv.setFloat32(16, temporalBlend, true);
-    dv.setUint32(20, depthTest >>> 0, true);
-    dv.setFloat32(24, depthTolerance, true);
-    dv.setUint32(28, frameIndex >>> 0, true);
-    if (fullWidth) {
-      dv.setUint32(32, fullWidth >>> 0, true);
-      this._reprojFullW = fullWidth;
-    }
-    if (fullHeight) {
-      dv.setUint32(36, fullHeight >>> 0, true);
-      this._reprojFullH = fullHeight;
-    }
-    this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
-    this._bg0Dirty = true;
-  }
-  setReprojFullResSize(fullWidth, fullHeight) {
-    this._reprojFullW = fullWidth | 0;
-    this._reprojFullH = fullHeight | 0;
-    this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
-    this._dvReproj.setUint32(36, this._reprojFullH >>> 0, true);
+    dv.setUint32(0, s.enabled >>> 0, true);
+    dv.setUint32(4, s.subsample >>> 0, true);
+    dv.setUint32(8, s.sampleOffset >>> 0, true);
+    dv.setUint32(12, s.motionIsNormalized >>> 0, true);
+    dv.setFloat32(16, s.temporalBlend, true);
+    dv.setUint32(20, s.depthTest >>> 0, true);
+    dv.setFloat32(24, s.depthTolerance, true);
+    dv.setUint32(28, s.frameIndex >>> 0, true);
+    dv.setUint32(32, s.fullWidth >>> 0, true);
+    dv.setUint32(36, s.fullHeight >>> 0, true);
+    dv.setUint32(40, 0, true);
+    dv.setUint32(44, 0, true);
+
+    this._reprojFullW = s.fullWidth | 0;
+    this._reprojFullH = s.fullHeight | 0;
+
     this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
     this._bg0Dirty = true;
   }
 
-  setPerfParams({ lodBiasMul = 1.0, coarseMipBias = 0.0 } = {}) {
+  setPerfParams(v = {}) {
+    const s = this._state.perf;
+    if (_has(v, "lodBiasMul")) s.lodBiasMul = +v.lodBiasMul;
+    if (_has(v, "coarseMipBias")) s.coarseMipBias = +v.coarseMipBias;
+
     const dv = this._dvPerf;
-    dv.setFloat32(0, lodBiasMul, true);
-    dv.setFloat32(4, coarseMipBias, true);
+    dv.setFloat32(0, s.lodBiasMul, true);
+    dv.setFloat32(4, s.coarseMipBias, true);
     dv.setFloat32(8, 0.0, true);
     dv.setFloat32(12, 0.0, true);
+
     this._writeIfChanged("perf", this.perfBuffer, this._abPerf);
     this._bg0Dirty = true;
   }
 
-  setLight({ sunDir = [-0.4, 0.8, 0.45], camPos = [0, 0, 2] } = {}) {
+  setLight(v = {}) {
+    const s = this._state.light;
+    if (_has(v, "sunDir")) {
+      const a = v.sunDir || [0, 1, 0];
+      s.sunDir = [+(a[0] ?? 0), +(a[1] ?? 1), +(a[2] ?? 0)];
+    }
+    if (_has(v, "camPos")) {
+      const a = v.camPos || [0, 0, 2];
+      s.camPos = [+(a[0] ?? 0), +(a[1] ?? 0), +(a[2] ?? 2)];
+    }
+
     const dv = this._dvLight;
-    dv.setFloat32(0, sunDir[0], true);
-    dv.setFloat32(4, sunDir[1], true);
-    dv.setFloat32(8, sunDir[2], true);
+    dv.setFloat32(0, s.sunDir[0], true);
+    dv.setFloat32(4, s.sunDir[1], true);
+    dv.setFloat32(8, s.sunDir[2], true);
     dv.setFloat32(12, 0.0, true);
-    dv.setFloat32(16, camPos[0], true);
-    dv.setFloat32(20, camPos[1], true);
-    dv.setFloat32(24, camPos[2], true);
+    dv.setFloat32(16, s.camPos[0], true);
+    dv.setFloat32(20, s.camPos[1], true);
+    dv.setFloat32(24, s.camPos[2], true);
     dv.setFloat32(28, 0.0, true);
+
     this._writeIfChanged("light", this.lightBuffer, this._abLight);
     this._bg1Dirty = true;
   }
+
   setSunByAngles({
     azimuthDeg = 45,
     elevationDeg = 35,
     camPos = [0, 0, 2],
   } = {}) {
-    const az = (azimuthDeg * Math.PI) / 180,
-      el = (elevationDeg * Math.PI) / 180;
+    const az = (azimuthDeg * Math.PI) / 180;
+    const el = (elevationDeg * Math.PI) / 180;
     const sd = [
       Math.cos(el) * Math.sin(az),
       Math.sin(el),
@@ -770,36 +1002,89 @@ export class CloudComputeBuilder {
     this.setLight({ sunDir: sd, camPos });
   }
 
-  setBox({ center = [0, 0, 0], half = [1, 0.6, 1], uvScale = 1.5 } = {}) {
+  setBox(v = {}) {
+    const s = this._state.box;
+    if (_has(v, "center")) {
+      const a = v.center || [0, 0, 0];
+      s.center = [+(a[0] ?? 0), +(a[1] ?? 0), +(a[2] ?? 0)];
+    }
+    if (_has(v, "half")) {
+      const a = v.half || [1, 0.6, 1];
+      s.half = [+(a[0] ?? 1), +(a[1] ?? 0.6), +(a[2] ?? 1)];
+    }
+    if (_has(v, "uvScale")) s.uvScale = +v.uvScale;
+
     const dv = this._dvBox;
-    dv.setFloat32(0, center[0], true);
-    dv.setFloat32(4, center[1], true);
-    dv.setFloat32(8, center[2], true);
+    dv.setFloat32(0, s.center[0], true);
+    dv.setFloat32(4, s.center[1], true);
+    dv.setFloat32(8, s.center[2], true);
     dv.setFloat32(12, 0.0, true);
-    dv.setFloat32(16, half[0], true);
-    dv.setFloat32(20, half[1], true);
-    dv.setFloat32(24, half[2], true);
-    dv.setFloat32(28, uvScale, true);
+    dv.setFloat32(16, s.half[0], true);
+    dv.setFloat32(20, s.half[1], true);
+    dv.setFloat32(24, s.half[2], true);
+    dv.setFloat32(28, s.uvScale, true);
+
     this._writeIfChanged("box", this.boxBuffer, this._abBox);
     this._bg1Dirty = true;
   }
 
-  setFrame({
-    fullWidth = 0,
-    fullHeight = 0,
-    tileWidth = 0,
-    tileHeight = 0,
-    originX = 0,
-    originY = 0,
-    originZ = 0,
-    fullDepth = 1,
-    tileDepth = 1,
-    layerIndex = 0,
-    layers = 1,
-    originXf = 0.0,
-    originYf = 0.0,
-  } = {}) {
+  setFrame(v = {}) {
     const dv = this._dvFrame;
+
+    const prev = {
+      fullWidth: dv.getUint32(0, true),
+      fullHeight: dv.getUint32(4, true),
+      tileWidth: dv.getUint32(8, true),
+      tileHeight: dv.getUint32(12, true),
+      originX: dv.getInt32(16, true),
+      originY: dv.getInt32(20, true),
+      originZ: dv.getInt32(24, true),
+      fullDepth: dv.getUint32(28, true),
+      tileDepth: dv.getUint32(32, true),
+      layerIndex: dv.getInt32(36, true),
+      layers: dv.getUint32(40, true),
+      originXf: dv.getFloat32(48, true),
+      originYf: dv.getFloat32(52, true),
+    };
+
+    const fullWidth = _has(v, "fullWidth") ? v.fullWidth >>> 0 : prev.fullWidth;
+    const fullHeight = _has(v, "fullHeight")
+      ? v.fullHeight >>> 0
+      : prev.fullHeight;
+    const tileWidth = _has(v, "tileWidth") ? v.tileWidth >>> 0 : prev.tileWidth;
+    const tileHeight = _has(v, "tileHeight")
+      ? v.tileHeight >>> 0
+      : prev.tileHeight;
+
+    const originX = _has(v, "originX") ? v.originX | 0 : prev.originX;
+    const originY = _has(v, "originY") ? v.originY | 0 : prev.originY;
+    const originZ = _has(v, "originZ") ? v.originZ | 0 : prev.originZ;
+
+    const defaultLayers =
+      ((this.layers | 0) > 0
+        ? this.layers | 0
+        : (prev.layers | 0) > 0
+          ? prev.layers | 0
+          : 1) >>> 0;
+
+    const layers = _has(v, "layers")
+      ? v.layers >>> 0
+      : prev.layers >>> 0 || defaultLayers;
+
+    const fullDepth = _has(v, "fullDepth")
+      ? v.fullDepth >>> 0
+      : prev.fullDepth >>> 0 || 1;
+
+    const tileDepth = _has(v, "tileDepth")
+      ? v.tileDepth >>> 0
+      : prev.tileDepth >>> 0 || 1;
+
+    const layerIndex = _has(v, "layerIndex")
+      ? v.layerIndex | 0
+      : prev.layerIndex;
+
+    const originXf = _has(v, "originXf") ? +(v.originXf ?? 0.0) : prev.originXf;
+    const originYf = _has(v, "originYf") ? +(v.originYf ?? 0.0) : prev.originYf;
 
     dv.setUint32(0, fullWidth >>> 0, true);
     dv.setUint32(4, fullHeight >>> 0, true);
@@ -813,10 +1098,11 @@ export class CloudComputeBuilder {
     dv.setInt32(36, layerIndex | 0, true);
     dv.setUint32(40, layers >>> 0, true);
     dv.setUint32(44, 0, true);
-    dv.setFloat32(48, originXf ?? 0.0, true);
-    dv.setFloat32(52, originYf ?? 0.0, true);
+    dv.setFloat32(48, originXf, true);
+    dv.setFloat32(52, originYf, true);
     dv.setFloat32(56, 0.0, true);
     dv.setFloat32(60, 0.0, true);
+
     this._writeIfChanged("frame", this.frameBuffer, this._abFrame);
 
     const w = tileWidth || fullWidth;
@@ -826,6 +1112,8 @@ export class CloudComputeBuilder {
       this._wgY = Math.max(1, Math.ceil(h / 8));
     }
   }
+
+
   setLayerIndex(i) {
     this._dvFrame.setInt32(36, i | 0, true);
     this._writeIfChanged("frame", this.frameBuffer, this._abFrame);
@@ -847,10 +1135,12 @@ export class CloudComputeBuilder {
     volumeLayers = 1,
   } = {}) {
     const dv = this._dvView;
+
     const norm = (v) => {
       const L = Math.hypot(v[0], v[1], v[2]) || 1;
       return [v[0] / L, v[1] / L, v[2] / L];
     };
+
     const f = norm(fwd);
     const u0 = norm(up);
     const r = norm([
@@ -863,6 +1153,7 @@ export class CloudComputeBuilder {
       f[2] * r[0] - f[0] * r[2],
       f[0] * r[1] - f[1] * r[0],
     ];
+
     const floats = [
       camPos[0],
       camPos[1],
@@ -897,136 +1188,84 @@ export class CloudComputeBuilder {
       0,
       0,
     ];
+
     for (let i = 0; i < floats.length; i++)
       dv.setFloat32(i * 4, floats[i], true);
     this._writeIfChanged("view", this.viewBuffer, this._abView);
     this._bg1Dirty = true;
   }
-  setSunByDirection({ dir = [0, 1, 0], camPos = [0, 0, 3] } = {}) {
-    this.setLight({ sunDir: dir, camPos });
-  }
 
-  // -------------------- TUNE setter --------------------
+  // -------------------- TUNE setter (CloudTuning) --------------------
   setTuning(t = {}) {
-    // defaults (kept consistent with previous) + new styleBlend default
-    const defaults = {
-      maxSteps: 256,
-      minStep: 0.003,
-      maxStep: 0.1,
-      sunSteps: 4,
-      sunStride: 4,
-      sunMinTr: 0.005,
-      phaseJitter: 1.0,
-      stepJitter: 0.08,
-      baseJitterFrac: 0.15,
-      topJitterFrac: 0.1,
-      lodBiasWeather: 1.5,
-      aabbFaceOffset: 0.0015,
-      weatherRejectGate: 0.99,
-      weatherRejectMip: 1.0,
-      emptySkipMult: 3.0,
-      nearFluffDist: 60.0,
-      nearStepScale: 0.3,
-      nearLodBias: -1.5,
-      nearDensityMult: 2.5,
-      nearDensityRange: 45.0,
-      lodBlendThreshold: 0.05,
-      sunDensityGate: 0.015,
-      fflyRelClamp: 2.5,
-      fflyAbsFloor: 1.5,
-      taaRelMin: 0.22,
-      taaRelMax: 1.1,
-      taaAbsEps: 0.02,
-      farStart: 800.0,
-      farFull: 2500.0,
-      farLodPush: 0.8,
-      farDetailAtten: 0.5,
-      farStepMult: 1.6,
-      bnFarScale: 0.35,
-      farTaaHistoryBoost: 1.35,
-      raySmoothDens: 0.5,
-      raySmoothSun: 0.5,
-      // NEW: styleBlend slider (0 = old flat, 1 = new bulgy)
-      styleBlend: 0.0,
-    };
-    const c = Object.assign({}, defaults, t);
+    const s = this._state.tuning;
+    for (const k in t) if (_has(t, k)) s[k] = t[k];
 
     const dv = this._dvTuning;
-
-    // write fields sequentially — keep layout stable for WGSL struct
     let o = 0;
-    dv.setInt32(o, c.maxSteps | 0, true);
+
+    dv.setInt32(o, s.maxSteps | 0, true);
     o += 4;
     dv.setInt32(o, 0, true);
-    o += 4; // pad
-    dv.setFloat32(o, c.minStep, true);
     o += 4;
-    dv.setFloat32(o, c.maxStep, true);
+    dv.setFloat32(o, +s.minStep, true);
+    o += 4;
+    dv.setFloat32(o, +s.maxStep, true);
     o += 4;
 
-    dv.setInt32(o, c.sunSteps | 0, true);
+    dv.setInt32(o, s.sunSteps | 0, true);
     o += 4;
-    dv.setInt32(o, c.sunStride | 0, true);
+    dv.setInt32(o, s.sunStride | 0, true);
     o += 4;
-    dv.setFloat32(o, c.sunMinTr, true);
+    dv.setFloat32(o, +s.sunMinTr, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
 
-    dv.setFloat32(o, c.phaseJitter, true);
+    dv.setFloat32(o, +s.phaseJitter, true);
     o += 4;
-    dv.setFloat32(o, c.stepJitter, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-
-    dv.setFloat32(o, c.baseJitterFrac, true);
-    o += 4;
-    dv.setFloat32(o, c.topJitterFrac, true);
+    dv.setFloat32(o, +s.stepJitter, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
 
-    dv.setFloat32(o, c.lodBiasWeather, true);
+    dv.setFloat32(o, +s.baseJitterFrac, true);
     o += 4;
-    dv.setFloat32(o, c.aabbFaceOffset, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-
-    dv.setFloat32(o, c.weatherRejectGate, true);
-    o += 4;
-    dv.setFloat32(o, c.weatherRejectMip, true);
-    o += 4;
-    dv.setFloat32(o, c.emptySkipMult, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-
-    dv.setFloat32(o, c.nearFluffDist, true);
-    o += 4;
-    dv.setFloat32(o, c.nearStepScale, true);
-    o += 4;
-    dv.setFloat32(o, c.nearLodBias, true);
-    o += 4;
-    dv.setFloat32(o, c.nearDensityMult, true);
-    o += 4;
-    dv.setFloat32(o, c.nearDensityRange, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
+    dv.setFloat32(o, +s.topJitterFrac, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
 
-    dv.setFloat32(o, c.lodBlendThreshold, true);
+    dv.setFloat32(o, +s.lodBiasWeather, true);
+    o += 4;
+    dv.setFloat32(o, +s.aabbFaceOffset, true);
+    o += 4;
+    dv.setFloat32(o, 0.0, true);
+    o += 4;
+    dv.setFloat32(o, 0.0, true);
+    o += 4;
+
+    dv.setFloat32(o, +s.weatherRejectGate, true);
+    o += 4;
+    dv.setFloat32(o, +s.weatherRejectMip, true);
+    o += 4;
+    dv.setFloat32(o, +s.emptySkipMult, true);
+    o += 4;
+    dv.setFloat32(o, 0.0, true);
+    o += 4;
+
+    dv.setFloat32(o, +s.nearFluffDist, true);
+    o += 4;
+    dv.setFloat32(o, +s.nearStepScale, true);
+    o += 4;
+    dv.setFloat32(o, +s.nearLodBias, true);
+    o += 4;
+    dv.setFloat32(o, +s.nearDensityMult, true);
+    o += 4;
+    dv.setFloat32(o, +s.nearDensityRange, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
@@ -1035,56 +1274,62 @@ export class CloudComputeBuilder {
     dv.setFloat32(o, 0.0, true);
     o += 4;
 
-    dv.setFloat32(o, c.sunDensityGate, true);
+    dv.setFloat32(o, +s.lodBlendThreshold, true);
     o += 4;
-    dv.setFloat32(o, c.fflyRelClamp, true);
-    o += 4;
-    dv.setFloat32(o, c.fflyAbsFloor, true);
-    o += 4;
-    dv.setFloat32(o, c.taaRelMin, true);
-    o += 4;
-    dv.setFloat32(o, c.taaRelMax, true);
-    o += 4;
-    dv.setFloat32(o, c.taaAbsEps, true);
+    dv.setFloat32(o, 0.0, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
 
-    dv.setFloat32(o, c.farStart, true);
+    dv.setFloat32(o, +s.sunDensityGate, true);
     o += 4;
-    dv.setFloat32(o, c.farFull, true);
+    dv.setFloat32(o, +s.fflyRelClamp, true);
     o += 4;
-    dv.setFloat32(o, c.farLodPush, true);
+    dv.setFloat32(o, +s.fflyAbsFloor, true);
     o += 4;
-    dv.setFloat32(o, c.farDetailAtten, true);
+    dv.setFloat32(o, +s.taaRelMin, true);
     o += 4;
-    dv.setFloat32(o, c.farStepMult, true);
+    dv.setFloat32(o, +s.taaRelMax, true);
     o += 4;
-    dv.setFloat32(o, c.bnFarScale, true);
-    o += 4;
-    dv.setFloat32(o, c.farTaaHistoryBoost, true);
+    dv.setFloat32(o, +s.taaAbsEps, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
 
-    dv.setFloat32(o, c.raySmoothDens, true);
+    dv.setFloat32(o, +s.farStart, true);
     o += 4;
-    dv.setFloat32(o, c.raySmoothSun, true);
+    dv.setFloat32(o, +s.farFull, true);
     o += 4;
-
-    // NEW: styleBlend float (0..1) to morph between old(flat) and new(bulgy) styles
-    dv.setFloat32(o, c.styleBlend, true);
+    dv.setFloat32(o, +s.farLodPush, true);
     o += 4;
-
-    // pad vec2 (8 bytes) to match WGSL vec2<f32> _pad10
+    dv.setFloat32(o, +s.farDetailAtten, true);
+    o += 4;
+    dv.setFloat32(o, +s.farStepMult, true);
+    o += 4;
+    dv.setFloat32(o, +s.bnFarScale, true);
+    o += 4;
+    dv.setFloat32(o, +s.farTaaHistoryBoost, true);
+    o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
     dv.setFloat32(o, 0.0, true);
     o += 4;
+
+    dv.setFloat32(o, +s.raySmoothDens, true);
+    o += 4;
+    dv.setFloat32(o, +s.raySmoothSun, true);
+    o += 4;
+    dv.setFloat32(o, 0.0, true);
+    o += 4;
+    dv.setFloat32(o, 0.0, true);
+    o += 4;
+
+    for (let i = o; i < this._abTuning.byteLength; i += 4)
+      dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
     this._bg0Dirty = true;
@@ -1130,12 +1375,11 @@ export class CloudComputeBuilder {
     if (typeof blueTex !== "undefined" && blueTex !== this.blueTex) {
       if (this._ownsBlue && this.blueTex && this.blueTex !== blueTex) {
         try {
-          this.blueTex.destroy();
+          this._retireTexture(this.blueTex);
         } catch (_) {}
       }
       this.blueTex = blueTex || null;
       this._ownsBlue = false;
-
       if (typeof blueView === "undefined") this.blueView = null;
       bg1Changed = true;
     }
@@ -1182,6 +1426,7 @@ export class CloudComputeBuilder {
       this._bg1Dirty = true;
     }
   }
+
   setHistoryOutView(view) {
     this.historyOutView = view;
     this._bg0Dirty = true;
@@ -1189,7 +1434,8 @@ export class CloudComputeBuilder {
 
   // -------------------- outputs --------------------
   createOutputTexture(width, height, layers = 1, format = "rgba16float") {
-    // if identical, update frame + reproj full size
+    this._ensureComputeFormat(format);
+
     if (
       this.outTexture &&
       this.width === width &&
@@ -1204,14 +1450,17 @@ export class CloudComputeBuilder {
         tileHeight: height,
         originX: 0,
         originY: 0,
+        originZ: 0,
         layerIndex: 0,
         originXf: 0.0,
         originYf: 0.0,
       });
+
       this._reprojFullW = width;
       this._reprojFullH = height;
-      const curFW = this._dvReproj.getUint32(32, true) || 0,
-        curFH = this._dvReproj.getUint32(36, true) || 0;
+
+      const curFW = this._dvReproj.getUint32(32, true) || 0;
+      const curFH = this._dvReproj.getUint32(36, true) || 0;
       if (
         curFW !== this._reprojFullW >>> 0 ||
         curFH !== this._reprojFullH >>> 0
@@ -1224,15 +1473,17 @@ export class CloudComputeBuilder {
       return this.outView;
     }
 
-    // destroy existing
-    if (this.outTexture)
-      try {
-        this.outTexture.destroy();
-      } catch (_) {}
+    const oldOutTex = this.outTexture;
+
     this.outTexture = null;
     this.outView = null;
 
-    this.outFormat = format;
+    if (oldOutTex) {
+      try {
+        this._retireTexture(oldOutTex);
+      } catch (_) {}
+    }
+
     this.outTexture = this.device.createTexture({
       size: [width, height, layers],
       format: this.outFormat,
@@ -1242,15 +1493,16 @@ export class CloudComputeBuilder {
         GPUTextureUsage.COPY_SRC |
         GPUTextureUsage.RENDER_ATTACHMENT,
     });
+
     this.outView = this.outTexture.createView({
       dimension: "2d-array",
       arrayLayerCount: layers,
     });
+
     this.width = width;
     this.height = height;
     this.layers = layers;
 
-    // update reproj nominal full size
     this._reprojFullW = width;
     this._reprojFullH = height;
     this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
@@ -1264,17 +1516,18 @@ export class CloudComputeBuilder {
       tileHeight: height,
       originX: 0,
       originY: 0,
+      originZ: 0,
       layerIndex: 0,
       originXf: 0.0,
       originYf: 0.0,
     });
 
-    // invalidate caches
     this._bg0Dirty = true;
     this._bg1Dirty = true;
     this._renderBgCache = new WeakMap();
     this._renderBundleCache = new WeakMap();
     this._lastHadWork = false;
+
     return this.outView;
   }
 
@@ -1283,13 +1536,16 @@ export class CloudComputeBuilder {
     { width, height, layers = 1, format = "rgba16float" } = {},
   ) {
     if (!view) throw new Error("setOutputView: view required");
+    this._ensureComputeFormat(format);
+
     this.outTexture = null;
     this.outView = view;
-    this.outFormat = format;
+
     if (width && height) {
       this.width = width;
       this.height = height;
       this.layers = layers;
+
       this.setFrame({
         fullWidth: width,
         fullHeight: height,
@@ -1297,31 +1553,35 @@ export class CloudComputeBuilder {
         tileHeight: height,
         originX: 0,
         originY: 0,
+        originZ: 0,
         layerIndex: 0,
         originXf: 0.0,
         originYf: 0.0,
       });
+
       this._reprojFullW = width;
       this._reprojFullH = height;
       this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
       this._dvReproj.setUint32(36, this._reprojFullH >>> 0, true);
       this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
     }
+
     this._bg0Dirty = true;
     this._renderBgCache = new WeakMap();
     this._renderBundleCache = new WeakMap();
     this._lastHadWork = false;
+
     return this.outView;
   }
 
-  // -------------------- bind group key building --------------------
+  // -------------------- bind group keys --------------------
   _buildBg0Key() {
     const ids = [
       this._getResId(this.outView),
       this._getResId(this.optionsBuffer),
       this._getResId(this.paramsBuffer),
       this._getResId(this.dummyBuffer),
-      this._getResId(this.offsetsBuffer),
+      this._getResId(this.nTransformBuffer),
       this._getResId(this.posBuffer),
       this._getResId(this.frameBuffer),
       this._getResId(this.historyOutView || this._dummyHistoryOutView),
@@ -1332,6 +1592,7 @@ export class CloudComputeBuilder {
     ];
     return ids.join("|");
   }
+
   _buildBg1Key() {
     const blueViewId = this._getResId(this.blueView || this._ensureBlueView());
     const ids = [
@@ -1386,6 +1647,7 @@ export class CloudComputeBuilder {
       throw new Error(
         "No output view: call createOutputTexture or setOutputView first",
       );
+
     const canUseExplicitHistoryOut =
       this.historyOutView &&
       this._getResId(this.historyOutView) !== this._getResId(this.outView);
@@ -1399,7 +1661,7 @@ export class CloudComputeBuilder {
         { binding: 0, resource: { buffer: this.optionsBuffer } },
         { binding: 1, resource: { buffer: this.paramsBuffer } },
         { binding: 2, resource: { buffer: this.dummyBuffer } },
-        { binding: 3, resource: { buffer: this.offsetsBuffer } },
+        { binding: 3, resource: { buffer: this.nTransformBuffer } },
         { binding: 4, resource: this.outView },
         { binding: 5, resource: { buffer: this.posBuffer } },
         { binding: 6, resource: { buffer: this.frameBuffer } },
@@ -1455,7 +1717,6 @@ export class CloudComputeBuilder {
   }
 
   _makeBindGroups() {
-    // BG0
     const k0 = this._buildBg0Key();
     if (!this._bg0Dirty && this._bg0Cache.has(k0))
       this._currentBg0 = this._bg0Cache.get(k0);
@@ -1476,7 +1737,6 @@ export class CloudComputeBuilder {
       }
     }
 
-    // BG1
     const k1 = this._buildBg1Key();
     if (!this._bg1Dirty && this._bg1Cache.has(k1))
       this._currentBg1 = this._bg1Cache.get(k1);
@@ -1498,123 +1758,60 @@ export class CloudComputeBuilder {
     }
   }
 
-  // -------------------- rect/visibility helpers --------------------
-  _projectWorldToPixel(p, view, width, height) {
-    const cx = view.camPos[0],
-      cy = view.camPos[1],
-      cz = view.camPos[2];
-    const rx = view.right[0],
-      ry = view.right[1],
-      rz = view.right[2];
-    const ux = view.up[0],
-      uy = view.up[1],
-      uz = view.up[2];
-    const fx = view.fwd[0],
-      fy = view.fwd[1],
-      fz = view.fwd[2];
-    const tanYhalf = Math.tan(0.5 * (view.fovYRad || 0.5));
-    const aspect = view.aspect || 1;
-    const dx = p[0] - cx,
-      dy = p[1] - cy,
-      dz = p[2] - cz;
-    const xCam = dx * rx + dy * ry + dz * rz;
-    const yCam = dx * ux + dy * uy + dz * uz;
-    const zCam = -(dx * fx + dy * fy + dz * fz);
-    const eps = 1e-6;
-    if (zCam <= eps) return { ok: false, x: 0, y: 0, zCam };
-    const ndcX = xCam / (zCam * aspect * tanYhalf),
-      ndcY = yCam / (zCam * tanYhalf);
-    const px = (ndcX * 0.5 + 0.5) * width;
-    const py = (ndcY * 0.5 + 0.5) * height;
-    return { ok: true, x: px, y: py, zCam };
-  }
-
-  _computeAABBScreenRect(view, box, width, height, padPx = 4) {
-    const cx = box.center[0],
-      cy = box.center[1],
-      cz = box.center[2];
-    const hx = box.half[0],
-      hy = box.half[1],
-      hz = box.half[2];
-    const corners = [
-      [cx - hx, cy - hy, cz - hz],
-      [cx + hx, cy - hy, cz - hz],
-      [cx - hx, cy + hy, cz - hz],
-      [cx + hx, cy + hy, cz - hz],
-      [cx - hx, cy - hy, cz + hz],
-      [cx + hx, cy - hy, cz + hz],
-      [cx - hx, cy + hy, cz + hz],
-      [cx + hx, cy + hy, cz + hz],
-    ];
-    let minX = 1e9,
-      minY = 1e9,
-      maxX = -1e9,
-      maxY = -1e9;
-    let anyFront = false;
-    for (const C of corners) {
-      const q = this._projectWorldToPixel(C, view, width, height);
-      if (!q.ok) continue;
-      anyFront = true;
-      if (q.x < minX) minX = q.x;
-      if (q.y < minY) minY = q.y;
-      if (q.x > maxX) maxX = q.x;
-      if (q.y > maxY) maxY = q.y;
-    }
-    if (!anyFront) return { visible: false };
-    minX = Math.max(0, Math.floor(minX) - padPx);
-    minY = Math.max(0, Math.floor(minY) - padPx);
-    maxX = Math.min(width, Math.ceil(maxX) + padPx);
-    maxY = Math.min(height, Math.ceil(maxY) + padPx);
-    const w = Math.max(0, maxX - minX),
-      h = Math.max(0, maxY - minY);
-    return { visible: w > 0 && h > 0, x: minX, y: minY, w, h };
-  }
-
-  // -------------------- dispatch helpers (coarse integrated) --------------------
+  // -------------------- dispatch (coarse integrated) --------------------
   async dispatchRect({ x, y, w, h, wait = false, coarseFactor = 1 } = {}) {
     if (!this.outView)
       throw new Error("dispatchRect: createOutputTexture/setOutputView first.");
-    const cf = Math.max(1, coarseFactor | 0);
-    if (cf < 2) return await this.dispatchRectNoCoarse({ x, y, w, h, wait });
 
-    // coarse path
-    const cW = Math.max(1, Math.ceil((w || this.width) / cf));
-    const cH = Math.max(1, Math.ceil((h || this.height) / cf));
-    const baseX = Math.floor((x || 0) / cf),
-      baseY = Math.floor((y || 0) / cf);
+    const baseX = Math.max(0, Math.floor(x ?? 0));
+    const baseY = Math.max(0, Math.floor(y ?? 0));
+    const tw = Math.max(0, Math.floor(w ?? this.width - baseX));
+    const th = Math.max(0, Math.floor(h ?? this.height - baseY));
+
+    const cf = Math.max(1, coarseFactor | 0);
+    if (cf < 2 || !this.outTexture)
+      return await this.dispatchRectNoCoarse({
+        x: baseX,
+        y: baseY,
+        w: tw,
+        h: th,
+        wait,
+      });
+
+    const cW = Math.max(1, Math.ceil(tw / cf));
+    const cH = Math.max(1, Math.ceil(th / cf));
     this._ensureCoarseTexture(cW, cH, this.layers);
 
-    // save full-res
     const savedFullW = this._reprojFullW || this.width;
     const savedFullH = this._reprojFullH || this.height;
 
-    // swap output -> coarse
-    const savedOutTexture = this.outTexture,
-      savedOutView = this.outView,
-      savedWidth = this.width,
-      savedHeight = this.height,
-      savedFormat = this.outFormat;
+    const savedOutTexture = this.outTexture;
+    const savedOutView = this.outView;
+    const savedWidth = this.width;
+    const savedHeight = this.height;
+    const savedFormat = this.outFormat;
+
     this.outTexture = this._coarseTexture;
     this.outView = this._coarseView;
     this.width = cW;
     this.height = cH;
-    this.outFormat = this._coarseTexture?.format || savedFormat;
+    this.outFormat = savedFormat;
 
     this.setFrame({
       fullWidth: cW,
       fullHeight: cH,
       tileWidth: cW,
       tileHeight: cH,
-      originX: baseX,
-      originY: baseY,
+      originX: 0,
+      originY: 0,
+      originZ: 0,
       layerIndex: this._dvFrame.getInt32(36, true) | 0,
-      originXf: 0.0,
-      originYf: 0.0,
+      originXf: baseX,
+      originYf: baseY,
     });
 
-    // ensure reproj UBO reflects full-res for normalization if necessary
-    const curFW = this._dvReproj.getUint32(32, true) || 0,
-      curFH = this._dvReproj.getUint32(36, true) || 0;
+    const curFW = this._dvReproj.getUint32(32, true) || 0;
+    const curFH = this._dvReproj.getUint32(36, true) || 0;
     if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
       this._dvReproj.setUint32(32, savedFullW >>> 0, true);
       this._dvReproj.setUint32(36, savedFullH >>> 0, true);
@@ -1624,35 +1821,32 @@ export class CloudComputeBuilder {
 
     await this._dispatchComputeInternal({ wait });
 
-    // restore outputs
     this.outTexture = savedOutTexture;
     this.outView = savedOutView;
     this.width = savedWidth;
     this.height = savedHeight;
     this.outFormat = savedFormat;
 
-    // restore frame for full-res region and upsample
     this.setFrame({
       fullWidth: savedWidth,
       fullHeight: savedHeight,
-      tileWidth: w || savedWidth,
-      tileHeight: h || savedHeight,
-      originX: x || 0,
-      originY: y || 0,
+      tileWidth: tw,
+      tileHeight: th,
+      originX: baseX,
+      originY: baseY,
+      originZ: 0,
       layerIndex: this._dvFrame.getInt32(36, true) | 0,
       originXf: 0.0,
       originYf: 0.0,
     });
 
     await this._upsampleCoarseToOut({
-      srcX: baseX,
-      srcY: baseY,
       srcW: cW,
       srcH: cH,
-      dstX: x || 0,
-      dstY: y || 0,
-      dstW: w || this.width,
-      dstH: h || this.height,
+      dstX: baseX,
+      dstY: baseY,
+      dstW: tw,
+      dstH: th,
       wait,
     });
 
@@ -1665,10 +1859,12 @@ export class CloudComputeBuilder {
       throw new Error(
         "dispatchRectNoCoarse: createOutputTexture/setOutputView first.",
       );
-    const baseX = Math.max(0, Math.floor(x || 0)),
-      baseY = Math.max(0, Math.floor(y || 0));
-    const tw = Math.max(0, Math.floor(w || 0)),
-      th = Math.max(0, Math.floor(h || 0));
+
+    const baseX = Math.max(0, Math.floor(x ?? 0));
+    const baseY = Math.max(0, Math.floor(y ?? 0));
+    const tw = Math.max(0, Math.floor(w ?? this.width - baseX));
+    const th = Math.max(0, Math.floor(h ?? this.height - baseY));
+
     if (tw === 0 || th === 0) {
       this._lastHadWork = false;
       return this.outView;
@@ -1681,6 +1877,7 @@ export class CloudComputeBuilder {
       tileHeight: th,
       originX: baseX,
       originY: baseY,
+      originZ: 0,
       layerIndex: this._dvFrame.getInt32(36, true) | 0,
       originXf: 0.0,
       originYf: 0.0,
@@ -1698,87 +1895,29 @@ export class CloudComputeBuilder {
     return this.outView;
   }
 
-  async dispatchForBox({ padPx = 8, wait = false, coarseFactor = 1 } = {}) {
-    if (!this.outView)
-      throw new Error(
-        "dispatchForBox: createOutputTexture/setOutputView first.",
-      );
-    const view = {
-      camPos: [
-        this._dvView.getFloat32(0, true),
-        this._dvView.getFloat32(4, true),
-        this._dvView.getFloat32(8, true),
-      ],
-      right: [
-        this._dvView.getFloat32(16, true),
-        this._dvView.getFloat32(20, true),
-        this._dvView.getFloat32(24, true),
-      ],
-      up: [
-        this._dvView.getFloat32(32, true),
-        this._dvView.getFloat32(36, true),
-        this._dvView.getFloat32(40, true),
-      ],
-      fwd: [
-        this._dvView.getFloat32(48, true),
-        this._dvView.getFloat32(52, true),
-        this._dvView.getFloat32(56, true),
-      ],
-      fovYRad: this._dvView.getFloat32(64, true),
-      aspect: this._dvView.getFloat32(68, true),
-    };
-    const box = {
-      center: [
-        this._dvBox.getFloat32(0, true),
-        this._dvBox.getFloat32(4, true),
-        this._dvBox.getFloat32(8, true),
-      ],
-      half: [
-        this._dvBox.getFloat32(16, true),
-        this._dvBox.getFloat32(20, true),
-        this._dvBox.getFloat32(24, true),
-      ],
-    };
-    const rect = this._computeAABBScreenRect(
-      view,
-      box,
-      this.width,
-      this.height,
-      padPx,
-    );
-    if (!rect.visible) {
-      this._lastHadWork = false;
-      return null;
-    }
-    const cf = Math.max(1, coarseFactor | 0);
-    return await this.dispatchRect({
-      x: rect.x,
-      y: rect.y,
-      w: rect.w,
-      h: rect.h,
-      wait,
-      coarseFactor: cf,
-    });
-  }
-
   async dispatch({ wait = false, coarseFactor = 1 } = {}) {
     const cf = Math.max(1, coarseFactor | 0);
-    if (cf >= 2) {
+
+    if (cf >= 2 && this.outTexture) {
       const cW = Math.max(1, Math.ceil(this.width / cf));
       const cH = Math.max(1, Math.ceil(this.height / cf));
       this._ensureCoarseTexture(cW, cH, this.layers);
-      const savedFullW = this._reprojFullW || this.width,
-        savedFullH = this._reprojFullH || this.height;
-      const savedOutTexture = this.outTexture,
-        savedOutView = this.outView,
-        savedWidth = this.width,
-        savedHeight = this.height,
-        savedFormat = this.outFormat;
+
+      const savedFullW = this._reprojFullW || this.width;
+      const savedFullH = this._reprojFullH || this.height;
+
+      const savedOutTexture = this.outTexture;
+      const savedOutView = this.outView;
+      const savedWidth = this.width;
+      const savedHeight = this.height;
+      const savedFormat = this.outFormat;
+
       this.outTexture = this._coarseTexture;
       this.outView = this._coarseView;
       this.width = cW;
       this.height = cH;
-      this.outFormat = this._coarseTexture?.format || savedFormat;
+      this.outFormat = savedFormat;
+
       this.setFrame({
         fullWidth: cW,
         fullHeight: cH,
@@ -1786,27 +1925,30 @@ export class CloudComputeBuilder {
         tileHeight: cH,
         originX: 0,
         originY: 0,
+        originZ: 0,
         layerIndex: 0,
         originXf: 0.0,
         originYf: 0.0,
       });
-      const curFW = this._dvReproj.getUint32(32, true) || 0,
-        curFH = this._dvReproj.getUint32(36, true) || 0;
+
+      const curFW = this._dvReproj.getUint32(32, true) || 0;
+      const curFH = this._dvReproj.getUint32(36, true) || 0;
       if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
         this._dvReproj.setUint32(32, savedFullW >>> 0, true);
         this._dvReproj.setUint32(36, savedFullH >>> 0, true);
         this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
         this._bg0Dirty = true;
       }
+
       await this._dispatchComputeInternal({ wait });
+
       this.outTexture = savedOutTexture;
       this.outView = savedOutView;
       this.width = savedWidth;
       this.height = savedHeight;
       this.outFormat = savedFormat;
+
       await this._upsampleCoarseToOut({
-        srcX: 0,
-        srcY: 0,
         srcW: cW,
         srcH: cH,
         dstX: 0,
@@ -1815,9 +1957,11 @@ export class CloudComputeBuilder {
         dstH: this.height,
         wait,
       });
+
       this._lastHadWork = true;
       return this.outView;
     }
+
     await this._dispatchComputeInternal({ wait });
     this._lastHadWork = true;
     return this.outView;
@@ -1828,12 +1972,18 @@ export class CloudComputeBuilder {
       throw new Error(
         "Nothing to dispatch: createOutputTexture/setOutputView first.",
       );
+
     this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
     this._writeIfChanged("params", this.paramsBuffer, this._abParams);
-    this._writeIfChanged("offsets", this.offsetsBuffer, this._abOffsets);
+    this._writeIfChanged(
+      "ntransform",
+      this.nTransformBuffer,
+      this._abNTransform,
+    );
     this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
     this._writeIfChanged("perf", this.perfBuffer, this._abPerf);
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
+
     this._makeBindGroups();
 
     const enc = this.device.createCommandEncoder();
@@ -1854,10 +2004,13 @@ export class CloudComputeBuilder {
   }
 
   async _dispatchComputeInternal({ wait = false } = {}) {
-    // upload UBOs (including tuning)
     this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
     this._writeIfChanged("params", this.paramsBuffer, this._abParams);
-    this._writeIfChanged("offsets", this.offsetsBuffer, this._abOffsets);
+    this._writeIfChanged(
+      "ntransform",
+      this.nTransformBuffer,
+      this._abNTransform,
+    );
     this._writeIfChanged("frame", this.frameBuffer, this._abFrame);
     this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
     this._writeIfChanged("perf", this.perfBuffer, this._abPerf);
@@ -1877,7 +2030,211 @@ export class CloudComputeBuilder {
       await this.queue.onSubmittedWorkDone();
   }
 
-  // -------------------- render / preview blit --------------------
+  // -------------------- coarse helpers --------------------
+  _ensureCoarseTexture(w, h, layers = 1) {
+    if (
+      this._coarseTexture &&
+      this._coarseW === w &&
+      this._coarseH === h &&
+      this._coarseLayers === layers &&
+      this._coarseFormat === this.outFormat
+    ) {
+      return;
+    }
+
+    const old = this._coarseTexture;
+
+    this._coarseTexture = null;
+    this._coarseView = null;
+
+    if (old) {
+      try {
+        this._retireTexture(old);
+      } catch (_) {}
+    }
+
+    this._coarseW = w;
+    this._coarseH = h;
+    this._coarseLayers = layers;
+    this._coarseFormat = this.outFormat;
+
+    this._coarseTexture = this.device.createTexture({
+      size: [w, h, layers],
+      format: this.outFormat,
+      usage:
+        GPUTextureUsage.STORAGE_BINDING |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_SRC,
+    });
+
+    this._coarseView = this._coarseTexture.createView({
+      dimension: "2d-array",
+      arrayLayerCount: layers,
+    });
+
+    this._bg0Dirty = true;
+    this._bg1Dirty = true;
+  }
+
+  // -------------------- coarse upsample pipeline --------------------
+  _ensureUpsamplePipeline(format = this.outFormat) {
+    if (this._upsample && this._upsample.format === format)
+      return this._upsample;
+
+    const fmt = format || "rgba16float";
+    const wgsl = `
+      struct UpsampleParams {
+        srcW : u32,
+        srcH : u32,
+        dstX : u32,
+        dstY : u32,
+        dstW : u32,
+        dstH : u32,
+        layer: u32,
+        _pad0: u32,
+      }
+
+      @group(0) @binding(0) var samp : sampler;
+      @group(0) @binding(1) var srcTex : texture_2d_array<f32>;
+      @group(0) @binding(2) var dstTex : texture_storage_2d_array<${fmt}, write>;
+      @group(0) @binding(3) var<uniform> P : UpsampleParams;
+
+      @compute @workgroup_size(8, 8, 1)
+      fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+        let x = gid.x;
+        let y = gid.y;
+        if (x >= P.dstW || y >= P.dstH) { return; }
+
+        let uv = (vec2<f32>(f32(x) + 0.5, f32(y) + 0.5)) / vec2<f32>(max(f32(P.dstW), 1.0), max(f32(P.dstH), 1.0));
+        let c = textureSampleLevel(srcTex, samp, uv, i32(P.layer), 0.0);
+
+        let outX = i32(P.dstX + x);
+        let outY = i32(P.dstY + y);
+        textureStore(dstTex, vec2<i32>(outX, outY), i32(P.layer), c);
+      }
+    `;
+
+    const mod = this.device.createShaderModule({ code: wgsl });
+
+    const bgl = this.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.COMPUTE,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: "float", viewDimension: "2d-array" },
+        },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: {
+            access: "write-only",
+            format: fmt,
+            viewDimension: "2d-array",
+          },
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: { type: "uniform" },
+        },
+      ],
+    });
+
+    const pipe = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+      compute: { module: mod, entryPoint: "main" },
+    });
+
+    const samp = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
+
+    this._upsample = { pipe, bgl, samp, format: fmt, bgCache: new Map() };
+    return this._upsample;
+  }
+
+  _getOrCreateUpsampleBindGroup(srcView, dstView) {
+    const u = this._upsample;
+    const key = `${this._getResId(srcView)}|${this._getResId(dstView)}|${this._getResId(u.samp)}|${this._getResId(this._upsampleParamsBuffer)}`;
+    const map = u.bgCache;
+    if (map.has(key)) return map.get(key);
+    const bg = this.device.createBindGroup({
+      layout: u.bgl,
+      entries: [
+        { binding: 0, resource: u.samp },
+        { binding: 1, resource: srcView },
+        { binding: 2, resource: dstView },
+        { binding: 3, resource: { buffer: this._upsampleParamsBuffer } },
+      ],
+    });
+    map.set(key, bg);
+    if (map.size > 16) {
+      const firstKey = map.keys().next().value;
+      map.delete(firstKey);
+    }
+    return bg;
+  }
+
+  async _upsampleCoarseToOut({
+    srcW,
+    srcH,
+    dstX,
+    dstY,
+    dstW,
+    dstH,
+    wait = false,
+  } = {}) {
+    if (!this._coarseView || !this.outView) return;
+
+    const u = this._ensureUpsamplePipeline(this.outFormat);
+    const dv = this._dvUpsample;
+
+    dv.setUint32(0, srcW >>> 0, true);
+    dv.setUint32(4, srcH >>> 0, true);
+    dv.setUint32(8, dstX >>> 0, true);
+    dv.setUint32(12, dstY >>> 0, true);
+    dv.setUint32(16, dstW >>> 0, true);
+    dv.setUint32(20, dstH >>> 0, true);
+
+    const layer = (this._dvFrame.getInt32(36, true) | 0) >>> 0;
+    dv.setUint32(24, layer >>> 0, true);
+    dv.setUint32(28, 0, true);
+
+    this.queue.writeBuffer(
+      this._upsampleParamsBuffer,
+      0,
+      new Uint8Array(this._abUpsample),
+    );
+
+    const bg = this._getOrCreateUpsampleBindGroup(
+      this._coarseView,
+      this.outView,
+    );
+
+    const wgX = Math.max(1, Math.ceil(dstW / 8));
+    const wgY = Math.max(1, Math.ceil(dstH / 8));
+
+    const enc = this.device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(u.pipe);
+    pass.setBindGroup(0, bg);
+    pass.dispatchWorkgroups(wgX, wgY, 1);
+    pass.end();
+    this.queue.submit([enc.finish()]);
+
+    if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+      await this.queue.onSubmittedWorkDone();
+  }
+
+  // -------------------- preview render --------------------
   _ensureRenderPipeline(format = "bgra8unorm") {
     if (this._render && this._render.format === format) return this._render;
     const mod = this.device.createShaderModule({ code: previewWGSL });
@@ -2007,6 +2364,7 @@ export class CloudComputeBuilder {
     };
 
     let camPos, right, up, fwd, fovYRad, aspect, sunDir;
+
     if (
       opts.cam &&
       opts.cam.camPos &&
@@ -2022,8 +2380,8 @@ export class CloudComputeBuilder {
       aspect = opts.cam.aspect ?? 1.0;
       sunDir = opts.sunDir ?? [0, 1, 0];
     } else {
-      const yaw = rad(opts.yawDeg ?? 0),
-        pitch = rad(opts.pitchDeg ?? 0);
+      const yaw = rad(opts.yawDeg ?? 0);
+      const pitch = rad(opts.pitchDeg ?? 0);
       const cp = Math.cos(pitch),
         sp = Math.sin(pitch);
       const cy = Math.cos(yaw),
@@ -2037,8 +2395,8 @@ export class CloudComputeBuilder {
       camPos = [-fwd[0] * zoom, -fwd[1] * zoom, -fwd[2] * zoom];
       fovYRad = rad(opts.fovYDeg ?? 60);
       aspect = opts.aspect ?? 1.0;
-      const sAz = rad(opts.sunAzimuthDeg ?? 45),
-        sEl = rad(opts.sunElevationDeg ?? 20);
+      const sAz = rad(opts.sunAzimuthDeg ?? 45);
+      const sEl = rad(opts.sunElevationDeg ?? 20);
       const cel = Math.cos(sEl);
       sunDir = norm([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
     }
@@ -2055,18 +2413,20 @@ export class CloudComputeBuilder {
     dv.setFloat32(84, aspect, true);
     dv.setFloat32(88, exposure, true);
     dv.setFloat32(92, sunBloom, true);
-    wv3(96, opts.sunDir ?? [0, 1, 0]);
+    wv3(96, sunDir);
     wv3(112, skyColor);
+
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }
 
   _ensureCanvasConfigured(canvas, format = "bgra8unorm") {
     if (!canvas) throw new Error("_ensureCanvasConfigured: canvas required");
     const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
-    const clientW = Math.max(1, Math.round(canvas.clientWidth)),
-      clientH = Math.max(1, Math.round(canvas.clientHeight));
-    const displayW = Math.max(1, Math.floor(clientW * dpr)),
-      displayH = Math.max(1, Math.floor(clientH * dpr));
+    const clientW = Math.max(1, Math.round(canvas.clientWidth));
+    const clientH = Math.max(1, Math.round(canvas.clientHeight));
+    const displayW = Math.max(1, Math.floor(clientW * dpr));
+    const displayH = Math.max(1, Math.floor(clientH * dpr));
+
     let ctxRec = this._ctxCache.get(canvas);
     if (!ctxRec) {
       const ctx = canvas.getContext("webgpu");
@@ -2075,11 +2435,13 @@ export class CloudComputeBuilder {
       this._ctxCache.set(canvas, ctxRec);
     }
     const { ctx } = ctxRec;
+
     let state = this._canvasStates.get(canvas);
     if (!state) {
       state = { lastSize: [0, 0], hasContent: false };
       this._canvasStates.set(canvas, state);
     }
+
     if (
       state.lastSize[0] !== displayW ||
       state.lastSize[1] !== displayH ||
@@ -2098,78 +2460,6 @@ export class CloudComputeBuilder {
     return { ctx, state };
   }
 
-  renderToCanvasWorld(
-    canvas,
-    {
-      layerIndex = 0,
-      cam,
-      sunDir = [0, 1, 0],
-      exposure = 1.2,
-      skyColor = [0.55, 0.7, 0.95],
-      sunBloom = 0.0,
-    } = {},
-  ) {
-    if (!this.outView)
-      throw new Error(
-        "Nothing to render: run dispatch() first or setOutputView().",
-      );
-    const { pipe, bgl, samp, format } =
-      this._ensureRenderPipeline("bgra8unorm");
-    const { ctx, state } = this._ensureCanvasConfigured(canvas, format);
-
-    if (!this._lastHadWork || !this.outView) {
-      const enc = this.device.createCommandEncoder();
-      const tex = ctx.getCurrentTexture();
-      const pass = enc.beginRenderPass({
-        colorAttachments: [
-          {
-            view: tex.createView(),
-            loadOp: "clear",
-            clearValue: {
-              r: skyColor[0],
-              g: skyColor[1],
-              b: skyColor[2],
-              a: 1,
-            },
-            storeOp: "store",
-          },
-        ],
-      });
-      pass.end();
-      this.queue.submit([enc.finish()]);
-      state.hasContent = true;
-      return;
-    }
-
-    this._writeRenderUniforms({
-      layerIndex,
-      cam,
-      sunDir,
-      exposure,
-      skyColor,
-      sunBloom,
-    });
-    const bundle = this._getOrCreateRenderBundle(canvas, pipe, bgl, samp);
-
-    const enc = this.device.createCommandEncoder();
-    const tex = ctx.getCurrentTexture();
-    const loadOp = state.hasContent ? "load" : "clear";
-    const pass = enc.beginRenderPass({
-      colorAttachments: [
-        {
-          view: tex.createView(),
-          loadOp,
-          clearValue: { r: skyColor[0], g: skyColor[1], b: skyColor[2], a: 1 },
-          storeOp: "store",
-        },
-      ],
-    });
-    pass.executeBundles([bundle]);
-    pass.end();
-    this.queue.submit([enc.finish()]);
-    state.hasContent = true;
-  }
-
   renderToCanvas(canvas, opts = {}) {
     if (!this.outView)
       throw new Error(
@@ -2177,6 +2467,7 @@ export class CloudComputeBuilder {
       );
     const { pipe, bgl, samp, format } =
       this._ensureRenderPipeline("bgra8unorm");
+
     if (opts.displayWidth || opts.displayHeight) {
       const w =
         opts.displayWidth ||
@@ -2188,8 +2479,10 @@ export class CloudComputeBuilder {
       canvas.style.height = `${Math.max(1, Math.floor(h))}px`;
       canvas.style.removeProperty("aspect-ratio");
     }
+
     const { ctx, state } = this._ensureCanvasConfigured(canvas, format);
     const skyColor = opts.skyColor ?? [0.55, 0.7, 0.95];
+
     if (!this._lastHadWork || !this.outView) {
       const enc = this.device.createCommandEncoder();
       const tex = ctx.getCurrentTexture();
@@ -2213,8 +2506,10 @@ export class CloudComputeBuilder {
       state.hasContent = true;
       return;
     }
+
     this._writeRenderUniforms(opts);
     const bundle = this._getOrCreateRenderBundle(canvas, pipe, bgl, samp);
+
     const enc = this.device.createCommandEncoder();
     const tex = ctx.getCurrentTexture();
     const loadOp = state.hasContent ? "load" : "clear";
@@ -2232,225 +2527,5 @@ export class CloudComputeBuilder {
     pass.end();
     this.queue.submit([enc.finish()]);
     state.hasContent = true;
-  }
-
-  // -------------------- coarse helpers --------------------
-  _ensureCoarseTexture(w, h, layers = 1) {
-    if (
-      this._coarseTexture &&
-      this._coarseW === w &&
-      this._coarseH === h &&
-      this._coarseLayers === layers
-    )
-      return;
-    try {
-      if (this._coarseTexture?.destroy) this._coarseTexture.destroy();
-    } catch (_) {}
-    this._coarseW = w;
-    this._coarseH = h;
-    this._coarseLayers = layers;
-    this._coarseTexture = this.device.createTexture({
-      size: [w, h, layers],
-      format: this.outFormat,
-      usage:
-        GPUTextureUsage.STORAGE_BINDING |
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_SRC,
-    });
-    this._coarseView = this._coarseTexture.createView({
-      dimension: "2d-array",
-      arrayLayerCount: layers,
-    });
-    this._bg0Dirty = true;
-    this._bg1Dirty = true;
-  }
-
-  // upsample pipeline for coarse->full
-  _ensureUpsamplePipeline(format = this.outFormat) {
-    if (this._upsample && this._upsample.format === format)
-      return this._upsample;
-    const blitWGSL = `
-      struct RenderParams { layerIndex : u32, _pad:u32, _pad2:u32, _pad3:u32, };
-      @group(0) @binding(0) var samp : sampler;
-      @group(0) @binding(1) var tex : texture_2d_array<f32>;
-      @group(0) @binding(2) var<uniform> R : RenderParams;
-      struct VSOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
-      @vertex fn vs_main(@builtin(vertex_index) vid : u32) -> VSOut {
-        var positions = array<vec2<f32>, 6>(vec2<f32>(-1.0,-1.0), vec2<f32>( 1.0,-1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(-1.0, 1.0), vec2<f32>( 1.0,-1.0), vec2<f32>( 1.0, 1.0));
-        var uvs = array<vec2<f32>, 6>(vec2<f32>(0.0,1.0), vec2<f32>(1.0,1.0), vec2<f32>(0.0,0.0), vec2<f32>(0.0,0.0), vec2<f32>(1.0,1.0), vec2<f32>(1.0,0.0));
-        var o : VSOut; o.pos = vec4<f32>(positions[vid], 0.0, 1.0); o.uv = uvs[vid]; return o;
-      }
-      @fragment fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
-        let layer = i32(R.layerIndex);
-        let c = textureSampleLevel(tex, samp, in.uv, layer, 0.0);
-        return c;
-      }
-    `;
-    const mod = this.device.createShaderModule({ code: blitWGSL });
-    const bgl = this.device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.FRAGMENT,
-          sampler: { type: "filtering" },
-        },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: { viewDimension: "2d-array" },
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.FRAGMENT,
-          buffer: { type: "uniform" },
-        },
-      ],
-    });
-    const pipe = this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
-      vertex: { module: mod, entryPoint: "vs_main" },
-      fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] },
-      primitive: { topology: "triangle-list" },
-    });
-    const samp = this.device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      addressModeU: "clamp-to-edge",
-      addressModeV: "clamp-to-edge",
-    });
-    this._upsample = { pipe, bgl, samp, format };
-    return this._upsample;
-  }
-
-  _getOrCreateUpsampleBindGroup(coarseView, layerIndex) {
-    const key = this._getResId(coarseView) + "|" + (layerIndex | 0);
-    if (this._upsampleBgCache.has(key)) return this._upsampleBgCache.get(key);
-    const up = this._ensureUpsamplePipeline(this.outFormat);
-    const bg = this.device.createBindGroup({
-      layout: up.bgl,
-      entries: [
-        { binding: 0, resource: up.samp },
-        { binding: 1, resource: coarseView },
-        {
-          binding: 2,
-          resource: { buffer: this.renderParams, offset: 0, size: 128 },
-        },
-      ],
-    });
-    this._upsampleBgCache.set(key, bg);
-    if (this._upsampleBgCache.size > 32) {
-      const firstKey = this._upsampleBgCache.keys().next().value;
-      this._upsampleBgCache.delete(firstKey);
-    }
-    return bg;
-  }
-
-  async _upsampleCoarseToOut({
-    srcX = 0,
-    srcY = 0,
-    srcW,
-    srcH,
-    dstX = 0,
-    dstY = 0,
-    dstW,
-    dstH,
-    wait = false,
-  } = {}) {
-    if (!this._coarseView || !this.outTexture) return;
-    const up = this._ensureUpsamplePipeline(this.outFormat);
-    const enc = this.device.createCommandEncoder();
-    for (let layer = 0; layer < this.layers; ++layer) {
-      this._dvRender.setUint32(0, layer >>> 0, true);
-      this._writeIfChanged("render", this.renderParams, this._abRender);
-      const bg = this._getOrCreateUpsampleBindGroup(this._coarseView, layer);
-      const colorView = this.outTexture.createView({
-        baseArrayLayer: layer,
-        arrayLayerCount: 1,
-      });
-      const pass = enc.beginRenderPass({
-        colorAttachments: [
-          { view: colorView, loadOp: "load", storeOp: "store" },
-        ],
-      });
-      pass.setPipeline(up.pipe);
-      pass.setBindGroup(0, bg);
-      pass.draw(6, 1, 0, 0);
-      pass.end();
-    }
-    this.queue.submit([enc.finish()]);
-    if (wait && typeof this.queue.onSubmittedWorkDone === "function")
-      await this.queue.onSubmittedWorkDone();
-  }
-
-  // -------------------- cleanup --------------------
-  destroy() {
-    const toDestroy = [
-      "optionsBuffer",
-      "paramsBuffer",
-      "offsetsBuffer",
-      "dummyBuffer",
-      "posBuffer",
-      "frameBuffer",
-      "lightBuffer",
-      "viewBuffer",
-      "boxBuffer",
-      "samplingBuffer",
-      "reprojBuffer",
-      "perfBuffer",
-      "renderParams",
-      "tuningBuffer",
-    ];
-    for (const k of toDestroy)
-      try {
-        if (this[k]?.destroy) this[k].destroy();
-      } catch (_) {
-      } finally {
-        this[k] = null;
-      }
-    try {
-      if (this.outTexture?.destroy) this.outTexture.destroy();
-    } catch (_) {}
-    try {
-      if (this._coarseTexture?.destroy) this._coarseTexture.destroy();
-    } catch (_) {}
-    this.outTexture = null;
-    this.outView = null;
-    this._coarseTexture = null;
-    this._coarseView = null;
-
-    if (this._ownsBlue && this.blueTex)
-      try {
-        this.blueTex.destroy();
-      } catch (_) {}
-    this.blueTex = null;
-    this.blueView = null;
-    this._ownsBlue = false;
-
-    try {
-      if (this._dummy2DMotion?.destroy) this._dummy2DMotion.destroy();
-    } catch (_) {}
-    try {
-      if (this._dummy2DDepth?.destroy) this._dummy2DDepth.destroy();
-    } catch (_) {}
-    try {
-      if (this._dummyHistoryPrev?.destroy) this._dummyHistoryPrev.destroy();
-    } catch (_) {}
-    try {
-      if (this._dummyHistoryOut?.destroy) this._dummyHistoryOut.destroy();
-    } catch (_) {}
-
-    this._bg0Cache.clear();
-    this._bg0Keys.length = 0;
-    this._bg1Cache.clear();
-    this._bg1Keys.length = 0;
-    this._render = null;
-    this._currentBg0 = null;
-    this._currentBg1 = null;
-    this._canvasStates = new WeakMap();
-    this._ctxCache = new WeakMap();
-    this._renderBgCache = new WeakMap();
-    this._renderBundleCache = new WeakMap();
-    this._upsampleBgCache.clear();
-    this._lastSums.clear();
   }
 }

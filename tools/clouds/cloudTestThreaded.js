@@ -9,7 +9,12 @@ import wrkr from "./cloudTest.worker.js";
 let worker;
 
 // Constants (mirror worker)
-const SHAPE_SIZE = 128, DETAIL_SIZE = 32, WEATHER_W = 512, WEATHER_H = 512, BN_W = 256, BN_H = 256;
+const SHAPE_SIZE = 128,
+  DETAIL_SIZE = 32,
+  WEATHER_W = 512,
+  WEATHER_H = 512,
+  BN_W = 256,
+  BN_H = 256;
 const DBG_SIZE = 224;
 const DPR = () => Math.max(1, Math.floor(window.devicePixelRatio || 1));
 
@@ -19,7 +24,7 @@ let ENTRY_POINTS = [];
 const preview = {
   cam: { x: -1, y: 0, z: -1, yawDeg: 35, pitchDeg: 1, fovYDeg: 60 },
   exposure: 1.35,
-  sky: [0.55, 0.70, 0.95],
+  sky: [0.55, 0.7, 0.95],
   layer: 0,
   sun: { azDeg: 45, elDeg: 22, bloom: 0.0 },
 };
@@ -41,9 +46,28 @@ const weatherParams = {
   warpAmp: 0.0,
 };
 
-// Weather G channel params
+// Weather params (G channel)
 const billowParams = {
   enabled: true,
+  mode: "computeBillow",
+  seed: 123456789000,
+  scale: 1.0,
+  zoom: 2.0,
+  freq: 1.5,
+  octaves: 4,
+  lacunarity: 2.0,
+  seedAngle: Math.PI / 2,
+  gain: 0.5,
+  threshold: 0.0,
+  time: 0.0,
+  voroMode: 0,
+  edgeK: 0.0,
+  warpAmp: 0.0,
+};
+
+// Weather params (B channel)
+const weatherBParams = {
+  enabled: false,
   mode: "computeBillow",
   seed: 123456789000,
   scale: 1.0,
@@ -104,8 +128,16 @@ const blueParams = { seed: (Date.now() & 0xffffffff) >>> 0 };
 const tileTransforms = {
   shapeOffset: [0.0, 0.0, 0.0],
   detailOffset: [0.0, 0.0, 0.0],
+  weatherOffset: [0.0, 0.0, 0.0],
+
   shapeScale: 0.1,
   detailScale: 1.0,
+  weatherScale: 1.0,
+
+  shapeAxisScale: [1.0, 1.0, 1.0],
+  detailAxisScale: [1.0, 1.0, 1.0],
+  weatherAxisScale: [1.0, 1.0, 1.0],
+
   shapeVel: [0.2, 0.0, 0.0],
   detailVel: [-0.02, 0.0, 0.0],
 };
@@ -129,11 +161,17 @@ const u32 = (id, fallback) => {
 };
 
 const safeClone = (o) => {
-  try { return JSON.parse(JSON.stringify(o)); } catch { return Object.assign({}, o); }
+  try {
+    return JSON.parse(JSON.stringify(o));
+  } catch {
+    return Object.assign({}, o);
+  }
 };
 
 function setLog(...args) {
-  try { console.log("[UI]", ...args); } catch {}
+  try {
+    console.log("[UI]", ...args);
+  } catch {}
 }
 
 // ---- RPC plumbing ----
@@ -215,7 +253,7 @@ function populateSelect(id, entries, defaultValue, opts = {}) {
   }
 
   const hasDefault = list.includes(defaultValue);
-  el.value = hasDefault ? defaultValue : (allowNone ? "" : (list[0] || ""));
+  el.value = hasDefault ? defaultValue : allowNone ? "" : list[0] || "";
 }
 
 function readMode(id, fallback) {
@@ -229,30 +267,33 @@ function readMode(id, fallback) {
 let lastTuningSent = null;
 function tuningChanged(curr, prev) {
   if (!prev) return true;
-  const k1 = Object.keys(curr), k2 = Object.keys(prev);
+  const k1 = Object.keys(curr),
+    k2 = Object.keys(prev);
   if (k1.length !== k2.length) return true;
   for (const k of k1) if (curr[k] !== prev[k]) return true;
   return false;
 }
-function cloneTuning(t) { return Object.assign({}, t); }
+function cloneTuning(t) {
+  return Object.assign({}, t);
+}
 
 function readTuning() {
   return {
     maxSteps: +($("t-maxSteps")?.value || 256) | 0,
     minStep: +($("t-minStep")?.value || 0.003),
-    maxStep: +($("t-maxStep")?.value || 0.10),
+    maxStep: +($("t-maxStep")?.value || 0.1),
     sunSteps: +($("t-sunSteps")?.value || 4) | 0,
     phaseJitter: +($("t-phaseJitter")?.value || 1.0),
     stepJitter: +($("t-stepJitter")?.value || 0.08),
     baseJitterFrac: +($("t-baseJitter")?.value || 0.15),
-    topJitterFrac: +($("t-topJitter")?.value || 0.10),
+    topJitterFrac: +($("t-topJitter")?.value || 0.1),
     lodBiasWeather: +($("t-lodBiasWeather")?.value || 1.5),
     nearFluffDist: +($("t-nearFluffDist")?.value || 60.0),
     nearDensityMult: +($("t-nearDensityMult")?.value || 2.5),
     farStart: +($("t-farStart")?.value || 800.0),
     farFull: +($("t-farFull")?.value || 2500.0),
-    raySmoothDens: +($("t-raySmoothDens")?.value || 0.50),
-    raySmoothSun: +($("t-raySmoothSun")?.value || 0.50),
+    raySmoothDens: +($("t-raySmoothDens")?.value || 0.5),
+    raySmoothSun: +($("t-raySmoothSun")?.value || 0.5),
   };
 }
 
@@ -265,12 +306,14 @@ function sendTuningIfChanged() {
     const t = readTuning();
     if (!tuningChanged(t, lastTuningSent)) return;
 
-    setTuningRPC(t).then((res) => {
-      lastTuningSent = cloneTuning(t);
-      if (res && res.tuning) setLog("worker ack tuning", res.tuning);
-    }).catch((err) => {
-      console.warn("sendTuningIfChanged: setTuningRPC failed", err);
-    });
+    setTuningRPC(t)
+      .then((res) => {
+        lastTuningSent = cloneTuning(t);
+        if (res && res.tuning) setLog("worker ack tuning", res.tuning);
+      })
+      .catch((err) => {
+        console.warn("sendTuningIfChanged: setTuningRPC failed", err);
+      });
   } catch (e) {
     console.warn("sendTuningIfChanged error", e);
   }
@@ -298,17 +341,17 @@ function readCloudParams() {
   return {
     globalCoverage: num("p-coverage", 1),
     globalDensity: num("p-density", 100),
-    cloudAnvilAmount: num("p-anvil", 0.10),
+    cloudAnvilAmount: num("p-anvil", 0.1),
     cloudBeer: num("p-beer", 6),
     attenuationClamp: num("p-clamp", 0.15),
-    inScatterG: num("p-ins", 0.70),
+    inScatterG: num("p-ins", 0.7),
     silverIntensity: num("p-sI", 0.25),
     silverExponent: num("p-sE", 16.0),
-    outScatterG: num("p-outs", 0.20),
-    inVsOut: num("p-ivo", 0.30),
-    outScatterAmbientAmt: num("p-ambOut", 1.00),
+    outScatterG: num("p-outs", 0.2),
+    inVsOut: num("p-ivo", 0.3),
+    outScatterAmbientAmt: num("p-ambOut", 1.0),
     ambientMinimum: num("p-ambMin", 0.25),
-    sunColor: [1.0, 0.8, 0.5],
+    sunColor: [1.0, 1.0, 1.0],
     sunAzDeg: sunAz,
     sunElDeg: sunEl,
     sunBloom,
@@ -338,7 +381,10 @@ function readWeatherG() {
   billowParams.scale = num("we-billow-scale", billowParams.scale);
   billowParams.zoom = num("we-billow-zoom", billowParams.zoom);
   billowParams.freq = num("we-billow-freq", billowParams.freq);
-  billowParams.octaves = Math.max(1, num("we-billow-oct", billowParams.octaves) | 0);
+  billowParams.octaves = Math.max(
+    1,
+    num("we-billow-oct", billowParams.octaves) | 0,
+  );
   billowParams.lacunarity = num("we-billow-lac", billowParams.lacunarity);
   billowParams.gain = num("we-billow-gain", billowParams.gain);
   billowParams.threshold = num("we-billow-thr", billowParams.threshold);
@@ -347,6 +393,63 @@ function readWeatherG() {
   billowParams.voroMode = u32("we-billow-voroMode", billowParams.voroMode);
   billowParams.edgeK = num("we-billow-edgeK", billowParams.edgeK);
   billowParams.warpAmp = num("we-billow-warpAmp", billowParams.warpAmp);
+}
+
+function readWeatherB() {
+  weatherBParams.enabled = !!$("we-bandb-enable")?.checked;
+  weatherBParams.mode = readMode("we-bandb-mode", weatherBParams.mode);
+  weatherBParams.seed = u32("we-bandb-seed", weatherBParams.seed);
+  weatherBParams.scale = num("we-bandb-scale", weatherBParams.scale);
+  weatherBParams.zoom = num("we-bandb-zoom", weatherBParams.zoom);
+  weatherBParams.freq = num("we-bandb-freq", weatherBParams.freq);
+  weatherBParams.octaves = Math.max(
+    1,
+    num("we-bandb-oct", weatherBParams.octaves) | 0,
+  );
+  weatherBParams.lacunarity = num("we-bandb-lac", weatherBParams.lacunarity);
+  weatherBParams.gain = num("we-bandb-gain", weatherBParams.gain);
+  weatherBParams.threshold = num("we-bandb-thr", weatherBParams.threshold);
+  weatherBParams.seedAngle = num(
+    "we-bandb-seedAngle",
+    weatherBParams.seedAngle,
+  );
+  weatherBParams.time = num("we-bandb-time", weatherBParams.time);
+  weatherBParams.voroMode = u32("we-bandb-voroMode", weatherBParams.voroMode);
+  weatherBParams.edgeK = num("we-bandb-edgeK", weatherBParams.edgeK);
+  weatherBParams.warpAmp = num("we-bandb-warpAmp", weatherBParams.warpAmp);
+}
+
+function readWeatherTransform() {
+  tileTransforms.weatherScale = num("we-scale", tileTransforms.weatherScale);
+
+  tileTransforms.weatherOffset[0] = num(
+    "we-pos-x",
+    tileTransforms.weatherOffset[0],
+  );
+  tileTransforms.weatherOffset[1] = num(
+    "we-pos-y",
+    tileTransforms.weatherOffset[1],
+  );
+  tileTransforms.weatherOffset[2] = num(
+    "we-pos-z",
+    tileTransforms.weatherOffset[2],
+  );
+
+  tileTransforms.weatherAxisScale = tileTransforms.weatherAxisScale || [
+    1, 1, 1,
+  ];
+  tileTransforms.weatherAxisScale[0] = num(
+    "we-axis-x",
+    tileTransforms.weatherAxisScale[0],
+  );
+  tileTransforms.weatherAxisScale[1] = num(
+    "we-axis-y",
+    tileTransforms.weatherAxisScale[1],
+  );
+  tileTransforms.weatherAxisScale[2] = num(
+    "we-axis-z",
+    tileTransforms.weatherAxisScale[2],
+  );
 }
 
 function readBlue() {
@@ -376,14 +479,37 @@ function readShape() {
 
 function readShapeTransform() {
   tileTransforms.shapeScale = num("sh-scale", tileTransforms.shapeScale);
-  tileTransforms.shapeOffset[0] = num("sh-pos-x", tileTransforms.shapeOffset[0]);
-  tileTransforms.shapeOffset[1] = num("sh-pos-y", tileTransforms.shapeOffset[1]);
-  tileTransforms.shapeOffset[2] = num("sh-pos-z", tileTransforms.shapeOffset[2]);
+  tileTransforms.shapeOffset[0] = num(
+    "sh-pos-x",
+    tileTransforms.shapeOffset[0],
+  );
+  tileTransforms.shapeOffset[1] = num(
+    "sh-pos-y",
+    tileTransforms.shapeOffset[1],
+  );
+  tileTransforms.shapeOffset[2] = num(
+    "sh-pos-z",
+    tileTransforms.shapeOffset[2],
+  );
 
   tileTransforms.shapeVel = tileTransforms.shapeVel || [0, 0, 0];
   tileTransforms.shapeVel[0] = num("sh-vel-x", tileTransforms.shapeVel[0]);
   tileTransforms.shapeVel[1] = num("sh-vel-y", tileTransforms.shapeVel[1]);
   tileTransforms.shapeVel[2] = num("sh-vel-z", tileTransforms.shapeVel[2]);
+
+  tileTransforms.shapeAxisScale = tileTransforms.shapeAxisScale || [1, 1, 1];
+  tileTransforms.shapeAxisScale[0] = num(
+    "sh-axis-x",
+    tileTransforms.shapeAxisScale[0],
+  );
+  tileTransforms.shapeAxisScale[1] = num(
+    "sh-axis-y",
+    tileTransforms.shapeAxisScale[1],
+  );
+  tileTransforms.shapeAxisScale[2] = num(
+    "sh-axis-z",
+    tileTransforms.shapeAxisScale[2],
+  );
 }
 
 function readDetail() {
@@ -407,14 +533,37 @@ function readDetail() {
 
 function readDetailTransform() {
   tileTransforms.detailScale = num("de-scale", tileTransforms.detailScale);
-  tileTransforms.detailOffset[0] = num("de-pos-x", tileTransforms.detailOffset[0]);
-  tileTransforms.detailOffset[1] = num("de-pos-y", tileTransforms.detailOffset[1]);
-  tileTransforms.detailOffset[2] = num("de-pos-z", tileTransforms.detailOffset[2]);
+  tileTransforms.detailOffset[0] = num(
+    "de-pos-x",
+    tileTransforms.detailOffset[0],
+  );
+  tileTransforms.detailOffset[1] = num(
+    "de-pos-y",
+    tileTransforms.detailOffset[1],
+  );
+  tileTransforms.detailOffset[2] = num(
+    "de-pos-z",
+    tileTransforms.detailOffset[2],
+  );
 
   tileTransforms.detailVel = tileTransforms.detailVel || [0, 0, 0];
   tileTransforms.detailVel[0] = num("de-vel-x", tileTransforms.detailVel[0]);
   tileTransforms.detailVel[1] = num("de-vel-y", tileTransforms.detailVel[1]);
   tileTransforms.detailVel[2] = num("de-vel-z", tileTransforms.detailVel[2]);
+
+  tileTransforms.detailAxisScale = tileTransforms.detailAxisScale || [1, 1, 1];
+  tileTransforms.detailAxisScale[0] = num(
+    "de-axis-x",
+    tileTransforms.detailAxisScale[0],
+  );
+  tileTransforms.detailAxisScale[1] = num(
+    "de-axis-y",
+    tileTransforms.detailAxisScale[1],
+  );
+  tileTransforms.detailAxisScale[2] = num(
+    "de-axis-z",
+    tileTransforms.detailAxisScale[2],
+  );
 }
 
 function readPreview() {
@@ -444,9 +593,13 @@ function getReprojPayload() {
 
 function ensureCoarseInPayload(payload) {
   if (!payload) return payload;
-  if (payload.reproj && typeof payload.reproj.coarseFactor === "number") payload.coarseFactor = payload.reproj.coarseFactor;
-  else if (reprojEnabled) { const rp = getReprojPayload(); payload.reproj = payload.reproj || rp; payload.coarseFactor = rp.coarseFactor; }
-  else payload.coarseFactor = payload.coarseFactor || 4;
+  if (payload.reproj && typeof payload.reproj.coarseFactor === "number")
+    payload.coarseFactor = payload.reproj.coarseFactor;
+  else if (reprojEnabled) {
+    const rp = getReprojPayload();
+    payload.reproj = payload.reproj || rp;
+    payload.coarseFactor = rp.coarseFactor;
+  } else payload.coarseFactor = payload.coarseFactor || 4;
   return payload;
 }
 
@@ -461,15 +614,27 @@ function attachByIds(ids, handler) {
 }
 
 function attachTuningInputs() {
-  const inputs = Array.from(document.querySelectorAll('input[id^="t-"], select[id^="t-"], textarea[id^="t-"]'));
+  const inputs = Array.from(
+    document.querySelectorAll(
+      'input[id^="t-"], select[id^="t-"], textarea[id^="t-"]',
+    ),
+  );
   if (!inputs.length) return;
   inputs.forEach((inp) => {
-    inp.addEventListener("input", () => { sendTuningIfChanged(); });
-    inp.addEventListener("change", () => { sendTuningIfChanged(); });
+    inp.addEventListener("input", () => {
+      sendTuningIfChanged();
+    });
+    inp.addEventListener("change", () => {
+      sendTuningIfChanged();
+    });
   });
 }
 
-async function runAfterBakeAndTuning(bakeRpcType, bakePayload = {}, extraPayload = {}) {
+async function runAfterBakeAndTuning(
+  bakeRpcType,
+  bakePayload = {},
+  extraPayload = {},
+) {
   setBusy(true, "Baking...");
   try {
     await rpc(bakeRpcType, safeClone(bakePayload));
@@ -477,15 +642,19 @@ async function runAfterBakeAndTuning(bakeRpcType, bakePayload = {}, extraPayload
     readPreview();
 
     const cloudParams = readCloudParams();
-    const payload = Object.assign({
-      weatherParams: safeClone(weatherParams),
-      billowParams: safeClone(billowParams),
-      shapeParams: safeClone(shapeParams),
-      detailParams: safeClone(detailParams),
-      tileTransforms: safeClone(tileTransforms),
-      preview: safeClone(preview),
-      cloudParams,
-    }, extraPayload || {});
+    const payload = Object.assign(
+      {
+        weatherParams: safeClone(weatherParams),
+        billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
+        shapeParams: safeClone(shapeParams),
+        detailParams: safeClone(detailParams),
+        tileTransforms: safeClone(tileTransforms),
+        preview: safeClone(preview),
+        cloudParams,
+      },
+      extraPayload || {},
+    );
 
     if (reprojEnabled) payload.reproj = getReprojPayload();
     ensureCoarseInPayload(payload);
@@ -503,12 +672,20 @@ async function runFrameEnsuringTuning(payload = {}) {
 
 // ---- UI busy indicator ----
 function setBusy(on, msg = "Working...") {
-  const ov = $("busyOverlay"), m = $("busyMsg");
+  const ov = $("busyOverlay"),
+    m = $("busyMsg");
   if (!ov) return;
   if (m) m.textContent = msg;
   ov.style.display = on ? "flex" : "none";
 
-  ["bake-weather", "bake-blue", "bake-shape128", "bake-detail32", "rebake-all", "render"].forEach((id) => {
+  [
+    "bake-weather",
+    "bake-blue",
+    "bake-shape128",
+    "bake-detail32",
+    "rebake-all",
+    "render",
+  ].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = on;
   });
@@ -527,7 +704,9 @@ function setRandomSeedFor(obj, inputId) {
   return obj.seed;
 }
 
-function currentSlice() { return (+$("slice")?.value | 0) >>> 0; }
+function currentSlice() {
+  return (+$("slice")?.value | 0) >>> 0;
+}
 
 function refreshSliceLabel() {
   const s = $("sliceLabel");
@@ -536,7 +715,10 @@ function refreshSliceLabel() {
 
 // ---- UI utilities ----
 function showPanelsFor(pass) {
-  const vis = (id, on) => { const e = $(id); if (e) e.style.display = on ? "" : "none"; };
+  const vis = (id, on) => {
+    const e = $(id);
+    if (e) e.style.display = on ? "" : "none";
+  };
   vis("p-weather", pass === "weather");
   vis("p-shape128", pass === "shape128");
   vis("p-detail32", pass === "detail32");
@@ -554,8 +736,10 @@ function sendSizes() {
   const pixelH = Math.max(1, Math.floor(cH * dpr));
   const dbgSizePx = Math.round(DBG_SIZE * dpr);
 
-  rpc("resize", { main: { width: pixelW, height: pixelH }, dbg: { width: dbgSizePx, height: dbgSizePx } })
-    .catch((e) => console.warn("resize rpc failed", e));
+  rpc("resize", {
+    main: { width: pixelW, height: pixelH },
+    dbg: { width: dbgSizePx, height: dbgSizePx },
+  }).catch((e) => console.warn("resize rpc failed", e));
 }
 
 // ---- populate mode selects ----
@@ -564,13 +748,28 @@ function populateAllModeSelects() {
   const vol4d = get4DCandidates();
 
   populateSelect("we-mode", weather, weatherParams.mode, { allowNone: false });
-  populateSelect("we-billow-mode", weather, billowParams.mode, { allowNone: false });
+  populateSelect("we-billow-mode", weather, billowParams.mode, {
+    allowNone: false,
+  });
+  populateSelect("we-bandb-mode", weather, weatherBParams.mode, {
+    allowNone: false,
+  });
 
-  populateSelect("sh-mode-a", vol4d, shapeParams.baseModeA, { allowNone: false });
-  populateSelect("sh-mode-b", vol4d, shapeParams.baseModeB, { allowNone: true });
-  populateSelect("sh-mode-2", vol4d, shapeParams.bandMode2, { allowNone: false });
-  populateSelect("sh-mode-3", vol4d, shapeParams.bandMode3, { allowNone: false });
-  populateSelect("sh-mode-4", vol4d, shapeParams.bandMode4, { allowNone: false });
+  populateSelect("sh-mode-a", vol4d, shapeParams.baseModeA, {
+    allowNone: false,
+  });
+  populateSelect("sh-mode-b", vol4d, shapeParams.baseModeB, {
+    allowNone: true,
+  });
+  populateSelect("sh-mode-2", vol4d, shapeParams.bandMode2, {
+    allowNone: false,
+  });
+  populateSelect("sh-mode-3", vol4d, shapeParams.bandMode3, {
+    allowNone: false,
+  });
+  populateSelect("sh-mode-4", vol4d, shapeParams.bandMode4, {
+    allowNone: false,
+  });
 
   populateSelect("de-mode-1", vol4d, detailParams.mode1, { allowNone: false });
   populateSelect("de-mode-2", vol4d, detailParams.mode2, { allowNone: false });
@@ -594,7 +793,11 @@ async function wireUI() {
     if (!animRunning) {
       reprojEnabled = true;
       const rp = getReprojPayload();
-      try { await rpc("setReproj", { reproj: rp, perf: null }); } catch (e) { console.warn("Failed setReproj", e); }
+      try {
+        await rpc("setReproj", { reproj: rp, perf: null });
+      } catch (e) {
+        console.warn("Failed setReproj", e);
+      }
 
       readPreview();
       const cloudParams = readCloudParams();
@@ -605,6 +808,7 @@ async function wireUI() {
         const payload = {
           weatherParams: safeClone(weatherParams),
           billowParams: safeClone(billowParams),
+          weatherBParams: safeClone(weatherBParams),
           shapeParams: safeClone(shapeParams),
           detailParams: safeClone(detailParams),
           tileTransforms: safeClone(tileTransforms),
@@ -621,16 +825,40 @@ async function wireUI() {
         console.warn("start animation failed", e);
         reprojEnabled = false;
         animRunning = false;
-        try { await rpc("setReproj", { reproj: { enabled: false, scale: reprojDefaultScale, coarseFactor: Math.round(1 / reprojDefaultScale) }, perf: null }); } catch {}
+        try {
+          await rpc("setReproj", {
+            reproj: {
+              enabled: false,
+              scale: reprojDefaultScale,
+              coarseFactor: Math.round(1 / reprojDefaultScale),
+            },
+            perf: null,
+          });
+        } catch {}
         if (reprojBtn) reprojBtn.textContent = "Start x4 Anim";
       } finally {
         setBusy(false);
       }
     } else {
-      try { await rpc("stopLoop", {}); } catch (e) { console.warn("stopLoop failed", e); }
+      try {
+        await rpc("stopLoop", {});
+      } catch (e) {
+        console.warn("stopLoop failed", e);
+      }
       animRunning = false;
       reprojEnabled = false;
-      try { await rpc("setReproj", { reproj: { enabled: false, scale: reprojDefaultScale, coarseFactor: Math.round(1 / reprojDefaultScale) }, perf: null }); } catch (e) { console.warn("Failed unset reproj", e); }
+      try {
+        await rpc("setReproj", {
+          reproj: {
+            enabled: false,
+            scale: reprojDefaultScale,
+            coarseFactor: Math.round(1 / reprojDefaultScale),
+          },
+          perf: null,
+        });
+      } catch (e) {
+        console.warn("Failed unset reproj", e);
+      }
       if (reprojBtn) reprojBtn.textContent = "Start x4 Anim";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = "-";
@@ -647,6 +875,7 @@ async function wireUI() {
       const payload = {
         weatherParams: safeClone(weatherParams),
         billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
         shapeParams: safeClone(shapeParams),
         detailParams: safeClone(detailParams),
         tileTransforms: safeClone(tileTransforms),
@@ -658,102 +887,266 @@ async function wireUI() {
       ensureCoarseInPayload(payload);
 
       const { timings } = await rpc("runFrame", payload);
-      console.log("[BENCH] compute(ms):", timings.computeMs.toFixed(2), "render(ms):", timings.renderMs.toFixed(2), "total(ms):", timings.totalMs.toFixed(2));
+      console.log(
+        "[BENCH] compute(ms):",
+        timings.computeMs.toFixed(2),
+        "render(ms):",
+        timings.renderMs.toFixed(2),
+        "total(ms):",
+        timings.totalMs.toFixed(2),
+      );
     } finally {
       setBusy(false);
     }
   });
 
   // Weather: any change rebakes weather
-  attachByIds([
-    "we-mode", "we-seed", "we-zoom", "we-freq", "we-oct", "we-lac", "we-gain", "we-thr", "we-seedAngle", "we-time", "we-voroMode", "we-edgeK", "we-warpAmp",
-    "we-billow-enable", "we-billow-mode", "we-billow-seed", "we-billow-scale", "we-billow-zoom", "we-billow-freq", "we-billow-oct", "we-billow-lac",
-    "we-billow-gain", "we-billow-thr", "we-billow-seedAngle", "we-billow-time", "we-billow-voroMode", "we-billow-edgeK", "we-billow-warpAmp",
-  ], async () => {
-    readWeather();
-    readWeatherG();
-    await runAfterBakeAndTuning("bakeWeather", { weatherParams: safeClone(weatherParams), billowParams: safeClone(billowParams) });
-  });
+  attachByIds(
+    [
+      "we-mode",
+      "we-seed",
+      "we-zoom",
+      "we-freq",
+      "we-oct",
+      "we-lac",
+      "we-gain",
+      "we-thr",
+      "we-seedAngle",
+      "we-time",
+      "we-voroMode",
+      "we-edgeK",
+      "we-warpAmp",
+      "we-billow-enable",
+      "we-billow-mode",
+      "we-billow-seed",
+      "we-billow-scale",
+      "we-billow-zoom",
+      "we-billow-freq",
+      "we-billow-oct",
+      "we-billow-lac",
+      "we-billow-gain",
+      "we-billow-thr",
+      "we-billow-seedAngle",
+      "we-billow-time",
+      "we-billow-voroMode",
+      "we-billow-edgeK",
+      "we-billow-warpAmp",
+
+      "we-bandb-enable",
+      "we-bandb-mode",
+      "we-bandb-seed",
+      "we-bandb-scale",
+      "we-bandb-zoom",
+      "we-bandb-freq",
+      "we-bandb-oct",
+      "we-bandb-lac",
+      "we-bandb-gain",
+      "we-bandb-thr",
+      "we-bandb-seedAngle",
+      "we-bandb-time",
+      "we-bandb-voroMode",
+      "we-bandb-edgeK",
+      "we-bandb-warpAmp",
+    ],
+    async () => {
+      readWeather();
+      readWeatherG();
+      readWeatherB();
+      await runAfterBakeAndTuning("bakeWeather", {
+        weatherParams: safeClone(weatherParams),
+        billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
+      });
+    },
+  );
+
+  attachByIds(
+    [
+      "we-scale",
+      "we-pos-x",
+      "we-pos-y",
+      "we-pos-z",
+      "we-axis-x",
+      "we-axis-y",
+      "we-axis-z",
+    ],
+    async () => {
+      try {
+        readWeatherTransform();
+        await setTileTransformsRPC(tileTransforms);
+
+        await sendTuningNow();
+        readPreview();
+        const cloudParams = readCloudParams();
+
+        const payload = {
+          weatherParams: safeClone(weatherParams),
+          billowParams: safeClone(billowParams),
+          weatherBParams: safeClone(weatherBParams),
+          shapeParams: safeClone(shapeParams),
+          detailParams: safeClone(detailParams),
+          tileTransforms: safeClone(tileTransforms),
+          preview: safeClone(preview),
+          cloudParams,
+        };
+        if (reprojEnabled) payload.reproj = getReprojPayload();
+        ensureCoarseInPayload(payload);
+        await rpc("runFrame", payload);
+      } catch (e) {
+        console.warn("weather transform update failed", e);
+      }
+    },
+  );
 
   // Blue: any change rebakes blue
   attachByIds(["bn-seed"], async () => {
     readBlue();
-    await runAfterBakeAndTuning("bakeBlue", { blueParams: safeClone(blueParams) });
+    await runAfterBakeAndTuning("bakeBlue", {
+      blueParams: safeClone(blueParams),
+    });
   });
 
   // Shape: modes/noise params rebake, transforms do not
-  attachByIds([
-    "sh-mode-a", "sh-mode-b", "sh-mode-2", "sh-mode-3", "sh-mode-4",
-    "sh-seed", "sh-zoom", "sh-freq", "sh-oct", "sh-lac", "sh-gain", "sh-thr",
-    "sh-seedAngle", "sh-time", "sh-voroMode", "sh-edgeK", "sh-warpAmp",
-  ], async () => {
-    readShape();
-    readShapeTransform();
-    await runAfterBakeAndTuning("bakeShape", { shapeParams: safeClone(shapeParams), tileTransforms: safeClone(tileTransforms) });
-  });
-
-  attachByIds(["sh-scale", "sh-pos-x", "sh-pos-y", "sh-pos-z", "sh-vel-x", "sh-vel-y", "sh-vel-z"], async () => {
-    try {
+  attachByIds(
+    [
+      "sh-mode-a",
+      "sh-mode-b",
+      "sh-mode-2",
+      "sh-mode-3",
+      "sh-mode-4",
+      "sh-seed",
+      "sh-zoom",
+      "sh-freq",
+      "sh-oct",
+      "sh-lac",
+      "sh-gain",
+      "sh-thr",
+      "sh-seedAngle",
+      "sh-time",
+      "sh-voroMode",
+      "sh-edgeK",
+      "sh-warpAmp",
+    ],
+    async () => {
+      readShape();
       readShapeTransform();
-      await setTileTransformsRPC(tileTransforms);
-
-      await sendTuningNow();
-      readPreview();
-      const cloudParams = readCloudParams();
-
-      const payload = {
-        weatherParams: safeClone(weatherParams),
-        billowParams: safeClone(billowParams),
+      await runAfterBakeAndTuning("bakeShape", {
         shapeParams: safeClone(shapeParams),
-        detailParams: safeClone(detailParams),
         tileTransforms: safeClone(tileTransforms),
-        preview: safeClone(preview),
-        cloudParams,
-      };
-      if (reprojEnabled) payload.reproj = getReprojPayload();
-      ensureCoarseInPayload(payload);
-      await rpc("runFrame", payload);
-    } catch (e) {
-      console.warn("shape transform update failed", e);
-    }
-  });
+      });
+    },
+  );
 
   // Detail: modes/noise params rebake, transforms do not
-  attachByIds([
-    "de-mode-1", "de-mode-2", "de-mode-3",
-    "de-seed", "de-zoom", "de-freq", "de-oct", "de-lac", "de-gain", "de-thr",
-    "de-seedAngle", "de-time", "de-voroMode", "de-edgeK", "de-warpAmp",
-  ], async () => {
-    readDetail();
-    readDetailTransform();
-    await runAfterBakeAndTuning("bakeDetail", { detailParams: safeClone(detailParams), tileTransforms: safeClone(tileTransforms) });
-  });
-
-  attachByIds(["de-scale", "de-pos-x", "de-pos-y", "de-pos-z", "de-vel-x", "de-vel-y", "de-vel-z"], async () => {
-    try {
+  attachByIds(
+    [
+      "de-mode-1",
+      "de-mode-2",
+      "de-mode-3",
+      "de-seed",
+      "de-zoom",
+      "de-freq",
+      "de-oct",
+      "de-lac",
+      "de-gain",
+      "de-thr",
+      "de-seedAngle",
+      "de-time",
+      "de-voroMode",
+      "de-edgeK",
+      "de-warpAmp",
+    ],
+    async () => {
+      readDetail();
       readDetailTransform();
-      await setTileTransformsRPC(tileTransforms);
-
-      await sendTuningNow();
-      readPreview();
-      const cloudParams = readCloudParams();
-
-      const payload = {
-        weatherParams: safeClone(weatherParams),
-        billowParams: safeClone(billowParams),
-        shapeParams: safeClone(shapeParams),
+      await runAfterBakeAndTuning("bakeDetail", {
         detailParams: safeClone(detailParams),
         tileTransforms: safeClone(tileTransforms),
-        preview: safeClone(preview),
-        cloudParams,
-      };
-      if (reprojEnabled) payload.reproj = getReprojPayload();
-      ensureCoarseInPayload(payload);
-      await rpc("runFrame", payload);
-    } catch (e) {
-      console.warn("detail transform update failed", e);
-    }
-  });
+      });
+    },
+  );
+
+  attachByIds(
+    [
+      "sh-scale",
+      "sh-pos-x",
+      "sh-pos-y",
+      "sh-pos-z",
+      "sh-vel-x",
+      "sh-vel-y",
+      "sh-vel-z",
+      "sh-axis-x",
+      "sh-axis-y",
+      "sh-axis-z",
+    ],
+    async () => {
+      try {
+        readShapeTransform();
+        await setTileTransformsRPC(tileTransforms);
+
+        await sendTuningNow();
+        readPreview();
+        const cloudParams = readCloudParams();
+
+        const payload = {
+          weatherParams: safeClone(weatherParams),
+          billowParams: safeClone(billowParams),
+          weatherBParams: safeClone(weatherBParams),
+          shapeParams: safeClone(shapeParams),
+          detailParams: safeClone(detailParams),
+          tileTransforms: safeClone(tileTransforms),
+          preview: safeClone(preview),
+          cloudParams,
+        };
+        if (reprojEnabled) payload.reproj = getReprojPayload();
+        ensureCoarseInPayload(payload);
+        await rpc("runFrame", payload);
+      } catch (e) {
+        console.warn("shape transform update failed", e);
+      }
+    },
+  );
+
+  attachByIds(
+    [
+      "de-scale",
+      "de-pos-x",
+      "de-pos-y",
+      "de-pos-z",
+      "de-vel-x",
+      "de-vel-y",
+      "de-vel-z",
+      "de-axis-x",
+      "de-axis-y",
+      "de-axis-z",
+    ],
+    async () => {
+      try {
+        readDetailTransform();
+        await setTileTransformsRPC(tileTransforms);
+
+        await sendTuningNow();
+        readPreview();
+        const cloudParams = readCloudParams();
+
+        const payload = {
+          weatherParams: safeClone(weatherParams),
+          billowParams: safeClone(billowParams),
+          weatherBParams: safeClone(weatherBParams),
+          shapeParams: safeClone(shapeParams),
+          detailParams: safeClone(detailParams),
+          tileTransforms: safeClone(tileTransforms),
+          preview: safeClone(preview),
+          cloudParams,
+        };
+        if (reprojEnabled) payload.reproj = getReprojPayload();
+        ensureCoarseInPayload(payload);
+        await rpc("runFrame", payload);
+      } catch (e) {
+        console.warn("detail transform update failed", e);
+      }
+    },
+  );
 
   // cloud params panel: send tuning then runFrame
   {
@@ -767,6 +1160,7 @@ async function wireUI() {
           const payload = {
             weatherParams: safeClone(weatherParams),
             billowParams: safeClone(billowParams),
+            weatherBParams: safeClone(weatherBParams),
             shapeParams: safeClone(shapeParams),
             detailParams: safeClone(detailParams),
             tileTransforms: safeClone(tileTransforms),
@@ -775,7 +1169,11 @@ async function wireUI() {
           };
           if (reprojEnabled) payload.reproj = getReprojPayload();
           ensureCoarseInPayload(payload);
-          try { await rpc("runFrame", payload); } catch (e) { console.warn("runFrame failed (cloudParams)", e); }
+          try {
+            await rpc("runFrame", payload);
+          } catch (e) {
+            console.warn("runFrame failed (cloudParams)", e);
+          }
         });
       });
     }
@@ -793,6 +1191,7 @@ async function wireUI() {
           const payload = {
             weatherParams: safeClone(weatherParams),
             billowParams: safeClone(billowParams),
+            weatherBParams: safeClone(weatherBParams),
             shapeParams: safeClone(shapeParams),
             detailParams: safeClone(detailParams),
             tileTransforms: safeClone(tileTransforms),
@@ -801,7 +1200,11 @@ async function wireUI() {
           };
           if (reprojEnabled) payload.reproj = getReprojPayload();
           ensureCoarseInPayload(payload);
-          try { await rpc("runFrame", payload); } catch (e) { console.warn("runFrame failed (preview)", e); }
+          try {
+            await rpc("runFrame", payload);
+          } catch (e) {
+            console.warn("runFrame failed (preview)", e);
+          }
         });
       });
     }
@@ -811,36 +1214,57 @@ async function wireUI() {
 
   // bake buttons
   $("bake-weather")?.addEventListener("click", async () => {
-    readWeather(); readWeatherG();
-    await runAfterBakeAndTuning("bakeWeather", { weatherParams: safeClone(weatherParams), billowParams: safeClone(billowParams) });
+    readWeather();
+    readWeatherG();
+    readWeatherB();
+    await runAfterBakeAndTuning("bakeWeather", {
+      weatherParams: safeClone(weatherParams),
+      billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
+    });
   });
 
   $("bake-blue")?.addEventListener("click", async () => {
     readBlue();
-    await runAfterBakeAndTuning("bakeBlue", { blueParams: safeClone(blueParams) });
+    await runAfterBakeAndTuning("bakeBlue", {
+      blueParams: safeClone(blueParams),
+    });
   });
 
   $("bake-shape128")?.addEventListener("click", async () => {
-    readShape(); readShapeTransform();
-    await runAfterBakeAndTuning("bakeShape", { shapeParams: safeClone(shapeParams), tileTransforms: safeClone(tileTransforms) });
+    readShape();
+    readShapeTransform();
+    await runAfterBakeAndTuning("bakeShape", {
+      shapeParams: safeClone(shapeParams),
+      tileTransforms: safeClone(tileTransforms),
+    });
   });
 
   $("bake-detail32")?.addEventListener("click", async () => {
-    readDetail(); readDetailTransform();
-    await runAfterBakeAndTuning("bakeDetail", { detailParams: safeClone(detailParams), tileTransforms: safeClone(tileTransforms) });
+    readDetail();
+    readDetailTransform();
+    await runAfterBakeAndTuning("bakeDetail", {
+      detailParams: safeClone(detailParams),
+      tileTransforms: safeClone(tileTransforms),
+    });
   });
 
   $("rebake-all")?.addEventListener("click", async () => {
     setBusy(true, "Rebaking all...");
     try {
-      readWeather(); readWeatherG();
+      readWeather();
+      readWeatherG();
+      readWeatherB();
       readBlue();
-      readShape(); readShapeTransform();
-      readDetail(); readDetailTransform();
+      readShape();
+      readShapeTransform();
+      readDetail();
+      readDetailTransform();
 
       await rpc("bakeAll", {
         weatherParams: safeClone(weatherParams),
         billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
         blueParams: safeClone(blueParams),
         shapeParams: safeClone(shapeParams),
         detailParams: safeClone(detailParams),
@@ -853,6 +1277,7 @@ async function wireUI() {
       const payload = {
         weatherParams: safeClone(weatherParams),
         billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
         shapeParams: safeClone(shapeParams),
         detailParams: safeClone(detailParams),
         tileTransforms: safeClone(tileTransforms),
@@ -871,7 +1296,9 @@ async function wireUI() {
   // slice slider -> immediate setSlice
   $("slice")?.addEventListener("input", () => {
     refreshSliceLabel();
-    rpc("setSlice", { slice: (+$("slice").value | 0) >>> 0 }).catch((e) => console.warn("setSlice failed", e));
+    rpc("setSlice", { slice: (+$("slice").value | 0) >>> 0 }).catch((e) =>
+      console.warn("setSlice failed", e),
+    );
   });
 
   // seed buttons
@@ -880,9 +1307,17 @@ async function wireUI() {
     setLog("new weather seed", s);
     setBusy(true, "Seeding weather...");
     try {
-      readWeather(); readWeatherG();
-      await runAfterBakeAndTuning("bakeWeather", { weatherParams: safeClone(weatherParams), billowParams: safeClone(billowParams) });
-    } finally { setBusy(false); }
+      readWeather();
+      readWeatherG();
+      readWeatherB();
+      await runAfterBakeAndTuning("bakeWeather", {
+        weatherParams: safeClone(weatherParams),
+        billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
+      });
+    } finally {
+      setBusy(false);
+    }
   });
 
   $("seed-blue")?.addEventListener("click", async () => {
@@ -891,8 +1326,12 @@ async function wireUI() {
     setBusy(true, "Seeding blue...");
     try {
       readBlue();
-      await runAfterBakeAndTuning("bakeBlue", { blueParams: safeClone(blueParams) });
-    } finally { setBusy(false); }
+      await runAfterBakeAndTuning("bakeBlue", {
+        blueParams: safeClone(blueParams),
+      });
+    } finally {
+      setBusy(false);
+    }
   });
 
   $("seed-shape")?.addEventListener("click", async () => {
@@ -900,9 +1339,15 @@ async function wireUI() {
     setLog("new shape seed", s);
     setBusy(true, "Seeding shape...");
     try {
-      readShape(); readShapeTransform();
-      await runAfterBakeAndTuning("bakeShape", { shapeParams: safeClone(shapeParams), tileTransforms: safeClone(tileTransforms) });
-    } finally { setBusy(false); }
+      readShape();
+      readShapeTransform();
+      await runAfterBakeAndTuning("bakeShape", {
+        shapeParams: safeClone(shapeParams),
+        tileTransforms: safeClone(tileTransforms),
+      });
+    } finally {
+      setBusy(false);
+    }
   });
 
   $("seed-detail")?.addEventListener("click", async () => {
@@ -910,9 +1355,15 @@ async function wireUI() {
     setLog("new detail seed", s);
     setBusy(true, "Seeding detail...");
     try {
-      readDetail(); readDetailTransform();
-      await runAfterBakeAndTuning("bakeDetail", { detailParams: safeClone(detailParams), tileTransforms: safeClone(tileTransforms) });
-    } finally { setBusy(false); }
+      readDetail();
+      readDetailTransform();
+      await runAfterBakeAndTuning("bakeDetail", {
+        detailParams: safeClone(detailParams),
+        tileTransforms: safeClone(tileTransforms),
+      });
+    } finally {
+      setBusy(false);
+    }
   });
 
   window.addEventListener("resize", () => sendSizes());
@@ -957,6 +1408,37 @@ async function init() {
   setIf("we-billow-voroMode", billowParams.voroMode);
   setIf("we-billow-edgeK", billowParams.edgeK);
   setIf("we-billow-warpAmp", billowParams.warpAmp);
+
+  setIf("we-scale", tileTransforms.weatherScale);
+  setIf("we-pos-x", tileTransforms.weatherOffset[0]);
+  setIf("we-pos-y", tileTransforms.weatherOffset[1]);
+  setIf("we-pos-z", tileTransforms.weatherOffset[2]);
+  setIf("we-axis-x", tileTransforms.weatherAxisScale[0]);
+  setIf("we-axis-y", tileTransforms.weatherAxisScale[1]);
+  setIf("we-axis-z", tileTransforms.weatherAxisScale[2]);
+
+  setIf("sh-axis-x", tileTransforms.shapeAxisScale[0]);
+  setIf("sh-axis-y", tileTransforms.shapeAxisScale[1]);
+  setIf("sh-axis-z", tileTransforms.shapeAxisScale[2]);
+
+  setIf("de-axis-x", tileTransforms.detailAxisScale[0]);
+  setIf("de-axis-y", tileTransforms.detailAxisScale[1]);
+  setIf("de-axis-z", tileTransforms.detailAxisScale[2]);
+
+  setIf("we-bandb-enable", weatherBParams.enabled);
+  setIf("we-bandb-seed", weatherBParams.seed);
+  setIf("we-bandb-scale", weatherBParams.scale);
+  setIf("we-bandb-zoom", weatherBParams.zoom);
+  setIf("we-bandb-freq", weatherBParams.freq);
+  setIf("we-bandb-oct", weatherBParams.octaves);
+  setIf("we-bandb-lac", weatherBParams.lacunarity);
+  setIf("we-bandb-gain", weatherBParams.gain);
+  setIf("we-bandb-thr", weatherBParams.threshold);
+  setIf("we-bandb-seedAngle", weatherBParams.seedAngle);
+  setIf("we-bandb-time", weatherBParams.time);
+  setIf("we-bandb-voroMode", weatherBParams.voroMode);
+  setIf("we-bandb-edgeK", weatherBParams.edgeK);
+  setIf("we-bandb-warpAmp", weatherBParams.warpAmp);
 
   setIf("bn-seed", blueParams.seed);
 
@@ -1018,16 +1500,16 @@ async function init() {
   setIf("p-sE", 16);
   setIf("p-ambOut", 1.0);
   setIf("p-ambMin", 0.25);
-  setIf("p-anvil", 0.10);
+  setIf("p-anvil", 0.1);
 
   setIf("t-maxSteps", 256);
   setIf("t-minStep", 0.003);
-  setIf("t-maxStep", 0.10);
+  setIf("t-maxStep", 0.1);
   setIf("t-sunSteps", 4);
   setIf("t-phaseJitter", 1.0);
   setIf("t-stepJitter", 0.08);
   setIf("t-baseJitter", 0.15);
-  setIf("t-topJitter", 0.10);
+  setIf("t-topJitter", 0.1);
   setIf("t-lodBiasWeather", 1.5);
   setIf("t-nearFluffDist", 60);
   setIf("t-nearDensityMult", 2.5);
@@ -1060,7 +1542,7 @@ async function init() {
     if (type === "log") console.log(...(data || []));
     if (type === "frame") {
       const info = data || {};
-      const fps = info.fps ? (Math.round(info.fps * 100) / 100) : "-";
+      const fps = info.fps ? Math.round(info.fps * 100) / 100 : "-";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = String(fps);
     }
@@ -1075,40 +1557,62 @@ async function init() {
 
   // transfer canvases to worker
   const mainCanvas = $("gpuCanvas");
-  const dbgIds = ["dbg-weather", "dbg-weather-g", "dbg-r", "dbg-g", "dbg-blue"];
+  const dbgIds = [
+    "dbg-weather",
+    "dbg-weather-g",
+    "dbg-weather-b",
+    "dbg-r",
+    "dbg-g",
+    "dbg-blue",
+  ];
 
   const offscreenMain = mainCanvas.transferControlToOffscreen();
-  const offscreenDbg = Object.fromEntries(dbgIds.map((id) => [id, $(id).transferControlToOffscreen()]));
+  const offscreenDbg = Object.fromEntries(
+    dbgIds.map((id) => [id, $(id).transferControlToOffscreen()]),
+  );
 
-  const initRes = await rpc("init", {
-    canvases: {
-      main: offscreenMain,
-      dbg: {
-        weather: offscreenDbg["dbg-weather"],
-        weatherG: offscreenDbg["dbg-weather-g"],
-        shapeR: offscreenDbg["dbg-r"],
-        detailR: offscreenDbg["dbg-g"],
-        blue: offscreenDbg["dbg-blue"],
+  const initRes = await rpc(
+    "init",
+    {
+      canvases: {
+        main: offscreenMain,
+        dbg: {
+          weather: offscreenDbg["dbg-weather"],
+          weatherG: offscreenDbg["dbg-weather-g"],
+          weatherB: offscreenDbg["dbg-weather-b"],
+          shapeR: offscreenDbg["dbg-r"],
+          detailR: offscreenDbg["dbg-g"],
+          blue: offscreenDbg["dbg-blue"],
+        },
       },
+      constants: { SHAPE_SIZE, DETAIL_SIZE, WEATHER_W, WEATHER_H, BN_W, BN_H },
     },
-    constants: { SHAPE_SIZE, DETAIL_SIZE, WEATHER_W, WEATHER_H, BN_W, BN_H },
-  }, [
-    offscreenMain,
-    offscreenDbg["dbg-weather"],
-    offscreenDbg["dbg-weather-g"],
-    offscreenDbg["dbg-r"],
-    offscreenDbg["dbg-g"],
-    offscreenDbg["dbg-blue"],
-  ]);
+    [
+      offscreenMain,
+      offscreenDbg["dbg-weather"],
+      offscreenDbg["dbg-weather-g"],
+      offscreenDbg["dbg-weather-b"],
+      offscreenDbg["dbg-r"],
+      offscreenDbg["dbg-g"],
+      offscreenDbg["dbg-blue"],
+    ],
+  );
 
-  ENTRY_POINTS = Array.isArray(initRes?.entryPoints) ? initRes.entryPoints.slice() : [];
+  ENTRY_POINTS = Array.isArray(initRes?.entryPoints)
+    ? initRes.entryPoints.slice()
+    : [];
   populateAllModeSelects();
 
   // set mode selects to defaults after population
   {
-    const setSel = (id, val) => { const el = $(id); if (!el) return; el.value = String(val || ""); };
+    const setSel = (id, val) => {
+      const el = $(id);
+      if (!el) return;
+      el.value = String(val || "");
+    };
     setSel("we-mode", weatherParams.mode);
     setSel("we-billow-mode", billowParams.mode);
+    setSel("we-bandb-mode", weatherBParams.mode);
 
     setSel("sh-mode-a", shapeParams.baseModeA);
     setSel("sh-mode-b", shapeParams.baseModeB);
@@ -1123,7 +1627,9 @@ async function init() {
 
   sendSizes();
 
-  try { await setTileTransformsRPC(tileTransforms); } catch {}
+  try {
+    await setTileTransformsRPC(tileTransforms);
+  } catch {}
 
   setBusy(true, "Initializing...");
   try {
@@ -1132,6 +1638,7 @@ async function init() {
     await rpc("bakeAll", {
       weatherParams: safeClone(weatherParams),
       billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
       blueParams: safeClone(blueParams),
       shapeParams: safeClone(shapeParams),
       detailParams: safeClone(detailParams),
@@ -1139,12 +1646,17 @@ async function init() {
     });
 
     await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
-    try { await sendTuningNow(true); } catch (e) { console.warn("initial sendTuningNow failed", e); }
+    try {
+      await sendTuningNow(true);
+    } catch (e) {
+      console.warn("initial sendTuningNow failed", e);
+    }
 
     const cloudParams = readCloudParams();
     const payload = {
       weatherParams: safeClone(weatherParams),
       billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
       shapeParams: safeClone(shapeParams),
       detailParams: safeClone(detailParams),
       tileTransforms: safeClone(tileTransforms),
@@ -1168,6 +1680,6 @@ async function init() {
 init().catch((err) => {
   console.error(err);
   const pre = document.createElement("pre");
-  pre.textContent = (err && err.stack) ? err.stack : String(err);
+  pre.textContent = err && err.stack ? err.stack : String(err);
   document.body.appendChild(pre);
 });
