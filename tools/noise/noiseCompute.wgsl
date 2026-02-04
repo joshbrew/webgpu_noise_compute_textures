@@ -1436,7 +1436,22 @@ fn gaborShape(n: f32, params: NoiseParams) -> f32 {
   return a * 2.0 - 1.0;
 }
 
-/* Multi-octave Gabor with the same rotate/shift cadence as Perlin */
+fn gaborCellEdgeMask2D(cellP: vec2<f32>, edgeK: f32) -> f32 {
+  let k = max(0.0, edgeK);
+  if (k <= 0.00001) { return 1.0; }
+
+  let width = select(k, 0.5 / k, k > 0.5);
+  let w = clamp(width, 0.00001, 0.5);
+
+  let f  = fract(cellP);
+  let dx = min(f.x, 1.0 - f.x);
+  let dy = min(f.y, 1.0 - f.y);
+  let d  = min(dx, dy);
+
+  return smoothstep(0.0, w, d);
+}
+
+/* Multi-octave Gabor with per-octave cell-edge fade */
 fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {
   var x = p.x / params.zoom + params.xShift;
   var y = p.y / params.zoom + params.yShift;
@@ -1449,15 +1464,25 @@ fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {
 
   let waveFreq = max(0.001, params.rippleFreq);
 
+  var minMask : f32 = 1.0;
+
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
     let sigma = max(0.0005, params.gaborRadius);
 
     var pp = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);
     pp = gaborWarpDomain(pp, params);
 
+    let edgeM = gaborCellEdgeMask2D(pp.xy, params.edgeK);
+    minMask = min(minMask, edgeM);
+
     var n = gaborOctave3D(pp, waveFreq, sigma, params);
 
-    if (params.turbulence == 1u) { n = abs(n); }
+    if (params.turbulence == 1u) {
+      n = abs(n) * edgeM;
+    } else {
+      n = (-1.0) + (n + 1.0) * edgeM;
+    }
+
     sum += n * amp;
 
     freqLoc *= params.lacunarity;
@@ -1476,9 +1501,105 @@ fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {
     angle += ANGLE_INCREMENT;
   }
 
+  if (params.turbulence == 1u) {
+    sum = mix(-1.0, sum, minMask);
+  }
+
   var out = gaborShape(sum, params);
   if (params.turbulence == 1u) { out = out - 1.0; }
   return out;
+}
+
+fn gaborFlowKernel3D(r: vec3<f32>, d: vec2<f32>, ex: f32, ey: f32, ez: f32, c: f32, phase: f32) -> f32 {
+  let rx = dot(r.xy, d);
+  let ry = dot(r.xy, vec2<f32>(d.y, -d.x));
+  let g  = exp(ex * rx * rx + ey * ry * ry + ez * r.z * r.z);
+  let w  = cos(c * rx + phase);
+  return g * w;
+}
+
+fn gaborMagicNoise3D(p: vec3<f32>, par: NoiseParams) -> f32 {
+  let sizeF = select(12.0, par.terraceStep, par.terraceStep > 0.00001);
+  let size  = max(1, i32(clamp(sizeF, 1.0, 48.0) + 0.5));
+
+  let zRad  = i32(2u);
+
+  let sig = max(0.0005, par.gaborRadius);
+  let gam = max(0.0001, par.exp2);
+
+  let sx = sig;
+  let sy = sig / gam;
+  let sz = sig;
+
+  let ex = -0.5 / (sx * sx);
+  let ey = -0.5 / (sy * sy);
+  let ez = -0.5 / (sz * sz);
+
+  let lam = max(0.001, par.rippleFreq);
+  let c   = TAU / lam;
+
+  let P = 0.1963495408; // PI/16
+
+  var cs: array<vec2<f32>, 16>;
+  var ph: array<f32, 16>;
+  var acc: array<f32, 16>;
+
+  for (var k: u32 = 0u; k < 16u; k = k + 1u) {
+    acc[k] = 0.0;
+    let a = f32(k) * P;
+    cs[k] = vec2<f32>(cos(a), sin(a));
+    ph[k] = TAU * rand3_01(i32(k), 0, 0, par.seed, 71u);
+  }
+
+  let base = vec3<f32>(
+    p.x / par.zoom + par.xShift,
+    p.y / par.zoom + par.yShift,
+    p.z / par.zoom + par.zShift
+  );
+
+  let adv = vec3<f32>(par.time * 10.0, par.time * 10.0, par.time * 3.0);
+
+  let seedOff = vec3<f32>(
+    f32(par.seed & 1023u) * 23.17,
+    f32((par.seed >> 10u) & 1023u) * 19.73,
+    f32((par.seed >> 20u) & 1023u) * 17.11
+  );
+
+  let fscale = 0.1 * max(0.0001, par.freq);
+
+  let phaseT = TAU * (par.time / lam);
+
+  for (var dz: i32 = -zRad; dz <= zRad; dz = dz + 1) {
+    for (var j: i32 = -size; j <= size; j = j + 1) {
+      for (var i: i32 = -size; i <= size; i = i + 1) {
+        let r = vec3<f32>(f32(i), f32(j), f32(dz));
+
+        var sp = (base + r + adv + seedOff) * fscale;
+        sp = gaborWarpDomain(sp, par);
+
+        let src = 0.6 * (0.5 + 0.5 * noise3D(sp));
+
+        for (var k: u32 = 0u; k < 16u; k = k + 1u) {
+          acc[k] += src * gaborFlowKernel3D(r, cs[k], ex, ey, ez, c, ph[k] + phaseT);
+        }
+      }
+    }
+  }
+
+  var mx: f32 = 0.0;
+  for (var k: u32 = 0u; k < 16u; k = k + 1u) {
+    mx = max(mx, acc[k]);
+  }
+
+  var v01 = saturate((mx / 10.0) * max(0.0001, par.gain));
+
+  if (par.threshold > 0.00001) {
+    let t    = saturate(par.threshold);
+    let hard = max(0.0001, par.exp1);
+    v01 = smoothstep(t - hard, t + hard, v01);
+  }
+
+  return v01 * 2.0 - 1.0;
 }
 
 
@@ -1589,6 +1710,10 @@ fn generateDomainWarpFBM2(pos: vec3<f32>, par: NoiseParams) -> f32 {
 fn generateGaborAniso(pos: vec3<f32>, par: NoiseParams) -> f32 {
     let v = gaborNoise3D(pos, par);
     return v;
+}
+
+fn generateGaborMagic(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  return gaborMagicNoise3D(pos, par);
 }
 
 fn generateTerraceNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {
@@ -4955,6 +5080,15 @@ fn computeGaborAnisotropic(@builtin(global_invocation_id) gid: vec3<u32>){
   let fz = i32(frame.originZ) + i32(gid.z);
   let p  = fetchPos(fx, fy, fz);
   writeChannel(fx, fy, fz, generateGaborAniso(p, params), options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8,8,1)
+fn computeGaborMagic(@builtin(global_invocation_id) gid: vec3<u32>){
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateGaborMagic(p, params), options.outputChannel, 0u);
 }
 
 @compute @workgroup_size(8,8,1)

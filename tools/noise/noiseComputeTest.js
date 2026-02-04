@@ -770,6 +770,14 @@ function syncMainHeaderFromCache(info) {
   }
 }
 
+async function _waitForGpuIdle(builder) {
+  const q = builder?.queue || builder?.device?.queue;
+  if (!q || typeof q.onSubmittedWorkDone !== "function") return;
+  try {
+    await q.onSubmittedWorkDone();
+  } catch (_) {}
+}
+
 async function renderMainNoise(builder, mainCanvas, opts = {}) {
   const updateUI = opts.updateUI !== false;
 
@@ -801,6 +809,7 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
     offsetZ: Number(tileOffsets.z) || 0,
   };
 
+  await _waitForGpuIdle(builder);
   const tComputeStart = performance.now();
 
   await builder.computeToTexture(resW, resH, globalParams, {
@@ -821,10 +830,14 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
     });
   }
 
+  await _waitForGpuIdle(builder);
   const tComputeEnd = performance.now();
 
   const view = builder.getCurrentView();
+
+  await _waitForGpuIdle(builder);
   const tBlitStart = performance.now();
+
   if (view) {
     builder.renderTextureToCanvas(view, mainCanvas, {
       layer: 0,
@@ -833,6 +846,8 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
       clear: true,
     });
   }
+
+  await _waitForGpuIdle(builder);
   const tBlitEnd = performance.now();
 
   const computeMs = tComputeEnd - tComputeStart;
@@ -856,7 +871,6 @@ async function renderMainNoise(builder, mainCanvas, opts = {}) {
   return { resW, resH, noiseBits, computeMs, blitMs, tileOffsets };
 }
 
-
 async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
   const draw = opts.draw !== false;
   const updateUI = opts.updateUI !== false;
@@ -865,7 +879,6 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
   builder.buildPermTable(globalParams.seed | 0);
 
   const tileOffsets = readTileOffsetsFromUI();
-  const worldScale = TOROIDAL_SIZE | 0;
 
   const baseParams = {
     ...globalParams,
@@ -875,6 +888,7 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
   const modes = collectSelectedToroidalModesFromUI();
   updateMosaicCaption(modes.map((m) => m.entry));
 
+  await _waitForGpuIdle(builder);
   const t0 = performance.now();
 
   let volumeView = await builder.computeToTexture3D(
@@ -913,6 +927,7 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
     );
   }
 
+  await _waitForGpuIdle(builder);
   const t1 = performance.now();
 
   state.lastToroidalVolumeView = volumeView;
@@ -945,6 +960,7 @@ async function renderToroidalDemo(builder, mosaicCanvases, state, opts = {}) {
 
   return { computeMs: state.lastToroidalComputeMs, sliceBlitMs };
 }
+
 
 function renderToroidalSlice(builder, volumeView, mosaicCanvases, opts = {}) {
   if (!volumeView) return 0;

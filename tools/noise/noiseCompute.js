@@ -111,7 +111,10 @@ export class NoiseComputeBuilder {
       "computeCurlFBM2D",
       "computeDomainWarpFBM1",
       "computeDomainWarpFBM2",
+
       "computeGaborAnisotropic",
+      "computeGaborMagic",
+
       "computeTerraceNoise",
       "computeFoamNoise",
       "computeTurbulence",
@@ -149,6 +152,8 @@ export class NoiseComputeBuilder {
       "computeTerraceNoise4D",
       "computeFoamNoise4D",
       "computeTurbulence4D",
+
+      //normal map computing.
       "computeGauss5x5",
       "computeNormal",
       "computeNormal8",
