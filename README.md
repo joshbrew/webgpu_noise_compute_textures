@@ -28,9 +28,10 @@ Known limits: Current compositing technique limits us to about 5700x5700 just be
 e.g. mixed Billow noise
 ![2](https://github.com/user-attachments/assets/18958887-cd2b-4d54-affa-dd293c93b676)
 
-| Cellular Noise Tiling | Voronoi variant |
-|---|---|
-| ![1](https://github.com/user-attachments/assets/8085fb7f-a982-40ba-80cc-ef4ce056e8e8) | ![7](https://github.com/user-attachments/assets/4a3e1772-be95-48b9-aa14-fcd450c4e14d) |
+| Cellular Noise Tiling | Voronoi variant | Gabor Variant |
+|---|---|---|
+| ![1](https://github.com/user-attachments/assets/8085fb7f-a982-40ba-80cc-ef4ce056e8e8) | ![7](https://github.com/user-attachments/assets/4a3e1772-be95-48b9-aa14-fcd450c4e14d) | <img alt="Screenshot 2026-02-04 105648" src="https://github.com/user-attachments/assets/58d9d4cb-b531-44b6-956d-a50cacc1fc52" /> |
+
 
 | Voronoi variant | Voronoi variant | Gabor |
 |---|---|---|
@@ -289,6 +290,7 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
+
 
 
 
