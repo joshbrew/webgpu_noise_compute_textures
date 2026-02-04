@@ -378,7 +378,6 @@ function readWeatherG() {
   billowParams.enabled = !!$("we-billow-enable")?.checked;
   billowParams.mode = readMode("we-billow-mode", billowParams.mode);
   billowParams.seed = u32("we-billow-seed", billowParams.seed);
-  billowParams.scale = num("we-billow-scale", billowParams.scale);
   billowParams.zoom = num("we-billow-zoom", billowParams.zoom);
   billowParams.freq = num("we-billow-freq", billowParams.freq);
   billowParams.octaves = Math.max(
@@ -399,7 +398,6 @@ function readWeatherB() {
   weatherBParams.enabled = !!$("we-bandb-enable")?.checked;
   weatherBParams.mode = readMode("we-bandb-mode", weatherBParams.mode);
   weatherBParams.seed = u32("we-bandb-seed", weatherBParams.seed);
-  weatherBParams.scale = num("we-bandb-scale", weatherBParams.scale);
   weatherBParams.zoom = num("we-bandb-zoom", weatherBParams.zoom);
   weatherBParams.freq = num("we-bandb-freq", weatherBParams.freq);
   weatherBParams.octaves = Math.max(
@@ -919,7 +917,6 @@ async function wireUI() {
       "we-billow-enable",
       "we-billow-mode",
       "we-billow-seed",
-      "we-billow-scale",
       "we-billow-zoom",
       "we-billow-freq",
       "we-billow-oct",
@@ -935,7 +932,6 @@ async function wireUI() {
       "we-bandb-enable",
       "we-bandb-mode",
       "we-bandb-seed",
-      "we-bandb-scale",
       "we-bandb-zoom",
       "we-bandb-freq",
       "we-bandb-oct",
@@ -1396,7 +1392,6 @@ async function init() {
 
   setIf("we-billow-enable", billowParams.enabled);
   setIf("we-billow-seed", billowParams.seed);
-  setIf("we-billow-scale", billowParams.scale);
   setIf("we-billow-zoom", billowParams.zoom);
   setIf("we-billow-freq", billowParams.freq);
   setIf("we-billow-oct", billowParams.octaves);
@@ -1427,7 +1422,6 @@ async function init() {
 
   setIf("we-bandb-enable", weatherBParams.enabled);
   setIf("we-bandb-seed", weatherBParams.seed);
-  setIf("we-bandb-scale", weatherBParams.scale);
   setIf("we-bandb-zoom", weatherBParams.zoom);
   setIf("we-bandb-freq", weatherBParams.freq);
   setIf("we-bandb-oct", weatherBParams.octaves);
