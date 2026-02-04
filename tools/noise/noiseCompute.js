@@ -227,6 +227,7 @@ export class NoiseComputeBuilder {
     this._texPairs = new Map();
     this._tid = null;
     this._tag = new WeakMap();
+    this._default2DKey = "__default2d";
 
     // 3D volume chunks
     this._volumeCache = new Map();
@@ -920,7 +921,7 @@ export class NoiseComputeBuilder {
     return { tileW, tileH, tilesX, tilesY, layers };
   }
 
-  _create2DPair(W, H) {
+  _create2DPair(W, H, tid = null) {
     const t = this._compute2DTiling(W, H);
     const usage =
       GPUTextureUsage.STORAGE_BINDING |
@@ -928,8 +929,9 @@ export class NoiseComputeBuilder {
       GPUTextureUsage.COPY_SRC |
       GPUTextureUsage.COPY_DST;
 
-    const makeTex = () =>
+    const makeTex = (label) =>
       this.device.createTexture({
+        label,
         size: [t.tileW, t.tileH, t.layers],
         format: "rgba16float",
         usage,
@@ -937,20 +939,22 @@ export class NoiseComputeBuilder {
 
     const desc = { dimension: "2d-array", arrayLayerCount: t.layers };
 
-    const texA = makeTex();
-    const texB = makeTex();
+    const id =
+      tid !== null && tid !== undefined
+        ? String(tid)
+        : String(this._texPairs.size);
+
+    const texA = makeTex(`2D texA ${W}x${H}x${t.layers} (${id})`);
+    const texB = makeTex(`2D texB ${W}x${H}x${t.layers} (${id})`);
     const viewA = texA.createView(desc);
     const viewB = texB.createView(desc);
 
-    texA.label = `2D texA ${W}x${H}x${t.layers}`;
-    texB.label = `2D texB ${W}x${H}x${t.layers}`;
-    viewA.label = "2D:viewA";
-    viewB.label = "2D:viewB";
-    this._tag.set(viewA, "2D:A");
-    this._tag.set(viewB, "2D:B");
+    viewA.label = `2D:viewA (${id})`;
+    viewB.label = `2D:viewB (${id})`;
+    this._tag.set(viewA, `2D:A (${id})`);
+    this._tag.set(viewB, `2D:B (${id})`);
 
-    const tid = this._texPairs.size;
-    this._texPairs.set(tid, {
+    this._texPairs.set(id, {
       texA,
       texB,
       viewA,
@@ -967,8 +971,8 @@ export class NoiseComputeBuilder {
       bindGroupDirty: true,
     });
 
-    if (this._tid === null) this.setActiveTexture(tid);
-    return tid;
+    if (this._tid === null) this.setActiveTexture(id);
+    return id;
   }
 
   createShaderTextures(width, height) {
@@ -981,8 +985,10 @@ export class NoiseComputeBuilder {
   }
 
   destroyTexturePair(tid) {
-    const pair = this._texPairs.get(tid);
+    const id = String(tid);
+    const pair = this._texPairs.get(id);
     if (!pair) return;
+
     try {
       pair.texA.destroy();
     } catch {}
@@ -992,12 +998,13 @@ export class NoiseComputeBuilder {
 
     if (Array.isArray(pair.tiles)) {
       for (const tile of pair.tiles) {
-        if (Array.isArray(tile.frames))
+        if (Array.isArray(tile.frames)) {
           for (const fb of tile.frames) {
             try {
               fb.destroy();
             } catch {}
           }
+        }
         if (tile.posBuf && tile.posBuf !== this.nullPosBuffer) {
           try {
             tile.posBuf.destroy();
@@ -1005,9 +1012,10 @@ export class NoiseComputeBuilder {
         }
       }
     }
-    this._texPairs.delete(tid);
 
-    if (this._tid === tid) {
+    this._texPairs.delete(id);
+
+    if (this._tid === id) {
       this._tid = null;
       this.inputTextureView = null;
       this.outputTextureView = null;
@@ -1018,19 +1026,23 @@ export class NoiseComputeBuilder {
 
   destroyAllTexturePairs() {
     const ids = Array.from(this._texPairs.keys());
-    for (const tid of ids) this.destroyTexturePair(tid);
+    for (const id of ids) this.destroyTexturePair(id);
   }
 
   setActiveTexture(tid) {
-    if (!this._texPairs.has(tid))
+    const id = String(tid);
+    if (!this._texPairs.has(id))
       throw new Error("setActiveTexture: invalid id");
-    this._tid = tid;
-    const pair = this._texPairs.get(tid);
+
+    this._tid = id;
+    const pair = this._texPairs.get(id);
+
     this.viewA = pair.viewA;
     this.viewB = pair.viewB;
     this.width = pair.tileWidth;
     this.height = pair.tileHeight;
     this.layers = pair.layers;
+
     this.inputTextureView = pair.isA ? pair.viewA : pair.viewB;
     this.outputTextureView = pair.isA ? pair.viewB : pair.viewA;
   }
@@ -1346,27 +1358,26 @@ export class NoiseComputeBuilder {
   //  options: customData, frameFullWidth, frameFullHeight
   // ---------------------------
   async computeToTexture(width, height, paramsObj = {}, options = {}) {
-    const W = width | 0,
-      H = height | 0;
+    const W = width | 0;
+    const H = height | 0;
     if (!(W > 0 && H > 0)) {
       throw new Error(`computeToTexture: invalid size ${width}x${height}`);
     }
 
-    if (this._tid != null) {
-      const cur = this._texPairs.get(this._tid);
-      if (!cur || cur.fullWidth !== W || cur.fullHeight !== H) {
-        this.destroyTexturePair(this._tid);
-      }
+    const key = this._get2DKey(options);
+    const existing = this._texPairs.get(key);
+
+    if (!existing) {
+      this._create2DPair(W, H, key);
+    } else if (existing.fullWidth !== W || existing.fullHeight !== H) {
+      this.destroyTexturePair(key);
+      this._create2DPair(W, H, key);
     }
 
-    if (this._tid == null) {
-      const tid = this._create2DPair(W, H);
-      this.setActiveTexture(tid);
-    }
+    this.setActiveTexture(key);
 
-    const pair = this._texPairs.get(this._tid);
-    if (!pair)
-      throw new Error("computeToTexture: failed to create 2D texture pair");
+    const pair = this._texPairs.get(key);
+    if (!pair) throw new Error("computeToTexture: missing pair after ensure");
 
     if (paramsObj && !Array.isArray(paramsObj)) this.setNoiseParams(paramsObj);
 
@@ -1393,10 +1404,10 @@ export class NoiseComputeBuilder {
     };
 
     if (!pair.tiles || pair.bindGroupDirty || !!customData) {
-      this._create2DTileBindGroups(this._tid, tileOpts);
+      this._create2DTileBindGroups(key, tileOpts);
     }
 
-    this._update2DTileFrames(this._tid, tileOpts);
+    this._update2DTileFrames(key, tileOpts);
 
     const isAStart = pair.isA;
     let finalUsed = null;
@@ -1430,14 +1441,29 @@ export class NoiseComputeBuilder {
 
     const resultsInA = finalUsed === lastBGs.bgB;
     pair.isA = resultsInA;
-    this.isA = resultsInA;
-    this.setActiveTexture(this._tid);
 
-    return this.getCurrentView();
+    this.setActiveTexture(key);
+    return this.getCurrentView(key);
   }
 
-  getCurrentView() {
-    const p = this._texPairs.get(this._tid);
+  _get2DKey(options) {
+    const k =
+      options && options.textureKey !== undefined && options.textureKey !== null
+        ? String(options.textureKey)
+        : "";
+    return k && k.length ? k : this._default2DKey;
+  }
+
+  get2DView(key) {
+    const id = String(key);
+    const p = this._texPairs.get(id);
+    if (!p) return null;
+    return p.isA ? p.viewA : p.viewB;
+  }
+
+  getCurrentView(tid = null) {
+    const id = tid !== null && tid !== undefined ? String(tid) : this._tid;
+    const p = this._texPairs.get(id);
     if (!p) return null;
     return p.isA ? p.viewA : p.viewB;
   }
@@ -2785,84 +2811,6 @@ export class NoiseComputeBuilder {
     });
 
     return blob;
-  }
-
-  _installAllocDebug(thresholdBytes = 256 * 1024 * 1024) {
-    if (this._allocDebugInstalled) return;
-    this._allocDebugInstalled = true;
-
-    const dev = this.device;
-
-    const origCreateBuffer = dev.createBuffer.bind(dev);
-    dev.createBuffer = (desc) => {
-      const size = Number(desc?.size ?? 0);
-      if (Number.isFinite(size) && size >= thresholdBytes) {
-        console.warn(
-          "[alloc] createBuffer",
-          {
-            size,
-            usage: desc?.usage,
-            mappedAtCreation: desc?.mappedAtCreation,
-          },
-          "\n",
-          new Error().stack,
-        );
-      }
-      return origCreateBuffer(desc);
-    };
-
-    const origCreateTexture = dev.createTexture.bind(dev);
-    dev.createTexture = (desc) => {
-      const t = origCreateTexture(desc);
-
-      try {
-        const fmt = desc?.format;
-        const bpp =
-          fmt === "rgba16float"
-            ? 8
-            : fmt === "rgba8unorm"
-              ? 4
-              : fmt === "bgra8unorm"
-                ? 4
-                : 0;
-
-        const dim = desc?.dimension || "2d";
-        const s = desc?.size;
-
-        let w = 0,
-          h = 0,
-          d = 1;
-        if (Array.isArray(s)) {
-          w = s[0] | 0;
-          h = s[1] | 0;
-          d = (s[2] ?? 1) | 0;
-        } else if (s && typeof s === "object") {
-          w = s.width | 0;
-          h = s.height | 0;
-          d = (s.depthOrArrayLayers ?? 1) | 0;
-        }
-
-        if (bpp && w > 0 && h > 0 && d > 0) {
-          const approx = w * h * d * bpp;
-          if (approx >= thresholdBytes) {
-            console.warn(
-              "[alloc] createTexture",
-              {
-                format: fmt,
-                dimension: dim,
-                size: desc?.size,
-                approxBytes: approx,
-                usage: desc?.usage,
-              },
-              "\n",
-              new Error().stack,
-            );
-          }
-        }
-      } catch {}
-
-      return t;
-    };
   }
 }
 
