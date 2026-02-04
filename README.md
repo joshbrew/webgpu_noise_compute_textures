@@ -103,6 +103,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 | `computeDomainWarpFBM1`          | Domain warped FBM, configuration one.            |
 | `computeDomainWarpFBM2`          | Domain warped FBM, configuration two.            |
 | `computeGaborAnisotropic`        | Anisotropic Gabor kernel, oriented textures.     |
+| `computeGaborMagic`              | Magic Gabor Weave texture (use terracing)        |
 | `computeTerraceNoise`            | Step based terrace shaping of heights.           |
 | `computeFoamNoise`               | Foamy blobby noise useful for clouds.            |
 | `computeTurbulence`              | Turbulence wrapper, absolute value style.        |
@@ -290,6 +291,7 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
+
 
 
 
