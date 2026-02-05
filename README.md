@@ -5,7 +5,7 @@
 
 ##### See also: [https://codepen.io/joshbrew/pen/RNWQvXB](https://codepen.io/joshbrew/pen/RNWQvXB) Toroidal noise explainer.
 
-##### And for a use case: [Procedural WebGPU volumetric clouds](https://webgpuclouds.netlify.app/)
+##### And for a use case: [Procedural WebGPU volumetric clouds](https://github.com/joshbrew/webgpu_realtime_clouds)
 
 GPU driven noise toolkit for 2D and 3D generative texture tiling. Contains dozens of optimized compute shaders for 2D, 3D, and 4D (toroidal/tiling) variants from classic Perlin and FBM to custom Voronoi Fractal Brownian Motion and so on. You can make some gorgeous tilesets.
 
@@ -104,6 +104,7 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 | `computeDomainWarpFBM2`          | Domain warped FBM, configuration two.            |
 | `computeGaborAnisotropic`        | Anisotropic Gabor kernel, oriented textures.     |
 | `computeGaborMagic`              | Magic Gabor Weave texture (use terracing)        |
+| `computeGaborFlow`               | Gabor flowfield-like                             |
 | `computeTerraceNoise`            | Step based terrace shaping of heights.           |
 | `computeFoamNoise`               | Foamy blobby noise useful for clouds.            |
 | `computeTurbulence`              | Turbulence wrapper, absolute value style.        |
@@ -291,6 +292,7 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
+
 
 
 
