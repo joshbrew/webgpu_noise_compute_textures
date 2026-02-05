@@ -1602,6 +1602,151 @@ fn gaborMagicNoise3D(p: vec3<f32>, par: NoiseParams) -> f32 {
   return v01 * 2.0 - 1.0;
 }
 
+// ───────── flow-gabor helpers ─────────
+
+fn hash2f01(p: vec2<f32>, seed: u32) -> f32 {
+  let h = sin(dot(p, vec2<f32>(12.9898, 78.233)) + f32(seed) * 0.000123);
+  return fract(h * 43758.5453);
+}
+
+fn mnoise3D(p: vec3<f32>, mode: u32) -> f32 {
+  let n = noise3D(p); // ~[-1,1]
+  if (mode == 1u) { return -1.0 + 2.0 * abs(n); }          // cloud-like
+  if (mode == 2u) { return -1.0 + 2.0 * (1.0 - abs(n)); }  // flame-like
+  return n;
+}
+
+fn turb2D(U: vec2<f32>, t: f32, par: NoiseParams) -> f32 {
+  var u = U;
+  var tt = t;
+
+  var f: f32 = 0.0;
+  var q: f32 = 1.0;
+  var s: f32 = 0.0;
+
+  let m: f32 = 2.0;
+  let iters: u32 = clamp(par.octaves, 1u, 4u);
+
+  for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+    if (i >= iters) { break; }
+
+    u -= tt * vec2<f32>(0.6, 0.2);
+    f += q * mnoise3D(vec3<f32>(u, tt), par.voroMode);
+    s += q;
+
+    q *= 0.5;
+    u *= m;
+    tt *= 1.71;
+  }
+
+  return f / max(1e-6, s);
+}
+
+fn flowDir2D(U: vec2<f32>, t: f32, par: NoiseParams) -> vec2<f32> {
+  let eps: f32 = 1e-3;
+  let S: f32 = max(1e-4, par.freq);
+
+  let a = turb2D(S * (U + vec2<f32>(0.0, -eps)), t, par);
+  let b = turb2D(S * (U + vec2<f32>(0.0,  eps)), t, par);
+  let c = turb2D(S * (U + vec2<f32>( eps, 0.0)), t, par);
+  let d = turb2D(S * (U + vec2<f32>(-eps, 0.0)), t, par);
+
+  var V = vec2<f32>((a - b), (c - d)) / eps;
+
+  let l2 = dot(V, V);
+  if (l2 < 1e-20) { V = vec2<f32>(1.0, 0.0); }
+  else { V *= inverseSqrt(l2); }
+
+  // optional: rotate into "normal field" (like the shadertoy toggle)
+  if ((par.voroMode & 4u) != 0u) { V = vec2<f32>(-V.y, V.x); }
+
+  return V;
+}
+
+fn gaborPhasorFlow(U: vec2<f32>, V: vec2<f32>, par: NoiseParams) -> vec2<f32> {
+  let F: f32 = max(1e-4, par.rippleFreq);
+
+  let Wf = select(12.0, par.terraceStep, par.terraceStep > 0.00001);
+  let W  = max(1, i32(clamp(Wf, 1.0, 24.0) + 0.5));
+
+  let TG: f32 = par.time * 0.5 * max(0.0, par.warpAmp);
+
+  var s: vec2<f32> = vec2<f32>(0.0);
+  var T: f32 = 0.0;
+
+  for (var j: i32 = -W; j <= W; j = j + 1) {
+    for (var i: i32 = -W; i <= W; i = i + 1) {
+      let P = vec2<f32>(f32(i), f32(j));
+
+      let h = hash2f01(U + P, par.seed);
+      let ang = TWO_PI * h - F * dot(P, V) + TG;
+
+      let v = vec2<f32>(cos(ang), sin(ang));
+
+      let d = min(1.0, length(P) / f32(W));
+      let K = 0.5 + 0.5 * cos(PI * d); // raised-cosine kernel
+
+      s += v * K;
+      T += K;
+    }
+  }
+
+  return s / max(1e-6, T);
+}
+
+// ───────── generator ─────────
+
+fn generateGaborFlow(pos: vec3<f32>, par: NoiseParams) -> f32 {
+  let zoom = max(par.zoom, 1e-6);
+
+  // reconstruct pixel-ish domain like shadertoy (centered)
+  let R = vec2<f32>(max(f32(frame.fullWidth), 1.0), max(f32(frame.fullHeight), 1.0));
+  let uPix = vec2<f32>(pos.x * R.x, pos.y * R.y);
+  let Uflow = (uPix - 0.5 * R) / R.y;
+
+  // animated flow time
+  let t = par.time * 0.2;
+
+  // flow direction
+  let V = flowDir2D(Uflow * (1.0 / zoom), t, par);
+
+  // gabor phasor (use centered pixel coords like the reference)
+  let s = gaborPhasorFlow((uPix - 0.5 * R) / zoom, V, par);
+
+  // output mode:
+  //  - turbulence==0: phasor profile (0..1)
+  //  - turbulence==1: contrast (magnitude)
+  let l = length(s);
+  var v01: f32;
+
+  if (par.turbulence == 1u) {
+    v01 = saturate(4.0 * l * max(0.0001, par.gain));
+  } else {
+    let nx = select(1.0, s.x / l, l > 1e-8);
+    v01 = 0.5 + 0.5 * nx;
+    v01 = saturate(v01 * max(0.0001, par.gain));
+  }
+
+  if (par.threshold > 0.00001) {
+    let tt = saturate(par.threshold);
+    let hard = max(0.0001, par.exp1);
+    v01 = smoothstep(tt - hard, tt + hard, v01);
+  }
+
+  return v01 * 2.0 - 1.0;
+}
+
+// ───────── compute entry ─────────
+
+@compute @workgroup_size(8,8,1)
+fn computeGaborFlow(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+  let p  = fetchPos(fx, fy, fz);
+  writeChannel(fx, fy, fz, generateGaborFlow(p, params), options.outputChannel, 0u);
+}
+
 
 /*────────────────────  Terrace & Foam filters  ───────────────*/
 fn terrace(v:f32, steps:f32)  -> f32 { return floor(v*steps)/steps; }

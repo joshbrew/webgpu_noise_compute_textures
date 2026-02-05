@@ -114,6 +114,7 @@ export class NoiseComputeBuilder {
 
       "computeGaborAnisotropic",
       "computeGaborMagic",
+      "computeGaborFlow",
 
       "computeTerraceNoise",
       "computeFoamNoise",
