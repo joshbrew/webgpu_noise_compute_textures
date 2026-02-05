@@ -1604,6 +1604,151 @@ fn gaborMagicNoise3D(p: vec3<f32>, par: NoiseParams) -> f32 {\r
   return v01 * 2.0 - 1.0;\r
 }\r
 \r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 flow-gabor helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+\r
+fn hash2f01(p: vec2<f32>, seed: u32) -> f32 {\r
+  let h = sin(dot(p, vec2<f32>(12.9898, 78.233)) + f32(seed) * 0.000123);\r
+  return fract(h * 43758.5453);\r
+}\r
+\r
+fn mnoise3D(p: vec3<f32>, mode: u32) -> f32 {\r
+  let n = noise3D(p); // ~[-1,1]\r
+  if (mode == 1u) { return -1.0 + 2.0 * abs(n); }          // cloud-like\r
+  if (mode == 2u) { return -1.0 + 2.0 * (1.0 - abs(n)); }  // flame-like\r
+  return n;\r
+}\r
+\r
+fn turb2D(U: vec2<f32>, t: f32, par: NoiseParams) -> f32 {\r
+  var u = U;\r
+  var tt = t;\r
+\r
+  var f: f32 = 0.0;\r
+  var q: f32 = 1.0;\r
+  var s: f32 = 0.0;\r
+\r
+  let m: f32 = 2.0;\r
+  let iters: u32 = clamp(par.octaves, 1u, 4u);\r
+\r
+  for (var i: u32 = 0u; i < 4u; i = i + 1u) {\r
+    if (i >= iters) { break; }\r
+\r
+    u -= tt * vec2<f32>(0.6, 0.2);\r
+    f += q * mnoise3D(vec3<f32>(u, tt), par.voroMode);\r
+    s += q;\r
+\r
+    q *= 0.5;\r
+    u *= m;\r
+    tt *= 1.71;\r
+  }\r
+\r
+  return f / max(1e-6, s);\r
+}\r
+\r
+fn flowDir2D(U: vec2<f32>, t: f32, par: NoiseParams) -> vec2<f32> {\r
+  let eps: f32 = 1e-3;\r
+  let S: f32 = max(1e-4, par.freq);\r
+\r
+  let a = turb2D(S * (U + vec2<f32>(0.0, -eps)), t, par);\r
+  let b = turb2D(S * (U + vec2<f32>(0.0,  eps)), t, par);\r
+  let c = turb2D(S * (U + vec2<f32>( eps, 0.0)), t, par);\r
+  let d = turb2D(S * (U + vec2<f32>(-eps, 0.0)), t, par);\r
+\r
+  var V = vec2<f32>((a - b), (c - d)) / eps;\r
+\r
+  let l2 = dot(V, V);\r
+  if (l2 < 1e-20) { V = vec2<f32>(1.0, 0.0); }\r
+  else { V *= inverseSqrt(l2); }\r
+\r
+  // optional: rotate into "normal field" (like the shadertoy toggle)\r
+  if ((par.voroMode & 4u) != 0u) { V = vec2<f32>(-V.y, V.x); }\r
+\r
+  return V;\r
+}\r
+\r
+fn gaborPhasorFlow(U: vec2<f32>, V: vec2<f32>, par: NoiseParams) -> vec2<f32> {\r
+  let F: f32 = max(1e-4, par.rippleFreq);\r
+\r
+  let Wf = select(12.0, par.terraceStep, par.terraceStep > 0.00001);\r
+  let W  = max(1, i32(clamp(Wf, 1.0, 24.0) + 0.5));\r
+\r
+  let TG: f32 = par.time * 0.5 * max(0.0, par.warpAmp);\r
+\r
+  var s: vec2<f32> = vec2<f32>(0.0);\r
+  var T: f32 = 0.0;\r
+\r
+  for (var j: i32 = -W; j <= W; j = j + 1) {\r
+    for (var i: i32 = -W; i <= W; i = i + 1) {\r
+      let P = vec2<f32>(f32(i), f32(j));\r
+\r
+      let h = hash2f01(U + P, par.seed);\r
+      let ang = TWO_PI * h - F * dot(P, V) + TG;\r
+\r
+      let v = vec2<f32>(cos(ang), sin(ang));\r
+\r
+      let d = min(1.0, length(P) / f32(W));\r
+      let K = 0.5 + 0.5 * cos(PI * d); // raised-cosine kernel\r
+\r
+      s += v * K;\r
+      T += K;\r
+    }\r
+  }\r
+\r
+  return s / max(1e-6, T);\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+\r
+fn generateGaborFlow(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+  let zoom = max(par.zoom, 1e-6);\r
+\r
+  // reconstruct pixel-ish domain like shadertoy (centered)\r
+  let R = vec2<f32>(max(f32(frame.fullWidth), 1.0), max(f32(frame.fullHeight), 1.0));\r
+  let uPix = vec2<f32>(pos.x * R.x, pos.y * R.y);\r
+  let Uflow = (uPix - 0.5 * R) / R.y;\r
+\r
+  // animated flow time\r
+  let t = par.time * 0.2;\r
+\r
+  // flow direction\r
+  let V = flowDir2D(Uflow * (1.0 / zoom), t, par);\r
+\r
+  // gabor phasor (use centered pixel coords like the reference)\r
+  let s = gaborPhasorFlow((uPix - 0.5 * R) / zoom, V, par);\r
+\r
+  // output mode:\r
+  //  - turbulence==0: phasor profile (0..1)\r
+  //  - turbulence==1: contrast (magnitude)\r
+  let l = length(s);\r
+  var v01: f32;\r
+\r
+  if (par.turbulence == 1u) {\r
+    v01 = saturate(4.0 * l * max(0.0001, par.gain));\r
+  } else {\r
+    let nx = select(1.0, s.x / l, l > 1e-8);\r
+    v01 = 0.5 + 0.5 * nx;\r
+    v01 = saturate(v01 * max(0.0001, par.gain));\r
+  }\r
+\r
+  if (par.threshold > 0.00001) {\r
+    let tt = saturate(par.threshold);\r
+    let hard = max(0.0001, par.exp1);\r
+    v01 = smoothstep(tt - hard, tt + hard, v01);\r
+  }\r
+\r
+  return v01 * 2.0 - 1.0;\r
+}\r
+\r
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 compute entry \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
+\r
+@compute @workgroup_size(8,8,1)\r
+fn computeGaborFlow(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+  let p  = fetchPos(fx, fy, fz);\r
+  writeChannel(fx, fy, fz, generateGaborFlow(p, params), options.outputChannel, 0u);\r
+}\r
+\r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Terrace & Foam filters  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
 fn terrace(v:f32, steps:f32)  -> f32 { return floor(v*steps)/steps; }\r
@@ -5569,6 +5714,7 @@ fn computeGauss5x5(\r
         "computeDomainWarpFBM2",
         "computeGaborAnisotropic",
         "computeGaborMagic",
+        "computeGaborFlow",
         "computeTerraceNoise",
         "computeFoamNoise",
         "computeTurbulence",
