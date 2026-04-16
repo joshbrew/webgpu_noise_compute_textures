@@ -154,6 +154,10 @@ export class NoiseComputeBuilder {
       "computeFoamNoise4D",
       "computeTurbulence4D",
 
+      "computeHydrologyErosionHeightfield",
+      "computeHydrologyGuideField",
+      "computeHydrologyDrainageMask",
+
       //normal map computing.
       "computeGauss5x5",
       "computeNormal",
