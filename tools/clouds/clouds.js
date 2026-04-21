@@ -1113,27 +1113,28 @@ export class CloudComputeBuilder {
     }
   }
 
-
   setLayerIndex(i) {
     this._dvFrame.setInt32(36, i | 0, true);
     this._writeIfChanged("frame", this.frameBuffer, this._abFrame);
   }
 
-  setViewFromCamera({
-    camPos = [0, 0, 3],
-    right = [1, 0, 0],
-    up = [0, 1, 0],
-    fwd = [0, 0, 1],
-    fovYDeg = 60,
-    aspect = 1,
-    planetRadius = 0.0,
-    cloudBottom = -1.0,
-    cloudTop = 1.0,
-    worldToUV = 1.0,
-    stepBase = 0.02,
-    stepInc = 0.04,
-    volumeLayers = 1,
-  } = {}) {
+  setViewFromCamera(opts = {}) {
+    const {
+      camPos = [0, 0, 3],
+      right = [1, 0, 0],
+      up = [0, 1, 0],
+      fwd = [0, 0, 1],
+      fovYDeg = 60,
+      aspect,
+      planetRadius = 0.0,
+      cloudBottom = -1.0,
+      cloudTop = 1.0,
+      worldToUV = 1.0,
+      stepBase = 0.02,
+      stepInc = 0.04,
+      volumeLayers = 1,
+    } = opts;
+
     const dv = this._dvView;
 
     const norm = (v) => {
@@ -1154,6 +1155,13 @@ export class CloudComputeBuilder {
       f[0] * r[1] - f[1] * r[0],
     ];
 
+    let a = +aspect;
+    if (!(a > 0)) {
+      const w = this.width | 0;
+      const h = this.height | 0;
+      a = w > 0 && h > 0 ? w / h : 1.0;
+    }
+
     const floats = [
       camPos[0],
       camPos[1],
@@ -1172,7 +1180,7 @@ export class CloudComputeBuilder {
       f[2],
       0,
       (fovYDeg * Math.PI) / 180,
-      aspect,
+      a,
       stepBase,
       stepInc,
       planetRadius,
@@ -2419,13 +2427,38 @@ export class CloudComputeBuilder {
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }
 
-  _ensureCanvasConfigured(canvas, format = "bgra8unorm") {
+  _ensureCanvasConfigured(canvas, format = "bgra8unorm", opts = {}) {
     if (!canvas) throw new Error("_ensureCanvasConfigured: canvas required");
-    const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
-    const clientW = Math.max(1, Math.round(canvas.clientWidth));
-    const clientH = Math.max(1, Math.round(canvas.clientHeight));
-    const displayW = Math.max(1, Math.floor(clientW * dpr));
-    const displayH = Math.max(1, Math.floor(clientH * dpr));
+
+    const max2D =
+      (this.device &&
+        this.device.limits &&
+        this.device.limits.maxTextureDimension2D) ||
+      16384;
+
+    const cssW0 = opts.cssWidth ?? canvas.clientWidth ?? canvas.width ?? 1;
+    const cssH0 = opts.cssHeight ?? canvas.clientHeight ?? canvas.height ?? 1;
+
+    const cssW = Math.max(1, Math.round(cssW0));
+    const cssH = Math.max(1, Math.round(cssH0));
+
+    const dprRaw = opts.dpr ?? (window.devicePixelRatio || 1);
+    const dpr = Math.max(1, Math.floor(dprRaw));
+
+    let displayW =
+      opts.pixelWidth != null
+        ? Math.max(1, opts.pixelWidth | 0)
+        : Math.max(1, Math.floor(cssW * dpr));
+    let displayH =
+      opts.pixelHeight != null
+        ? Math.max(1, opts.pixelHeight | 0)
+        : Math.max(1, Math.floor(cssH * dpr));
+
+    if (displayW > max2D || displayH > max2D) {
+      const s = Math.min(max2D / displayW, max2D / displayH);
+      displayW = Math.max(1, Math.floor(displayW * s));
+      displayH = Math.max(1, Math.floor(displayH * s));
+    }
 
     let ctxRec = this._ctxCache.get(canvas);
     if (!ctxRec) {
@@ -2457,7 +2490,8 @@ export class CloudComputeBuilder {
       state.hasContent = false;
       ctxRec.format = format;
     }
-    return { ctx, state };
+
+    return { ctx, state, displayW, displayH };
   }
 
   renderToCanvas(canvas, opts = {}) {
@@ -2465,6 +2499,7 @@ export class CloudComputeBuilder {
       throw new Error(
         "Nothing to render: run dispatch() first or setOutputView().",
       );
+
     const { pipe, bgl, samp, format } =
       this._ensureRenderPipeline("bgra8unorm");
 
@@ -2480,7 +2515,12 @@ export class CloudComputeBuilder {
       canvas.style.removeProperty("aspect-ratio");
     }
 
-    const { ctx, state } = this._ensureCanvasConfigured(canvas, format);
+    const { ctx, state, displayW, displayH } = this._ensureCanvasConfigured(
+      canvas,
+      format,
+      opts,
+    );
+
     const skyColor = opts.skyColor ?? [0.55, 0.7, 0.95];
 
     if (!this._lastHadWork || !this.outView) {
@@ -2507,7 +2547,28 @@ export class CloudComputeBuilder {
       return;
     }
 
-    this._writeRenderUniforms(opts);
+    const inferredAspect = (displayH > 0 ? displayW / displayH : 1.0) || 1.0;
+
+    let renderOpts = opts;
+    const hasAspect =
+      Object.prototype.hasOwnProperty.call(opts || {}, "aspect") ||
+      (opts.cam && Object.prototype.hasOwnProperty.call(opts.cam, "aspect"));
+
+    if (!hasAspect) {
+      renderOpts = { ...opts, aspect: inferredAspect };
+      if (
+        opts.cam &&
+        opts.cam.camPos &&
+        opts.cam.right &&
+        opts.cam.up &&
+        opts.cam.fwd
+      ) {
+        renderOpts.cam = { ...opts.cam, aspect: inferredAspect };
+        delete renderOpts.aspect;
+      }
+    }
+
+    this._writeRenderUniforms(renderOpts);
     const bundle = this._getOrCreateRenderBundle(canvas, pipe, bgl, samp);
 
     const enc = this.device.createCommandEncoder();

@@ -400,37 +400,45 @@ fn heightShape(ph: f32, wBlue: f32) -> f32 {
 }
 
 // wm.r and wm.g still drive base/top jitter.
-// wm.b is a per-column lower bound fraction of the box height:
-//   - 0.1 means clouds start at 10% of box height above the box bottom
-//   - >= 1.0 means no clouds in that column
+// wm.b is a per-column CUTOUT fraction of the box height:
+//   - 0.0 means no cutout
+//   - 0.5 means the bottom half is forbidden (only top half can render)
+//   - 1.0 means the whole column is forbidden
 fn weatherBaseTopY(wm: vec4<f32>) -> vec2<f32> {
   let boxH = max(B.half.y * 2.0, EPS);
   let boxBottom = (B.center.y - B.half.y);
   let boxTop = (B.center.y + B.half.y);
 
-  let wAxisY = max(abs(axisOrOne3(NTransform.weatherAxisScale).y), EPS);
-
   let jBase = (wm.r * 2.0 - 1.0) * (TUNE.baseJitterFrac * boxH);
   let jTop = (wm.g * 2.0 - 1.0) * (TUNE.topJitterFrac * boxH);
 
-  var baseY = boxBottom + jBase;
+  let baseY = boxBottom + jBase;
   let topY = boxTop + jTop;
-
-  if (wm.b >= 1.0) {
-    return vec2<f32>(1.0, 0.0);
-  }
-
-  let baseBound = boxBottom + max(wm.b, 0.0) * (boxH / wAxisY);
-  baseY = max(baseY, baseBound);
 
   return vec2<f32>(baseY, topY);
 }
 
+fn weatherCutY(wm: vec4<f32>) -> f32 {
+  let boxH = max(B.half.y * 2.0, EPS);
+  let boxBottom = (B.center.y - B.half.y);
+  let b = clamp(wm.b, 0.0, 1.0);
+  return boxBottom + b * boxH;
+}
+
 fn computePH(p_world: vec3<f32>, wm: vec4<f32>) -> f32 {
+  if (wm.b >= 1.0) { return -1.0; }
+
   let bt = weatherBaseTopY(wm);
   let baseY = bt.x;
   let topY = bt.y;
   if (topY - baseY <= EPS) { return -1.0; }
+
+  // null outside the jittered slab
+  if (p_world.y < baseY || p_world.y > topY) { return -1.0; }
+
+  // hard cutout: forbid everything below wm.b cut height, without renormalizing ph
+  let cutY = weatherCutY(wm);
+  if (p_world.y < cutY) { return -1.0; }
 
   let wAxisY = max(abs(axisOrOne3(NTransform.weatherAxisScale).y), EPS);
   let denom = max(topY - baseY, EPS) * wAxisY;
@@ -438,10 +446,37 @@ fn computePH(p_world: vec3<f32>, wm: vec4<f32>) -> f32 {
   return saturate((p_world.y - baseY) / denom);
 }
 
-fn detailMod(ph: f32, d: vec3<f32>) -> f32 {
-  let fbm = d.r * 0.625 + d.g * 0.25 + d.b * 0.125;
-  return 0.35 * exp(-C.globalCoverage * 0.75) * mix_f(fbm, 1.0 - fbm, saturate(ph * 5.0));
+
+
+fn contrast01(x: f32, k: f32) -> f32 {
+  return saturate((x - 0.5) * k + 0.5);
 }
+
+fn ridge01(x: f32) -> f32 {
+  return 1.0 - abs(x * 2.0 - 1.0);
+}
+
+fn detailMod(ph: f32, d: vec3<f32>) -> f32 {
+  // robust "one channel or many channels"
+  var x = max(d.r, max(d.g, d.b));
+  x = saturate(x);
+
+  // make detail bite: ridge + contrast
+  x = contrast01(x, 1.75);
+  let r = ridge01(x);
+  let crisp = pow(saturate(r), 1.6);
+
+  // more detail in the body of the cloud, less near the very bottom
+  let h = saturate(remap(ph, 0.06, 0.85, 0.0, 1.0));
+
+  // keep some erosion even at high coverage, but reduce it a bit for overcast
+  let cov = saturate(C.globalCoverage);
+  let covAtten = exp(-cov * 0.55);
+
+  // output is a threshold in [~0.12 .. ~0.65]
+  return saturate(0.12 + (0.55 * covAtten) * crisp * h);
+}
+
 
 fn densityHeight(ph: f32) -> f32 {
   var ret = ph;
@@ -463,18 +498,31 @@ fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f
   if (ph < 0.0) { return 0.0; }
   if (wm.b >= 1.0) { return 0.0; }
 
-  let fbm_s = s.g * 0.625 + s.b * 0.25 + s.a * 0.125 - 1.0;
-  let SNsample = remap(s.r, fbm_s, 1.0, 0.0, 1.0);
+  // base shape
+  var shape = saturate(s.r);
+  shape = contrast01(shape, 1.35);
+
+  // "fbm" from the other channels if present, otherwise still sane
+  let fbm_s = saturate(s.g * 0.625 + s.b * 0.25 + s.a * 0.125);
+
+  // treat fbm_s as an erosion threshold for the base shape
+  let SNsample = saturate(remap(shape, fbm_s, 1.0, 0.0, 1.0));
 
   var SA = saturate(heightShape(ph, 1.0));
   let wVar = fract(wm.r * 1.7 + wm.g * 2.3);
-  let bulge = 1.0 + 0.18 * (abs(fract(ph * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;
+  let bulge = 1.0 + 0.22 * (abs(fract(ph * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;
   SA = saturate(SA * bulge);
 
   let gate = weatherCoverageGate(wm);
   let SNnd = saturate(remap(SNsample * SA, gate, 1.0, 0.0, 1.0));
+
+  // detail-driven erosion threshold (stronger than before)
   let DN = detailMod(ph, det);
-  let core = saturate(remap(SNnd, DN, 1.0, 0.0, 1.0));
+
+  // sharper transition from empty -> dense
+  var core = saturate(remap(SNnd, DN, 1.0, 0.0, 1.0));
+  core = pow(core, 1.35);
+
   return max(core * densityHeight(ph), 0.0);
 }
 
@@ -865,7 +913,7 @@ fn computeCloud(
 
   var iter: i32 = 0;
 
-  loop {
+    loop {
     if (iter >= TUNE.maxSteps) { break; }
     if (t >= t1 || Tr < 0.001) { break; }
 
@@ -879,6 +927,9 @@ fn computeCloud(
 
     if (weatherProbeEmpty(p, rayRd, baseStep * 2.0, 3, coarseMip, squareOrigin_xz, invSide, wScale)) {
       t = min(t + baseStep * TUNE.emptySkipMult, t1);
+      prevDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
       iter = iter + 1;
       continue;
     }
@@ -889,6 +940,9 @@ fn computeCloud(
 
     if (wm_coarse.b >= 1.0) {
       t = min(t + baseStep * 2.0, t1);
+      prevDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
       iter = iter + 1;
       continue;
     }
@@ -897,6 +951,9 @@ fn computeCloud(
     let quickCoverage = saturate((wm_coarse.r - 0.35) * 2.5);
     if (quickCoverage < 0.01 && (ph_coarse < 0.02)) {
       t = min(t + baseStep * 2.0, t1);
+      prevDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
       iter = iter + 1;
       continue;
     }
@@ -916,6 +973,9 @@ fn computeCloud(
 
     if (wm.b >= 1.0) {
       t = min(t + baseStep * 2.0, t1);
+      prevDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
       iter = iter + 1;
       continue;
     }
@@ -923,6 +983,9 @@ fn computeCloud(
     let ph = computePH(p, wm);
     if (ph < 0.0) {
       t = min(t + baseStep * 2.0, t1);
+      prevDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
       iter = iter + 1;
       continue;
     }

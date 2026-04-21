@@ -22,7 +22,7 @@ let ENTRY_POINTS = [];
 
 // Default preview + noise param blocks (each has seed)
 const preview = {
-  cam: { x: -1, y: 0, z: -1, yawDeg: 35, pitchDeg: 1, fovYDeg: 60 },
+  cam: { x: -1.2, y: 0.1, z: -1, yawDeg: 35, pitchDeg: 1, fovYDeg: 60 },
   exposure: 1.35,
   sky: [0.55, 0.7, 0.95],
   layer: 0,
@@ -94,11 +94,11 @@ const shapeParams = {
   gain: 0.5,
   threshold: 0.0,
   time: 0.0,
-  voroMode: 7,
+  voroMode: 3,
   edgeK: 0.0,
   warpAmp: 0.0,
-  baseModeA: "computePerlin4D",
-  baseModeB: "computeAntiWorley4D",
+  baseModeA: "computeBillow4D",
+  baseModeB: "computeWorley4D",
   bandMode2: "computeWorley4D",
   bandMode3: "computeWorley4D",
   bandMode4: "computeWorley4D",
@@ -138,7 +138,7 @@ const tileTransforms = {
   detailAxisScale: [1.0, 1.0, 1.0],
   weatherAxisScale: [1.0, 1.0, 1.0],
 
-  shapeVel: [0.2, 0.0, 0.0],
+  shapeVel: [0.1, 0.0, 0.0],
   detailVel: [-0.02, 0.0, 0.0],
 };
 

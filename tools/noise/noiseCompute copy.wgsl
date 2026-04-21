@@ -1292,31 +1292,27 @@ fn gradSimplex2(q: vec2<f32>, eps: f32) -> vec2<f32> {
 
 /* single-octave curl = grad rotated 90° (∂N/∂y, -∂N/∂x) */
 fn curl2_simplex2D(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {
-  let zoom = max(p.zoom, 1e-6);
-  let freq = max(p.freq, 1e-6);
-  let base = pos / zoom + vec2<f32>(p.xShift, p.yShift);
-  let q = base * freq;
+  let q = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);
 
   // choose ε ~ half a cycle of current scale to avoid lattice aliasing
-  let cycles_per_world = max(freq / zoom, 1e-6);
+  let cycles_per_world = max(p.freq / max(p.zoom, 1e-6), 1e-6);
   let eps = 0.5 / cycles_per_world;
 
-  let g = gradSimplex2(q, eps * freq);
+  let g = gradSimplex2(q, eps);
   return vec2<f32>(g.y, -g.x);
 }
 
 /* multi-octave curl: sum derivatives per octave (no sharp creases) */
 fn curl2_simplexFBM(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {
-  let zoom = max(p.zoom, 1e-6);
-  var q      = pos / zoom + vec2<f32>(p.xShift, p.yShift);
-  var freq   : f32 = max(p.freq, 1e-6);
+  var q      = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);
+  var freq   : f32 = p.freq;
   var amp    : f32 = 1.0;
   var angle  : f32 = p.seedAngle;
   var curl   : vec2<f32> = vec2<f32>(0.0);
 
   for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {
     // ε scales with octave so the finite difference stays well-conditioned
-    let cycles_per_world = max(freq / zoom, 1e-6);
+    let cycles_per_world = max(freq / max(p.zoom, 1e-6), 1e-6);
     let eps = 0.5 / cycles_per_world;
 
     let g = gradSimplex2(q * freq, eps * freq);
@@ -1489,7 +1485,7 @@ fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {
 
   var sum     : f32 = 0.0;
   var amp     : f32 = 1.0;
-  var freqLoc : f32 = max(params.freq, 1e-6);
+  var freqLoc : f32 = params.freq;
   var angle   : f32 = params.seedAngle;
 
   let waveFreq = max(0.001, params.rippleFreq);
@@ -1780,74 +1776,64 @@ fn computeGaborFlow(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 /*────────────────────  Terrace & Foam filters  ───────────────*/
 fn terrace(v:f32, steps:f32)  -> f32 { return floor(v*steps)/steps; }
-fn foamify(v: f32) -> f32 {
-    let x = clamp(v, 0.0, 1.0);
-
-    let lo = smoothstep(0.18, 0.48, x);
-    let hi = 1.0 - smoothstep(0.58, 0.92, x);
-
-    let band = clamp(lo * hi, 0.0, 1.0);
-    return pow(band, 0.6);
-}
+fn foamify(v:f32)             -> f32 { return pow(abs(v), 3.0)*sign(v); }
 fn turbulence(v:f32)          -> f32 { return abs(v); }
 
 /*──────────────────── Simplex (multi-octave) ───────────────────*/
 fn generateSimplex(pos: vec3<f32>, p: NoiseParams) -> f32 {
-    let invZoom = 1.0 / max(p.zoom, 1e-6);
-    let domainOffset = seedOffset3(p.seed);
-
-    let base = vec3<f32>(
-      pos.x * invZoom + p.xShift,
-      pos.y * invZoom + p.yShift,
-      pos.z * invZoom + p.zShift
-    ) + domainOffset;
+    // start coords (zoom/freq/shift)
+    var x = pos.x / p.zoom * p.freq + p.xShift;
+    var y = pos.y / p.zoom * p.freq + p.yShift;
+    var z = pos.z / p.zoom * p.freq + p.zShift;
 
     var sum     : f32 = 0.0;
     var amp     : f32 = 1.0;
-    var ampSum  : f32 = 0.0;
-    var freqLoc : f32 = max(p.freq, 1e-6);
+    var freqLoc : f32 = p.freq;
     var angle   : f32 = p.seedAngle;
 
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {
-        let samplePos = rotateXY3(base, angle) * freqLoc;
-        var n = simplex3D(samplePos);
+        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
         if (p.turbulence == 1u) { n = abs(n); }
         sum += n * amp;
-        ampSum += amp;
 
+        // advance octave
         freqLoc *= p.lacunarity;
         amp     *= p.gain;
-        angle   += ANGLE_INCREMENT;
+
+        // rotate in XY and bleed into Z — matches your Perlin cadence
+        let c  = cos(angle);
+        let s  = sin(angle);
+        let nx = x * c - y * s;
+        let ny = x * s + y * c;
+        let nz = y * s + z * c;
+
+        x = nx + p.xShift;
+        y = ny + p.yShift;
+        z = nz + p.zShift;
+
+        angle += ANGLE_INCREMENT;
     }
 
-    if (ampSum > 0.0) {
-        sum = sum / ampSum;
-    }
-    if (p.turbulence == 1u) { sum = sum * 2.0 - 1.0; }
+    if (p.turbulence == 1u) { sum -= 1.0; }
     return sum;
 }
 
 /*────────────  Simplex-based fBm helper (normalized)  ───────────*/
 fn sfbm3D(pos : vec3<f32>, params: NoiseParams) -> f32 {
-    let invZoom = 1.0 / max(params.zoom, 1e-6);
-    let domainOffset = seedOffset3(params.seed);
-
-    let base = vec3<f32>(
-      pos.x * invZoom + params.xShift,
-      pos.y * invZoom + params.yShift,
-      pos.z * invZoom + params.zShift
-    ) + domainOffset;
+    var x = (pos.x + params.xShift) / params.zoom;
+    var y = (pos.y + params.yShift) / params.zoom;
+    var z = (pos.z + params.zShift) / params.zoom;
 
     var sum       : f32 = 0.0;
     var amplitude : f32 = 1.0;
     var maxValue  : f32 = 0.0;
-    var freqLoc   : f32 = max(params.freq, 1e-6);
+    var freqLoc   : f32 = params.freq;
+
     var angle     : f32 = params.seedAngle;
     let angleInc  : f32 = 2.0 * PI / max(f32(params.octaves), 1.0);
 
     for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {
-        let samplePos = rotateXY3(base, angle) * freqLoc;
-        var n = simplex3D(samplePos);
+        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
         if (params.turbulence == 1u) { n = abs(n); }
 
         sum      += amplitude * n;
@@ -1855,15 +1841,21 @@ fn sfbm3D(pos : vec3<f32>, params: NoiseParams) -> f32 {
 
         freqLoc   *= params.lacunarity;
         amplitude *= params.gain;
-        angle     += angleInc;
+
+        // rotate & shift per octave (keeps look consistent with Perlin FBM)
+        angle += angleInc;
+        let c = cos(angle);
+        let s = sin(angle);
+        let nx = x * c - y * s;
+        let ny = x * s + y * c;
+        let nz = y * s + z * c;
+        x = nx + params.xShift;
+        y = ny + params.yShift;
+        z = nz + params.zShift;
     }
 
     if (maxValue > 0.0) {
-        var out = sum / maxValue;
-        if (params.turbulence == 1u) {
-            out = out * 2.0 - 1.0;
-        }
-        return out;
+        return sum / maxValue;
     }
     return 0.0;
 }
@@ -1939,23 +1931,30 @@ fn generatePerlin(pos: vec3<f32>, params: NoiseParams) -> f32 {
 fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
   let zoom = max(params.zoom, 1e-6);
 
-  var base: vec4<f32>;
+  // Prepare base coords + starting frequency
+  var base    : vec4<f32>;
+  var freqLoc : f32;
+
   if (params.toroidal == 1u) {
-    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    // pos = (U,V,θ); HTML-style: apply zoom outside the octave loop
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    freqLoc = params.freq;                 // (freq/zoom) == (base/zoom * freq)
   } else {
+    // original non-toroidal semantics (note: freq is baked in before the loop)
     base = vec4<f32>(
-      pos.x / zoom + params.xShift,
-      pos.y / zoom + params.yShift,
-      pos.z / zoom + params.zShift,
+      pos.x / zoom * params.freq + params.xShift,
+      pos.y / zoom * params.freq + params.yShift,
+      pos.z / zoom * params.freq + params.zShift,
       params.time
     );
+    freqLoc = params.freq;
   }
 
-  var sum     : f32 = 0.0;
-  var amp     : f32 = 1.0;
-  var freqLoc : f32 = max(params.freq, 1e-6);
-  var angle   : f32 = params.seedAngle;
+  var sum   : f32 = 0.0;
+  var amp   : f32 = 1.0;
+  var angle : f32 = params.seedAngle;
 
+  // Shared octave loop
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
     var n = noise4D(base * freqLoc) * amp;
     if (params.turbulence == 1u) { n = abs(n); }
@@ -1964,6 +1963,7 @@ fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
     freqLoc *= params.lacunarity;
     amp     *= params.gain;
 
+    // Only the non-toroidal path uses octave rotation/offset churn
     if (params.toroidal != 1u) {
       let c = cos(angle);
       let s = sin(angle);
@@ -2004,39 +2004,45 @@ fn generateTurbulence(pos: vec3<f32>, par: NoiseParams) -> f32 {
 
 // ──────────────────────── Billow Noise Generator ────────────────────────
 fn generateBillow(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-
-    var p = pos / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);
+    // Base domain mapping
+    var p = (pos / params.zoom) * params.freq
+          + vec3<f32>(params.xShift, params.yShift, params.zShift);
 
     var sum: f32     = 0.0;
     var amp: f32     = 1.0;
-    var freqLoc: f32 = max(params.freq, 1e-6);
+    var freqLoc: f32 = 1.0;          // start at base; multiply by lacunarity each octave
     var ampSum: f32  = 0.0;
     var angle: f32   = params.seedAngle;
 
+    // Octave stack
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+        // Billow core: absolute value of gradient noise
         let n  = noise3D(p * freqLoc);
-        let b  = pow(abs(n), 0.75);
+        let b  = pow(abs(n), 0.75);   // gentle gamma (<1) puffs the domes
         sum    = sum + b * amp;
         ampSum = ampSum + amp;
 
+        // Advance octave
         freqLoc = freqLoc * params.lacunarity;
         amp     = amp     * params.gain;
 
+        // Cheap domain rotation (XY) + tiny Z drift to break symmetry
         let c  = cos(angle);
         let s  = sin(angle);
         let xy = vec2<f32>(p.x, p.y);
         let r  = vec2<f32>(xy.x * c - xy.y * s, xy.x * s + xy.y * c);
-        p = vec3<f32>(r.x, r.y, p.z + 0.03125);
+        p = vec3<f32>(r.x, r.y, p.z + 0.03125);   // small constant drift
 
         angle = angle + ANGLE_INCREMENT;
     }
 
+    // Normalize to [0,1]
     if (ampSum > 0.0) {
         sum = sum / ampSum;
     }
 
-    let k: f32 = 1.2;
+    // Mild contrast curve around 0.5 so domes pop without creating ridge-like creases
+    let k: f32 = 1.2;                // 1.0 = linear; >1 increases local contrast
     let cMid   = sum - 0.5;
     let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));
 
@@ -2060,14 +2066,12 @@ fn ridgeNoise(pos : vec3<f32>) -> f32 {
 // octave‐sum generator using ridge noise
 // sample like: let r = generateRidge(vec3<f32>(x,y,z));
 fn generateRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-
-    var x = pos.x / zoom + params.xShift;
-    var y = pos.y / zoom + params.yShift;
-    var z = pos.z / zoom + params.zShift;
+    var x = pos.x / params.zoom * params.freq + params.xShift;
+    var y = pos.y / params.zoom * params.freq + params.yShift;
+    var z = pos.z / params.zoom * params.freq + params.zShift;
     var sum     : f32 = 0.0;
     var amp     : f32 = 1.0;
-    var freqLoc : f32 = max(params.freq, 1e-6);
+    var freqLoc : f32 = params.freq;
 
     for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {
         sum = sum + ridgeNoise(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)) * amp;
@@ -2078,6 +2082,7 @@ fn generateRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {
         z = z + params.zShift;
     }
 
+    // JS did: sum -= 1; return -sum;
     sum = sum - 1.0;
     return -sum;
 }
@@ -2091,21 +2096,23 @@ fn generateAntiRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
 // ─────────────── Ridged Multifractal Noise (Fast Lanczos) ───────────────
 fn generateRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
+    // initial coords: zoom + freq
+    var x = pos.x / params.zoom * params.freq + params.xShift;
+    var y = pos.y / params.zoom * params.freq + params.yShift;
+    var z = pos.z / params.zoom * params.freq + params.zShift;
 
-    var x = pos.x / zoom + params.xShift;
-    var y = pos.y / zoom + params.yShift;
-    var z = pos.z / zoom + params.zShift;
-    var freqLoc : f32 = max(params.freq, 1e-6);
-
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));
+    // first octave
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));
     var amp : f32 = 1.0;
 
+    // subsequent octaves
     for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {
-        freqLoc = freqLoc * params.lacunarity;
+        x = x * params.lacunarity;
+        y = y * params.lacunarity;
+        z = z * params.lacunarity;
         amp = amp * params.gain;
 
-        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));
         if (params.exp2 != 0.0) {
             n = 1.0 - pow(n, params.exp2);
         }
@@ -2125,22 +2132,22 @@ fn generateRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
 // ───────────── Ridged Multifractal Noise 2 (Fast Lanczos + Rotation) ────────────
 fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
+    // zoom + freq
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;
 
-    var x = (pos.x + params.xShift) / zoom;
-    var y = (pos.y + params.yShift) / zoom;
-    var z = (pos.z + params.zShift) / zoom;
-
-    var freqLoc : f32 = max(params.freq, 1e-6);
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));
     var amp : f32 = 1.0;
     var angle : f32 = params.seedAngle;
 
     for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {
-        freqLoc = freqLoc * params.lacunarity;
+        x = x * params.lacunarity;
+        y = y * params.lacunarity;
+        z = z * params.lacunarity;
         amp = amp * params.gain;
 
-        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));
         if (params.exp2 != 0.0) {
             n = 1.0 - pow(n, params.exp2);
         }
@@ -2150,6 +2157,7 @@ fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
         sum = sum - n * amp;
 
+        // proper 2D rotation around Z:
         let c = cos(angle);
         let s = sin(angle);
         let nx = x * c - y * s;
@@ -2168,19 +2176,17 @@ fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
 // ──────────────── Ridged Multifractal Noise 3 ─────────────────
 fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-
-    var x = (pos.x + params.xShift) / zoom;
-    var y = (pos.y + params.yShift) / zoom;
-    var z = (pos.z + params.zShift) / zoom;
+    // zoom + freq
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;
     var sum : f32 = 0.0;
     var amp : f32 = 1.0;
-    var freqLoc : f32 = max(params.freq, 1e-6);
 
     for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {
-        var n : f32 = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));
+        var n : f32 = lanczos3D(vec3<f32>(x, y, z));
         n = max(1e-7, n + 1.0);
-        n = 2.0 * pow(n * 0.5, params.exp2 + 1.5) - 1.0;
+        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;
         n = 1.0 - abs(n);
         if (params.exp1 - 1.0 != 0.0) {
             n = 1.0 - pow(n, params.exp1 - 1.0);
@@ -2188,10 +2194,9 @@ fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
         sum = sum + n * amp;
 
-        freqLoc = freqLoc * params.lacunarity;
-        x = x + params.xShift;
-        y = y + params.yShift;
-        z = z + params.zShift;
+        x = x * params.lacunarity + params.xShift;
+        y = y * params.lacunarity + params.yShift;
+        z = z * params.lacunarity + params.zShift;
         amp = amp * params.gain;
     }
 
@@ -2200,17 +2205,14 @@ fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
 // ──────────────── Ridged Multifractal Noise 4 ─────────────────
 fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-
-    var x = (pos.x + params.xShift) / zoom;
-    var y = (pos.y + params.yShift) / zoom;
-    var z = (pos.z + params.zShift) / zoom;
+    var x = (pos.x + params.xShift) / params.zoom * params.freq;
+    var y = (pos.y + params.yShift) / params.zoom * params.freq;
+    var z = (pos.z + params.zShift) / params.zoom * params.freq;
     var sum : f32 = 0.0;
     var amp : f32 = 1.0;
-    var freqLoc : f32 = max(params.freq, 1e-6);
 
     for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {
-        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));
+        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));
         if (params.exp2 != 0.0) {
             n = 1.0 - pow(n, params.exp2);
         }
@@ -2220,14 +2222,13 @@ fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {
 
         sum = sum + n * amp;
 
-        freqLoc = freqLoc * params.lacunarity;
-        x = x + params.xShift;
-        y = y + params.yShift;
-        z = z + params.zShift;
+        x = x * params.lacunarity + params.xShift;
+        y = y * params.lacunarity + params.yShift;
+        z = z * params.lacunarity + params.zShift;
         amp = amp * params.gain;
     }
 
-    return 1.0 - sum;
+    return sum - 1.0;
 }
 
 // ──────────────── Anti‐Ridged Multifractal Noise ────────────────
@@ -2261,7 +2262,7 @@ fn fbm3D(pos : vec3<f32>, params:NoiseParams) -> f32 {
     var sum       : f32 = 0.0;
     var amplitude : f32 = 1.0;
     var maxValue  : f32 = 0.0;
-    var freqLoc   : f32 = max(params.freq, 1e-6);
+    var freqLoc   : f32 = params.freq;
     // start angle from uniform seedAngle
     var angle     : f32 = params.seedAngle;
     let angleInc  : f32 = 2.0 * PI / f32(params.octaves);
@@ -2341,7 +2342,7 @@ fn fbmCellular3D(pos : vec3<f32>, params : NoiseParams) -> f32 {
 
     var sum     : f32 = 0.0;
     var amp     : f32 = 1.0;
-    var freqLoc : f32 = max(params.freq, 1e-6);
+    var freqLoc : f32 = params.freq;
 
     var angle   : f32 = params.seedAngle;
     let angleInc: f32 = 2.0 * PI / f32(params.octaves);
@@ -2395,7 +2396,7 @@ fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
   var sum: f32 = 0.0;
   var amp: f32 = 1.0;
-  var freqLoc: f32 = max(params.freq, 1e-6);
+  var freqLoc: f32 = params.freq / zoom;
 
   let mode: u32 = params.voroMode;
   let edgeK: f32 = max(params.edgeK, 0.0);
@@ -2446,33 +2447,45 @@ fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
 // ─────────────── Voronoi Tile Noise (Edge-Aware) ────────────────────
 fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {
+  // match generateVoronoi zoom handling
   let zoom = max(params.zoom, 1e-6);
   var sum   : f32 = 0.0;
   var amp   : f32 = 1.0;
-  var freqLoc : f32 = max(params.freq, 1e-6);
+  var freqLoc : f32 = params.freq / zoom;
 
+  // always use the edge-threshold mode for this tile-noise helper
   let mode : u32 = params.voroMode;
-  let edgeK : f32 = max(params.edgeK, 0.0);
+  let edgeK : f32 = max(params.edgeK, 0.0);      // kept if you want to tune
   let thresh : f32 = max(params.threshold, 0.0);
 
+  // initial sample point (match non-toroidal branch of generateVoronoi)
   var x = (pos.x + params.xShift) / zoom;
   var y = (pos.y + params.yShift) / zoom;
   var z = (pos.z + params.zShift) / zoom;
 
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
+    // build octave sample pos (same convention as generateVoronoi)
     let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);
+
+    // get metrics and evaluate using VORO_EDGE_THRESH (voro_eval implements F2-F1 gating)
     let m = voro3D_metrics(P);
     let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, thresh, freqLoc);
 
     sum = sum + v * amp;
 
+    // octave updates
     freqLoc = freqLoc * params.lacunarity;
     amp     = amp * params.gain;
 
+    // apply simple per-octave drift (matches previous tile-style)
     x = x + params.xShift;
     y = y + params.yShift;
     z = z + params.zShift;
   }
+
+  // NOTE: generateVoronoi returns the raw sum (not remapped).
+  // If you need legacy behaviour that remapped to [-1,1], uncomment the next line:
+  // return 2.0 * sum - 1.0;
 
   return sum;
 }
@@ -2671,7 +2684,7 @@ fn generateCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
   var sum     : f32 = 0.0;
   var amp     : f32 = 1.0;
-  var freqLoc : f32 = max(params.freq, 1e-6);
+  var freqLoc : f32 = params.freq;
   var angle   : f32 = params.seedAngle;
 
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
@@ -2713,7 +2726,7 @@ fn generateWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
   var sum     : f32 = 0.0;
   var amp     : f32 = 1.0;
-  var freqLoc : f32 = max(params.freq, 1e-6);
+  var freqLoc : f32 = params.freq;
   var angle   : f32 = params.seedAngle;
 
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
@@ -2751,22 +2764,25 @@ fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {
 fn generateCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
   let zoom = max(params.zoom, 1e-6);
 
-  var base: vec4<f32>;
+  var base    : vec4<f32>;
+  var freqLoc : f32;
+
   if (params.toroidal == 1u) {
-    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    freqLoc = params.freq;
   } else {
     base = vec4<f32>(
-      pos.x / zoom + params.xShift,
-      pos.y / zoom + params.yShift,
-      pos.z / zoom + params.zShift,
+      pos.x / zoom * params.freq + params.xShift,
+      pos.y / zoom * params.freq + params.yShift,
+      pos.z / zoom * params.freq + params.zShift,
       params.time
     );
+    freqLoc = params.freq;
   }
 
-  var sum     : f32 = 0.0;
-  var amp     : f32 = 1.0;
-  var freqLoc : f32 = max(params.freq, 1e-6);
-  var angle   : f32 = params.seedAngle;
+  var sum   : f32 = 0.0;
+  var amp   : f32 = 1.0;
+  var angle : f32 = params.seedAngle;
 
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
     let s = voro_sample4D(base * freqLoc);
@@ -2806,22 +2822,25 @@ fn generateAntiCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
 fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
   let zoom = max(params.zoom, 1e-6);
 
-  var base: vec4<f32>;
+  var base    : vec4<f32>;
+  var freqLoc : f32;
+
   if (params.toroidal == 1u) {
-    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;
+    freqLoc = params.freq;
   } else {
     base = vec4<f32>(
-      pos.x / zoom + params.xShift,
-      pos.y / zoom + params.yShift,
-      pos.z / zoom + params.zShift,
+      pos.x / zoom * params.freq + params.xShift,
+      pos.y / zoom * params.freq + params.yShift,
+      pos.z / zoom * params.freq + params.zShift,
       params.time
     );
+    freqLoc = params.freq;
   }
 
   var sum    : f32 = 0.0;
   var amp    : f32 = 1.0;
   var ampSum : f32 = 0.0;
-  var freqLoc : f32 = max(params.freq, 1e-6);
   var angle  : f32 = params.seedAngle;
 
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
@@ -2976,16 +2995,16 @@ fn generateBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
     base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;
   } else {
     base = vec4<f32>(
-      pos.x / zoom + params.xShift,
-      pos.y / zoom + params.yShift,
-      pos.z / zoom + params.zShift,
+      (pos.x / zoom) * params.freq + params.xShift,
+      (pos.y / zoom) * params.freq + params.yShift,
+      (pos.z / zoom) * params.freq + params.zShift,
       params.time
     );
   }
 
   var sum: f32 = 0.0;
   var amp: f32 = 1.0;
-  var freqLoc: f32 = max(params.freq, 1e-6);
+  var freqLoc: f32 = params.freq;
   var ampSum: f32 = 0.0;
   var angle: f32 = params.seedAngle;
 
@@ -3062,24 +3081,23 @@ fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
     base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;
   } else {
     base = vec4<f32>(
-      pos.x / zoom + params.xShift,
-      pos.y / zoom + params.yShift,
-      pos.z / zoom + params.zShift,
+      (pos.x / zoom) * params.freq + params.xShift,
+      (pos.y / zoom) * params.freq + params.yShift,
+      (pos.z / zoom) * params.freq + params.zShift,
       params.time
     );
   }
 
   var sum: f32 = 0.0;
   var amp: f32 = 1.0;
-  var ampSum: f32 = 0.0;
-  var freqLoc: f32 = max(params.freq, 1e-6);
+  var maxAmp: f32 = 0.0;
+  var freqLoc: f32 = params.freq;
   var angle: f32 = params.seedAngle;
 
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
     let n = lowpass4D(base * freqLoc);
-    let b = pow(abs(n), 0.75);
-    sum += b * amp;
-    ampSum += amp;
+    sum += (2.0 * abs(n) - 1.0) * amp;
+    maxAmp += amp;
 
     freqLoc *= params.lacunarity;
     amp *= params.gain;
@@ -3099,17 +3117,11 @@ fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
     }
   }
 
-  if (ampSum > 0.0) { sum /= ampSum; }
-
-  let k: f32 = 1.2;
-  let cMid = sum - 0.5;
-  let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));
-
-  return clamp(shaped, 0.0, 1.0);
+  return select(0.0, sum / maxAmp, maxAmp > 0.0);
 }
 
 fn generateLanczosAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {
-  return 1.0 - generateLanczosBillow4D(pos, params);
+  return -generateLanczosBillow4D(pos, params);
 }
 
 
@@ -3121,7 +3133,7 @@ fn fbm4D_core(base: vec4<f32>, params: NoiseParams) -> f32 {
   var sum: f32 = 0.0;
   var amp: f32 = 1.0;
   var maxAmp: f32 = 0.0;
-  var freqLoc: f32 = max(params.freq, 1e-6);
+  var freqLoc: f32 = params.freq;
 
   var angle: f32 = params.seedAngle;
   let angleInc: f32 = 2.0 * PI / max(f32(params.octaves), 1.0);
@@ -3227,7 +3239,7 @@ fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {
     var sum     : f32 = 0.0;
     var maxAmp  : f32 = 0.0;
     var amp     : f32 = 1.0;
-    var freqLoc : f32 = max(p.freq, 1e-6);
+    var freqLoc : f32 = p.freq;
     var angle   : f32 = p.seedAngle;
 
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {
@@ -3326,13 +3338,13 @@ fn voronoiCircleGradient(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
 // Octaved generator matching your JS .generateNoise()
 fn generateVoronoiCircleNoise(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var x       = pos.x / zoom + params.xShift;
-    var y       = pos.y / zoom + params.yShift;
-    var z       = pos.z / zoom + params.zShift;
+    // zoom in/out
+    var x       = (pos.x + params.xShift) / params.zoom;
+    var y       = (pos.y + params.yShift) / params.zoom;
+    var z       = (pos.z + params.zShift) / params.zoom;
     var total : f32 = 0.0;
     var amp   : f32 = 1.0;
-    var freq  : f32 = max(params.freq, 1e-6);
+    var freq  : f32 = params.freq;
 
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
         let samplePos = vec3<f32>(x * freq, y * freq, z * freq);
@@ -3414,18 +3426,19 @@ fn voronoiCircleGradient2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {
 }
 
 fn generateVoronoiCircle2(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var x = pos.x / zoom + params.xShift;
-    var y = pos.y / zoom + params.yShift;
-    var z = pos.z / zoom + params.zShift;
+    var x = pos.x + params.xShift;
+    var y = pos.y + params.yShift;
+    var z = pos.z + params.zShift;
     var total : f32 = 0.0;
     var amp   : f32 = 1.0;
-    var freq  : f32 = max(params.freq, 1e-6);
+    var freq  : f32 = params.freq;
     var angle     : f32 = params.seedAngle;
-    let angleInc  : f32 = 2.0 * PI / max(f32(params.octaves), 1.0);
+    let angleInc  : f32 = 2.0 * PI / f32(params.octaves);
 
     for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-        let samplePos = vec3<f32>(x * freq, y * freq, z * freq);
+        let samplePos = vec3<f32>(x * freq / params.zoom,
+                                  y * freq / params.zoom,
+                                  z * freq / params.zoom);
         total = total + voronoiCircleGradient2Raw(samplePos, params) * amp;
         amp   = amp * params.gain;
         freq  = freq * params.lacunarity;
@@ -3470,11 +3483,10 @@ fn voronoiFlatShadeRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
 }
 
 fn generateVoronoiFlatShade(posIn: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var pos = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);
+    var pos = posIn / params.zoom;
     var total : f32 = 0.0;
     var amp   : f32 = 1.0;
-    var freq  : f32 = max(params.freq, 1e-6);
+    var freq  : f32 = params.freq;
     for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {
         total = total + voronoiFlatShadeRaw(pos * freq, params) * amp;
         amp  = amp * params.gain;
@@ -3520,15 +3532,16 @@ fn voronoiRipple3DRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
 }
 
 fn generateVoronoiRipple3D(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var x = pos.x / zoom + params.xShift;
-    var y = pos.y / zoom + params.yShift;
-    var z = pos.z / zoom + params.zShift;
+    var x = pos.x + params.xShift;
+    var y = pos.y + params.yShift;
+    var z = pos.z + params.zShift;
     var total : f32 = 0.0;
     var amp   : f32 = 1.0;
-    var freq  : f32 = max(params.freq, 1e-6);
+    var freq  : f32 = params.freq;
     for(var i: u32=0u; i<params.octaves; i=i+1u) {
-        let sample = vec3<f32>(x * freq, y * freq, z * freq);
+        let sample = vec3<f32>(x * freq / params.zoom,
+                               y * freq / params.zoom,
+                               z * freq / params.zoom);
         total = total + voronoiRipple3DRaw(sample, params) * amp;
         amp   = amp * params.gain;
         freq  = freq * params.lacunarity;
@@ -3576,16 +3589,17 @@ fn voronoiRipple3D2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {
 }
 
 fn generateVoronoiRipple3D2(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var x = pos.x / zoom + params.xShift;
-    var y = pos.y / zoom + params.yShift;
-    var z = pos.z / zoom + params.zShift;
+    var x = pos.x + params.xShift;
+    var y = pos.y + params.yShift;
+    var z = pos.z + params.zShift;
     var total: f32 = 0.0;
     var amp: f32 = 1.0;
-    var freq: f32 = max(params.freq, 1e-6);
+    var freq: f32 = params.freq;
 
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-        let sample = vec3<f32>(x * freq, y * freq, z * freq);
+        let sample = vec3<f32>(x * freq / params.zoom,
+                               y * freq / params.zoom,
+                               z * freq / params.zoom);
         total = total + voronoiRipple3D2Raw(sample, params) * amp;
         amp = amp * params.gain;
         freq = freq * params.lacunarity;
@@ -3626,16 +3640,17 @@ fn voronoiCircularRippleRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
 }
 
 fn generateVoronoiCircularRipple(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var x = pos.x / zoom + params.xShift;
-    var y = pos.y / zoom + params.yShift;
-    var z = pos.z / zoom + params.zShift;
+    var x = pos.x + params.xShift;
+    var y = pos.y + params.yShift;
+    var z = pos.z + params.zShift;
     var total: f32 = 0.0;
     var amp: f32 = 1.0;
-    var freq: f32 = max(params.freq, 1e-6);
+    var freq: f32 = params.freq;
 
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
-        let sample = vec3<f32>(x * freq, y * freq, z * freq);
+        let sample = vec3<f32>(x * freq / params.zoom,
+                               y * freq / params.zoom,
+                               z * freq / params.zoom);
         total = total + voronoiCircularRippleRaw(sample, params) * amp;
         amp = amp * params.gain;
         freq = freq * params.lacunarity;
@@ -3715,16 +3730,15 @@ fn calculateRippleEffect(pos: vec3<f32>,
 
 // ——— generateRippleNoise ———
 fn generateRippleNoise(pos: vec3<f32>, p: NoiseParams) -> f32 {
-    let zoom = max(p.zoom, 1e-6);
-    var x = pos.x / zoom + p.xShift;
-    var y = pos.y / zoom + p.yShift;
-    var z = pos.z / zoom + p.zShift;
+    var x = (pos.x + p.xShift) / p.zoom;
+    var y = (pos.y + p.yShift) / p.zoom;
+    var z = (pos.z + p.zShift) / p.zoom;
     var sum: f32 = 0.0;
     var amp: f32 = 1.0;
-    var freq: f32 = max(p.freq, 1e-6);
+    var freq: f32 = p.freq;
     var angle: f32 = p.seedAngle * 2.0 * PI;
-    let angleInc = 2.0 * PI / max(f32(p.octaves), 1.0);
-    let rippleFreqScaled = p.rippleFreq;
+    let angleInc = 2.0 * PI / f32(p.octaves);
+    let rippleFreqScaled = p.rippleFreq / p.zoom;
     let neigh = i32(p.exp1);
 
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {
@@ -3802,11 +3816,10 @@ fn hexWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
 // ——— 2. HexWorms Generator ———
 fn generateHexWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var pos   = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);
+    var pos   = posIn / params.zoom;
     var sum   : f32 = 0.0;
     var amp   : f32 = 1.0;
-    var freq  : f32 = max(params.freq, 1e-6);
+    var freq  : f32 = params.freq;
 
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
         sum = sum + hexWormsRaw(pos * freq, params) * amp;
@@ -3850,11 +3863,10 @@ fn perlinWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
 // ——— PerlinWorms Generator ———
 fn generatePerlinWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {
-    let zoom = max(params.zoom, 1e-6);
-    var pos   = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);
+    var pos   = posIn / params.zoom;
     var sum   : f32 = 0.0;
     var amp   : f32 = 1.0;
-    var freq  : f32 = max(params.freq, 1e-6);
+    var freq  : f32 = params.freq;
 
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {
         sum = sum + perlinWormsRaw(pos * freq, params) * amp;

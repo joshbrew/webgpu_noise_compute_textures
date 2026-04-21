@@ -107,7 +107,17 @@ async function ensureDevice() {
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error("No suitable GPU adapter (worker)");
 
-  device = await adapter.requestDevice();
+   const max = adapter.limits.maxBufferSize;
+
+  // Pick something comfortably above your worst-case staging upload.
+  // 512 MiB is usually enough for 5K-ish float uploads, or go higher if supported.
+  const wantMaxBufferSize = Math.min(max, 1024 * 1024 * 1024); // 1 GiB cap
+
+  device = await adapter.requestDevice({
+    requiredLimits: {
+      maxBufferSize: wantMaxBufferSize,
+    },
+  });
   queue = device.queue;
 
   nb = new NoiseComputeBuilder(device, queue);

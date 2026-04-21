@@ -681,7 +681,7 @@
             type="number"\r
             step="1"\r
             id="noise-seed"\r
-            value="1234567890"\r
+            value="1234567892"\r
             min="1"\r
           />\r
         </label>\r
@@ -1149,6 +1149,17 @@ fn storeRGBA(fx:i32, fy:i32, fz:i32, col:vec4<f32>) {\r
   else { textureStore(outputTex, vec2<i32>(fx, fy), frame.layerIndex, col); }\r
 }\r
 \r
+fn rotateXY3(p: vec3<f32>, angle: f32) -> vec3<f32> {\r
+  let c = cos(angle);\r
+  let s = sin(angle);\r
+  return vec3<f32>(\r
+    p.x * c - p.y * s,\r
+    p.x * s + p.y * c,\r
+    p.z\r
+  );\r
+}\r
+\r
+\r
 const STEREO_SCALE : f32 = 1.8;          // fixed packing scale for Clifford torus\r
 const INV_SQRT2    : f32 = 0.7071067811865476; // 1/\u221A2\r
 \r
@@ -1181,6 +1192,18 @@ fn thetaFromDepth(fz: i32) -> f32 {\r
   return layerToZ(frame.layerIndex, frame.layers);\r
 }\r
 \r
+fn seedOffset3(seed: u32) -> vec3<f32> {\r
+  let a = f32((seed * 1664525u + 1013904223u) & 65535u) / 65536.0;\r
+  let b = f32((seed * 22695477u + 1u) & 65535u) / 65536.0;\r
+  let c = f32((seed * 1103515245u + 12345u) & 65535u) / 65536.0;\r
+\r
+  return vec3<f32>(\r
+    17.173 + a * 131.0,\r
+    31.947 + b * 137.0,\r
+    47.521 + c * 149.0\r
+  );\r
+}\r
+\r
 fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
   if (options.useCustomPos == 1u) {\r
     let use3D = writeTo3D() || readFrom3D();\r
@@ -1199,9 +1222,9 @@ fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
     let invW = 1.0 / max(f32(frame.fullWidth), 1.0);\r
     let invH = 1.0 / max(f32(frame.fullHeight), 1.0);\r
 \r
-    let U = (f32(cx) + 0.5) * invW;   // [0,1)\r
-    let V = (f32(cy) + 0.5) * invH;   // [0,1)\r
-    let theta = thetaFromDepth(fz);   // [0,1)\r
+    let U = (f32(cx) + 0.5) * invW;\r
+    let V = (f32(cy) + 0.5) * invH;\r
+    let theta = thetaFromDepth(fz);\r
 \r
     return vec3<f32>(U, V, theta);\r
   }\r
@@ -1216,21 +1239,23 @@ fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
     oy = f32(frame.originY);\r
   }\r
 \r
-  let x = (ox + f32(fx)) * invW;\r
-  let y = (oy + f32(fy)) * invH;\r
+  let x = (ox + f32(fx) + 0.5) * invW;\r
+  let y = (oy + f32(fy) + 0.5) * invH;\r
 \r
   var z: f32;\r
   let uses3D = writeTo3D() || readFrom3D();\r
   if (uses3D) {\r
-    if (frame.fullDepth <= 1u) { z = 0.0; }\r
-    else { z = f32(clampZ(fz)) / f32(frame.fullDepth - 1u); }\r
+    if (frame.fullDepth <= 1u) {\r
+      z = 0.0;\r
+    } else {\r
+      z = (f32(clampZ(fz)) + 0.5) / f32(frame.fullDepth);\r
+    }\r
   } else {\r
     z = layerToZ(frame.layerIndex, frame.layers);\r
   }\r
 \r
   return vec3<f32>(x, y, z);\r
 }\r
-\r
 \r
 \r
 \r
@@ -1361,6 +1386,7 @@ fn rand4u(ix : i32, iy : i32, iz : i32, iw : i32) -> f32 {\r
   let idx = hash4(ix, iy, iz, iw);\r
   return f32(perm(idx)) * INV_255;\r
 }\r
+\r
 \r
 /* ---------- classic 2D Perlin ---------- */\r
 fn noise2D(p : vec2<f32>) -> f32 {\r
@@ -2310,27 +2336,31 @@ fn gradSimplex2(q: vec2<f32>, eps: f32) -> vec2<f32> {\r
 \r
 /* single-octave curl = grad rotated 90\xB0 (\u2202N/\u2202y, -\u2202N/\u2202x) */\r
 fn curl2_simplex2D(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {\r
-  let q = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);\r
+  let zoom = max(p.zoom, 1e-6);\r
+  let freq = max(p.freq, 1e-6);\r
+  let base = pos / zoom + vec2<f32>(p.xShift, p.yShift);\r
+  let q = base * freq;\r
 \r
   // choose \u03B5 ~ half a cycle of current scale to avoid lattice aliasing\r
-  let cycles_per_world = max(p.freq / max(p.zoom, 1e-6), 1e-6);\r
+  let cycles_per_world = max(freq / zoom, 1e-6);\r
   let eps = 0.5 / cycles_per_world;\r
 \r
-  let g = gradSimplex2(q, eps);\r
+  let g = gradSimplex2(q, eps * freq);\r
   return vec2<f32>(g.y, -g.x);\r
 }\r
 \r
 /* multi-octave curl: sum derivatives per octave (no sharp creases) */\r
 fn curl2_simplexFBM(pos: vec2<f32>, p: NoiseParams) -> vec2<f32> {\r
-  var q      = (pos / p.zoom) * p.freq + vec2<f32>(p.xShift, p.yShift);\r
-  var freq   : f32 = p.freq;\r
+  let zoom = max(p.zoom, 1e-6);\r
+  var q      = pos / zoom + vec2<f32>(p.xShift, p.yShift);\r
+  var freq   : f32 = max(p.freq, 1e-6);\r
   var amp    : f32 = 1.0;\r
   var angle  : f32 = p.seedAngle;\r
   var curl   : vec2<f32> = vec2<f32>(0.0);\r
 \r
   for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
     // \u03B5 scales with octave so the finite difference stays well-conditioned\r
-    let cycles_per_world = max(freq / max(p.zoom, 1e-6), 1e-6);\r
+    let cycles_per_world = max(freq / zoom, 1e-6);\r
     let eps = 0.5 / cycles_per_world;\r
 \r
     let g = gradSimplex2(q * freq, eps * freq);\r
@@ -2503,7 +2533,7 @@ fn gaborNoise3D(p: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum     : f32 = 0.0;\r
   var amp     : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle   : f32 = params.seedAngle;\r
 \r
   let waveFreq = max(0.001, params.rippleFreq);\r
@@ -2794,64 +2824,74 @@ fn computeGaborFlow(@builtin(global_invocation_id) gid: vec3<u32>) {\r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Terrace & Foam filters  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
 fn terrace(v:f32, steps:f32)  -> f32 { return floor(v*steps)/steps; }\r
-fn foamify(v:f32)             -> f32 { return pow(abs(v), 3.0)*sign(v); }\r
+fn foamify(v: f32) -> f32 {\r
+    let x = clamp(v, 0.0, 1.0);\r
+\r
+    let lo = smoothstep(0.18, 0.48, x);\r
+    let hi = 1.0 - smoothstep(0.58, 0.92, x);\r
+\r
+    let band = clamp(lo * hi, 0.0, 1.0);\r
+    return pow(band, 0.6);\r
+}\r
 fn turbulence(v:f32)          -> f32 { return abs(v); }\r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Simplex (multi-octave) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
 fn generateSimplex(pos: vec3<f32>, p: NoiseParams) -> f32 {\r
-    // start coords (zoom/freq/shift)\r
-    var x = pos.x / p.zoom * p.freq + p.xShift;\r
-    var y = pos.y / p.zoom * p.freq + p.yShift;\r
-    var z = pos.z / p.zoom * p.freq + p.zShift;\r
+    let invZoom = 1.0 / max(p.zoom, 1e-6);\r
+    let domainOffset = seedOffset3(p.seed);\r
+\r
+    let base = vec3<f32>(\r
+      pos.x * invZoom + p.xShift,\r
+      pos.y * invZoom + p.yShift,\r
+      pos.z * invZoom + p.zShift\r
+    ) + domainOffset;\r
 \r
     var sum     : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = p.freq;\r
+    var ampSum  : f32 = 0.0;\r
+    var freqLoc : f32 = max(p.freq, 1e-6);\r
     var angle   : f32 = p.seedAngle;\r
 \r
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
-        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        let samplePos = rotateXY3(base, angle) * freqLoc;\r
+        var n = simplex3D(samplePos);\r
         if (p.turbulence == 1u) { n = abs(n); }\r
         sum += n * amp;\r
+        ampSum += amp;\r
 \r
-        // advance octave\r
         freqLoc *= p.lacunarity;\r
         amp     *= p.gain;\r
-\r
-        // rotate in XY and bleed into Z \u2014 matches your Perlin cadence\r
-        let c  = cos(angle);\r
-        let s  = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        x = nx + p.xShift;\r
-        y = ny + p.yShift;\r
-        z = nz + p.zShift;\r
-\r
-        angle += ANGLE_INCREMENT;\r
+        angle   += ANGLE_INCREMENT;\r
     }\r
 \r
-    if (p.turbulence == 1u) { sum -= 1.0; }\r
+    if (ampSum > 0.0) {\r
+        sum = sum / ampSum;\r
+    }\r
+    if (p.turbulence == 1u) { sum = sum * 2.0 - 1.0; }\r
     return sum;\r
 }\r
 \r
 /*\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  Simplex-based fBm helper (normalized)  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500*/\r
 fn sfbm3D(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom;\r
-    var y = (pos.y + params.yShift) / params.zoom;\r
-    var z = (pos.z + params.zShift) / params.zoom;\r
+    let invZoom = 1.0 / max(params.zoom, 1e-6);\r
+    let domainOffset = seedOffset3(params.seed);\r
+\r
+    let base = vec3<f32>(\r
+      pos.x * invZoom + params.xShift,\r
+      pos.y * invZoom + params.yShift,\r
+      pos.z * invZoom + params.zShift\r
+    ) + domainOffset;\r
 \r
     var sum       : f32 = 0.0;\r
     var amplitude : f32 = 1.0;\r
     var maxValue  : f32 = 0.0;\r
-    var freqLoc   : f32 = params.freq;\r
-\r
+    var freqLoc   : f32 = max(params.freq, 1e-6);\r
     var angle     : f32 = params.seedAngle;\r
     let angleInc  : f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
 \r
     for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n = simplex3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
+        let samplePos = rotateXY3(base, angle) * freqLoc;\r
+        var n = simplex3D(samplePos);\r
         if (params.turbulence == 1u) { n = abs(n); }\r
 \r
         sum      += amplitude * n;\r
@@ -2859,21 +2899,15 @@ fn sfbm3D(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
         freqLoc   *= params.lacunarity;\r
         amplitude *= params.gain;\r
-\r
-        // rotate & shift per octave (keeps look consistent with Perlin FBM)\r
-        angle += angleInc;\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
+        angle     += angleInc;\r
     }\r
 \r
     if (maxValue > 0.0) {\r
-        return sum / maxValue;\r
+        var out = sum / maxValue;\r
+        if (params.turbulence == 1u) {\r
+            out = out * 2.0 - 1.0;\r
+        }\r
+        return out;\r
     }\r
     return 0.0;\r
 }\r
@@ -2905,73 +2939,43 @@ fn generateGaborMagic(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
   return gaborMagicNoise3D(pos, par);\r
 }\r
 \r
-fn generateTerraceNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let base = generatePerlin(pos, par);\r
-    let v = terrace(base, par.terraceStep);\r
-    return v;\r
-}\r
-\r
-fn generateFoamNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let base = generateBillow(pos, par);\r
-    let v = foamify(base);\r
-    return v;\r
-}\r
-\r
-fn generateTurbulence(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
-    let base = generatePerlin(pos, par);\r
-    let v = turbulence(base);\r
-    return v;\r
-}\r
-\r
-\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Perlin Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
-fn generatePerlin(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // initial coords scaled by zoom\r
-    var x = pos.x / params.zoom * params.freq + params.xShift;\r
-    var y = pos.y / params.zoom * params.freq + params.yShift;\r
-    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+fn generatePerlin(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
+  let invZoom = 1.0 / max(params.zoom, 1e-6);\r
+  let domainOffset = seedOffset3(params.seed);\r
 \r
-    var sum : f32 = 0.0;\r
-    var amp : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
-    var angle : f32 = params.seedAngle;\r
+  let base = vec3<f32>(\r
+    pos.x * invZoom + params.xShift,\r
+    pos.y * invZoom + params.yShift,\r
+    pos.z * invZoom + params.zShift\r
+  ) + domainOffset;\r
 \r
-    // accumulate octaves\r
-    for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        // sample base noise\r
-        var n : f32 = noise3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)) * amp;\r
-        // optional billow / turbulence\r
-        if (params.turbulence == 1u) {\r
-            n = abs(n);\r
-        }\r
-        sum = sum + n;\r
+  var sum: f32 = 0.0;\r
+  var amp: f32 = 1.0;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
+  var angle: f32 = params.seedAngle;\r
 \r
-        // update frequency & amplitude\r
-        freqLoc = freqLoc * params.lacunarity;\r
-        amp     = amp     * params.gain;\r
+  for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
+    let samplePos = rotateXY3(base, angle) * freqLoc;\r
 \r
-        // rotate coords in XY plane + push into Z\r
-        let c = cos(angle);\r
-        let s = sin(angle);\r
-        let nx = x * c - y * s;\r
-        let ny = x * s + y * c;\r
-        let nz = y * s + z * c;\r
-\r
-        // apply shifts\r
-        x = nx + params.xShift;\r
-        y = ny + params.yShift;\r
-        z = nz + params.zShift;\r
-\r
-        // increment angle\r
-        angle = angle + ANGLE_INCREMENT;\r
-    }\r
-\r
-    // final tweak for turbulence mode\r
+    var n: f32 = noise3D(samplePos);\r
     if (params.turbulence == 1u) {\r
-        sum = sum - 1.0;\r
+      n = abs(n);\r
     }\r
-    return sum;\r
+\r
+    sum += n * amp;\r
+\r
+    freqLoc *= params.lacunarity;\r
+    amp *= params.gain;\r
+    angle += ANGLE_INCREMENT;\r
+  }\r
+\r
+  if (params.turbulence == 1u) {\r
+    sum = sum - 1.0;\r
+  }\r
+\r
+  return sum;\r
 }\r
 \r
 \r
@@ -2979,30 +2983,23 @@ fn generatePerlin(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
 \r
-  // Prepare base coords + starting frequency\r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    // pos = (U,V,\u03B8); HTML-style: apply zoom outside the octave loop\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
-    freqLoc = params.freq;                 // (freq/zoom) == (base/zoom * freq)\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
   } else {\r
-    // original non-toroidal semantics (note: freq is baked in before the loop)\r
     base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
-    freqLoc = params.freq;\r
   }\r
 \r
-  var sum   : f32 = 0.0;\r
-  var amp   : f32 = 1.0;\r
-  var angle : f32 = params.seedAngle;\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
+  var angle   : f32 = params.seedAngle;\r
 \r
-  // Shared octave loop\r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
     var n = noise4D(base * freqLoc) * amp;\r
     if (params.turbulence == 1u) { n = abs(n); }\r
@@ -3011,7 +3008,6 @@ fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     freqLoc *= params.lacunarity;\r
     amp     *= params.gain;\r
 \r
-    // Only the non-toroidal path uses octave rotation/offset churn\r
     if (params.toroidal != 1u) {\r
       let c = cos(angle);\r
       let s = sin(angle);\r
@@ -3032,47 +3028,59 @@ fn generatePerlin4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 \r
+fn generateTerraceNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generatePerlin(pos, par);\r
+    let v = terrace(base, par.terraceStep);\r
+    return v;\r
+}\r
+\r
+fn generateFoamNoise(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generateBillow(pos, par);\r
+    let v = foamify(base);\r
+    return v;\r
+}\r
+\r
+fn generateTurbulence(pos: vec3<f32>, par: NoiseParams) -> f32 {\r
+    let base = generatePerlin(pos, par);\r
+    let v = turbulence(base);\r
+    return v;\r
+}\r
+\r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Billow Noise Generator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateBillow(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    // Base domain mapping\r
-    var p = (pos / params.zoom) * params.freq\r
-          + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var p = pos / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
 \r
     var sum: f32     = 0.0;\r
     var amp: f32     = 1.0;\r
-    var freqLoc: f32 = 1.0;          // start at base; multiply by lacunarity each octave\r
+    var freqLoc: f32 = max(params.freq, 1e-6);\r
     var ampSum: f32  = 0.0;\r
     var angle: f32   = params.seedAngle;\r
 \r
-    // Octave stack\r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        // Billow core: absolute value of gradient noise\r
         let n  = noise3D(p * freqLoc);\r
-        let b  = pow(abs(n), 0.75);   // gentle gamma (<1) puffs the domes\r
+        let b  = pow(abs(n), 0.75);\r
         sum    = sum + b * amp;\r
         ampSum = ampSum + amp;\r
 \r
-        // Advance octave\r
         freqLoc = freqLoc * params.lacunarity;\r
         amp     = amp     * params.gain;\r
 \r
-        // Cheap domain rotation (XY) + tiny Z drift to break symmetry\r
         let c  = cos(angle);\r
         let s  = sin(angle);\r
         let xy = vec2<f32>(p.x, p.y);\r
         let r  = vec2<f32>(xy.x * c - xy.y * s, xy.x * s + xy.y * c);\r
-        p = vec3<f32>(r.x, r.y, p.z + 0.03125);   // small constant drift\r
+        p = vec3<f32>(r.x, r.y, p.z + 0.03125);\r
 \r
         angle = angle + ANGLE_INCREMENT;\r
     }\r
 \r
-    // Normalize to [0,1]\r
     if (ampSum > 0.0) {\r
         sum = sum / ampSum;\r
     }\r
 \r
-    // Mild contrast curve around 0.5 so domes pop without creating ridge-like creases\r
-    let k: f32 = 1.2;                // 1.0 = linear; >1 increases local contrast\r
+    let k: f32 = 1.2;\r
     let cMid   = sum - 0.5;\r
     let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));\r
 \r
@@ -3096,12 +3104,14 @@ fn ridgeNoise(pos : vec3<f32>) -> f32 {\r
 // octave\u2010sum generator using ridge noise\r
 // sample like: let r = generateRidge(vec3<f32>(x,y,z));\r
 fn generateRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = pos.x / params.zoom * params.freq + params.xShift;\r
-    var y = pos.y / params.zoom * params.freq + params.yShift;\r
-    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var sum     : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i : u32 = 0u; i < params.octaves; i = i + 1u) {\r
         sum = sum + ridgeNoise(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)) * amp;\r
@@ -3112,7 +3122,6 @@ fn generateRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
         z = z + params.zShift;\r
     }\r
 \r
-    // JS did: sum -= 1; return -sum;\r
     sum = sum - 1.0;\r
     return -sum;\r
 }\r
@@ -3126,23 +3135,21 @@ fn generateAntiRidge(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise (Fast Lanczos) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // initial coords: zoom + freq\r
-    var x = pos.x / params.zoom * params.freq + params.xShift;\r
-    var y = pos.y / params.zoom * params.freq + params.yShift;\r
-    var z = pos.z / params.zoom * params.freq + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
 \r
-    // first octave\r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
+\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
     var amp : f32 = 1.0;\r
 \r
-    // subsequent octaves\r
     for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
+        freqLoc = freqLoc * params.lacunarity;\r
         amp = amp * params.gain;\r
 \r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
         if (params.exp2 != 0.0) {\r
             n = 1.0 - pow(n, params.exp2);\r
         }\r
@@ -3162,22 +3169,22 @@ fn generateRidgedMultifractal(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 2 (Fast Lanczos + Rotation) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // zoom + freq\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    let zoom = max(params.zoom, 1e-6);\r
 \r
-    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x, y, z)));\r
+    var x = (pos.x + params.xShift) / zoom;\r
+    var y = (pos.y + params.yShift) / zoom;\r
+    var z = (pos.z + params.zShift) / zoom;\r
+\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
+    var sum : f32 = 1.0 - abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
     var amp : f32 = 1.0;\r
     var angle : f32 = params.seedAngle;\r
 \r
     for (var i:u32 = 1u; i < params.octaves; i = i + 1u) {\r
-        x = x * params.lacunarity;\r
-        y = y * params.lacunarity;\r
-        z = z * params.lacunarity;\r
+        freqLoc = freqLoc * params.lacunarity;\r
         amp = amp * params.gain;\r
 \r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
         if (params.exp2 != 0.0) {\r
             n = 1.0 - pow(n, params.exp2);\r
         }\r
@@ -3187,7 +3194,6 @@ fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
         sum = sum - n * amp;\r
 \r
-        // proper 2D rotation around Z:\r
         let c = cos(angle);\r
         let s = sin(angle);\r
         let nx = x * c - y * s;\r
@@ -3206,17 +3212,19 @@ fn generateRidgedMultifractal2(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 3 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    // zoom + freq\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var x = (pos.x + params.xShift) / zoom;\r
+    var y = (pos.y + params.yShift) / zoom;\r
+    var z = (pos.z + params.zShift) / zoom;\r
     var sum : f32 = 0.0;\r
     var amp : f32 = 1.0;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = lanczos3D(vec3<f32>(x, y, z));\r
+        var n : f32 = lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc));\r
         n = max(1e-7, n + 1.0);\r
-        n = 2.0 * pow(n * 0.5, params.exp2+1.5) - 1.0;\r
+        n = 2.0 * pow(n * 0.5, params.exp2 + 1.5) - 1.0;\r
         n = 1.0 - abs(n);\r
         if (params.exp1 - 1.0 != 0.0) {\r
             n = 1.0 - pow(n, params.exp1 - 1.0);\r
@@ -3224,9 +3232,10 @@ fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
         sum = sum + n * amp;\r
 \r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        x = x + params.xShift;\r
+        y = y + params.yShift;\r
+        z = z + params.zShift;\r
         amp = amp * params.gain;\r
     }\r
 \r
@@ -3235,14 +3244,17 @@ fn generateRidgedMultifractal3(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Ridged Multifractal Noise 4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-    var x = (pos.x + params.xShift) / params.zoom * params.freq;\r
-    var y = (pos.y + params.yShift) / params.zoom * params.freq;\r
-    var z = (pos.z + params.zShift) / params.zoom * params.freq;\r
+    let zoom = max(params.zoom, 1e-6);\r
+\r
+    var x = (pos.x + params.xShift) / zoom;\r
+    var y = (pos.y + params.yShift) / zoom;\r
+    var z = (pos.z + params.zShift) / zoom;\r
     var sum : f32 = 0.0;\r
     var amp : f32 = 1.0;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i:u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        var n : f32 = abs(lanczos3D(vec3<f32>(x, y, z)));\r
+        var n : f32 = abs(lanczos3D(vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc)));\r
         if (params.exp2 != 0.0) {\r
             n = 1.0 - pow(n, params.exp2);\r
         }\r
@@ -3252,13 +3264,14 @@ fn generateRidgedMultifractal4(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
 \r
         sum = sum + n * amp;\r
 \r
-        x = x * params.lacunarity + params.xShift;\r
-        y = y * params.lacunarity + params.yShift;\r
-        z = z * params.lacunarity + params.zShift;\r
+        freqLoc = freqLoc * params.lacunarity;\r
+        x = x + params.xShift;\r
+        y = y + params.yShift;\r
+        z = z + params.zShift;\r
         amp = amp * params.gain;\r
     }\r
 \r
-    return sum - 1.0;\r
+    return 1.0 - sum;\r
 }\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Anti\u2010Ridged Multifractal Noise \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
@@ -3292,7 +3305,7 @@ fn fbm3D(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
     var sum       : f32 = 0.0;\r
     var amplitude : f32 = 1.0;\r
     var maxValue  : f32 = 0.0;\r
-    var freqLoc   : f32 = params.freq;\r
+    var freqLoc   : f32 = max(params.freq, 1e-6);\r
     // start angle from uniform seedAngle\r
     var angle     : f32 = params.seedAngle;\r
     let angleInc  : f32 = 2.0 * PI / f32(params.octaves);\r
@@ -3372,7 +3385,7 @@ fn fbmCellular3D(pos : vec3<f32>, params : NoiseParams) -> f32 {\r
 \r
     var sum     : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = params.freq;\r
+    var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
     var angle   : f32 = params.seedAngle;\r
     let angleInc: f32 = 2.0 * PI / f32(params.octaves);\r
@@ -3426,7 +3439,7 @@ fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
-  var freqLoc: f32 = params.freq / zoom;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
 \r
   let mode: u32 = params.voroMode;\r
   let edgeK: f32 = max(params.edgeK, 0.0);\r
@@ -3477,45 +3490,33 @@ fn generateVoronoi4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Voronoi Tile Noise (Edge-Aware) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r
 fn generateVoronoiTileNoise(pos : vec3<f32>, params:NoiseParams) -> f32 {\r
-  // match generateVoronoi zoom handling\r
   let zoom = max(params.zoom, 1e-6);\r
   var sum   : f32 = 0.0;\r
   var amp   : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq / zoom;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
 \r
-  // always use the edge-threshold mode for this tile-noise helper\r
   let mode : u32 = params.voroMode;\r
-  let edgeK : f32 = max(params.edgeK, 0.0);      // kept if you want to tune\r
+  let edgeK : f32 = max(params.edgeK, 0.0);\r
   let thresh : f32 = max(params.threshold, 0.0);\r
 \r
-  // initial sample point (match non-toroidal branch of generateVoronoi)\r
   var x = (pos.x + params.xShift) / zoom;\r
   var y = (pos.y + params.yShift) / zoom;\r
   var z = (pos.z + params.zShift) / zoom;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-    // build octave sample pos (same convention as generateVoronoi)\r
     let P = vec3<f32>(x * freqLoc, y * freqLoc, z * freqLoc);\r
-\r
-    // get metrics and evaluate using VORO_EDGE_THRESH (voro_eval implements F2-F1 gating)\r
     let m = voro3D_metrics(P);\r
     let v = voro_eval(m.f1Sq, m.f2Sq, m.cellVal, mode, edgeK, thresh, freqLoc);\r
 \r
     sum = sum + v * amp;\r
 \r
-    // octave updates\r
     freqLoc = freqLoc * params.lacunarity;\r
     amp     = amp * params.gain;\r
 \r
-    // apply simple per-octave drift (matches previous tile-style)\r
     x = x + params.xShift;\r
     y = y + params.yShift;\r
     z = z + params.zShift;\r
   }\r
-\r
-  // NOTE: generateVoronoi returns the raw sum (not remapped).\r
-  // If you need legacy behaviour that remapped to [-1,1], uncomment the next line:\r
-  // return 2.0 * sum - 1.0;\r
 \r
   return sum;\r
 }\r
@@ -3714,7 +3715,7 @@ fn generateCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum     : f32 = 0.0;\r
   var amp     : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle   : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
@@ -3756,7 +3757,7 @@ fn generateWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
   var sum     : f32 = 0.0;\r
   var amp     : f32 = 1.0;\r
-  var freqLoc : f32 = params.freq;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle   : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
@@ -3794,25 +3795,22 @@ fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 { \r
 fn generateCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
 \r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
-    freqLoc = params.freq;\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
-    freqLoc = params.freq;\r
   }\r
 \r
-  var sum   : f32 = 0.0;\r
-  var amp   : f32 = 1.0;\r
-  var angle : f32 = params.seedAngle;\r
+  var sum     : f32 = 0.0;\r
+  var amp     : f32 = 1.0;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
+  var angle   : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
     let s = voro_sample4D(base * freqLoc);\r
@@ -3852,25 +3850,22 @@ fn generateAntiCellular4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 fn generateWorley4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
   let zoom = max(params.zoom, 1e-6);\r
 \r
-  var base    : vec4<f32>;\r
-  var freqLoc : f32;\r
-\r
+  var base: vec4<f32>;\r
   if (params.toroidal == 1u) {\r
-    base    = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
-    freqLoc = params.freq;\r
+    base = packPeriodicUV(pos.x, pos.y, pos.z) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      pos.x / zoom * params.freq + params.xShift,\r
-      pos.y / zoom * params.freq + params.yShift,\r
-      pos.z / zoom * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
-    freqLoc = params.freq;\r
   }\r
 \r
   var sum    : f32 = 0.0;\r
   var amp    : f32 = 1.0;\r
   var ampSum : f32 = 0.0;\r
+  var freqLoc : f32 = max(params.freq, 1e-6);\r
   var angle  : f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
@@ -4025,16 +4020,16 @@ fn generateBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      (pos.x / zoom) * params.freq + params.xShift,\r
-      (pos.y / zoom) * params.freq + params.yShift,\r
-      (pos.z / zoom) * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
   }\r
 \r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
-  var freqLoc: f32 = params.freq;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
   var ampSum: f32 = 0.0;\r
   var angle: f32 = params.seedAngle;\r
 \r
@@ -4111,23 +4106,24 @@ fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     base = packPeriodicUV(pos.x, pos.y, pos.z + params.time) / zoom;\r
   } else {\r
     base = vec4<f32>(\r
-      (pos.x / zoom) * params.freq + params.xShift,\r
-      (pos.y / zoom) * params.freq + params.yShift,\r
-      (pos.z / zoom) * params.freq + params.zShift,\r
+      pos.x / zoom + params.xShift,\r
+      pos.y / zoom + params.yShift,\r
+      pos.z / zoom + params.zShift,\r
       params.time\r
     );\r
   }\r
 \r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
-  var maxAmp: f32 = 0.0;\r
-  var freqLoc: f32 = params.freq;\r
+  var ampSum: f32 = 0.0;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
   var angle: f32 = params.seedAngle;\r
 \r
   for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
     let n = lowpass4D(base * freqLoc);\r
-    sum += (2.0 * abs(n) - 1.0) * amp;\r
-    maxAmp += amp;\r
+    let b = pow(abs(n), 0.75);\r
+    sum += b * amp;\r
+    ampSum += amp;\r
 \r
     freqLoc *= params.lacunarity;\r
     amp *= params.gain;\r
@@ -4147,11 +4143,17 @@ fn generateLanczosBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
     }\r
   }\r
 \r
-  return select(0.0, sum / maxAmp, maxAmp > 0.0);\r
+  if (ampSum > 0.0) { sum /= ampSum; }\r
+\r
+  let k: f32 = 1.2;\r
+  let cMid = sum - 0.5;\r
+  let shaped = 0.5 + cMid * k / (1.0 + abs(cMid) * (k - 1.0));\r
+\r
+  return clamp(shaped, 0.0, 1.0);\r
 }\r
 \r
 fn generateLanczosAntiBillow4D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-  return -generateLanczosBillow4D(pos, params);\r
+  return 1.0 - generateLanczosBillow4D(pos, params);\r
 }\r
 \r
 \r
@@ -4163,7 +4165,7 @@ fn fbm4D_core(base: vec4<f32>, params: NoiseParams) -> f32 {\r
   var sum: f32 = 0.0;\r
   var amp: f32 = 1.0;\r
   var maxAmp: f32 = 0.0;\r
-  var freqLoc: f32 = params.freq;\r
+  var freqLoc: f32 = max(params.freq, 1e-6);\r
 \r
   var angle: f32 = params.seedAngle;\r
   let angleInc: f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
@@ -4269,7 +4271,7 @@ fn generateLanczosBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {\r
     var sum     : f32 = 0.0;\r
     var maxAmp  : f32 = 0.0;\r
     var amp     : f32 = 1.0;\r
-    var freqLoc : f32 = p.freq;\r
+    var freqLoc : f32 = max(p.freq, 1e-6);\r
     var angle   : f32 = p.seedAngle;\r
 \r
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
@@ -4368,13 +4370,13 @@ fn voronoiCircleGradient(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // Octaved generator matching your JS .generateNoise()\r
 fn generateVoronoiCircleNoise(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    // zoom in/out\r
-    var x       = (pos.x + params.xShift) / params.zoom;\r
-    var y       = (pos.y + params.yShift) / params.zoom;\r
-    var z       = (pos.z + params.zShift) / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x       = pos.x / zoom + params.xShift;\r
+    var y       = pos.y / zoom + params.yShift;\r
+    var z       = pos.z / zoom + params.zShift;\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         let samplePos = vec3<f32>(x * freq, y * freq, z * freq);\r
@@ -4456,19 +4458,18 @@ fn voronoiCircleGradient2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiCircle2(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
     var angle     : f32 = params.seedAngle;\r
-    let angleInc  : f32 = 2.0 * PI / f32(params.octaves);\r
+    let angleInc  : f32 = 2.0 * PI / max(f32(params.octaves), 1.0);\r
 \r
     for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let samplePos = vec3<f32>(x * freq / params.zoom,\r
-                                  y * freq / params.zoom,\r
-                                  z * freq / params.zoom);\r
+        let samplePos = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiCircleGradient2Raw(samplePos, params) * amp;\r
         amp   = amp * params.gain;\r
         freq  = freq * params.lacunarity;\r
@@ -4513,10 +4514,11 @@ fn voronoiFlatShadeRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiFlatShade(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var pos = posIn / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var pos = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
     for(var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         total = total + voronoiFlatShadeRaw(pos * freq, params) * amp;\r
         amp  = amp * params.gain;\r
@@ -4562,16 +4564,15 @@ fn voronoiRipple3DRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiRipple3D(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
     for(var i: u32=0u; i<params.octaves; i=i+1u) {\r
-        let sample = vec3<f32>(x * freq / params.zoom,\r
-                               y * freq / params.zoom,\r
-                               z * freq / params.zoom);\r
+        let sample = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiRipple3DRaw(sample, params) * amp;\r
         amp   = amp * params.gain;\r
         freq  = freq * params.lacunarity;\r
@@ -4619,17 +4620,16 @@ fn voronoiRipple3D2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiRipple3D2(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total: f32 = 0.0;\r
     var amp: f32 = 1.0;\r
-    var freq: f32 = params.freq;\r
+    var freq: f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let sample = vec3<f32>(x * freq / params.zoom,\r
-                               y * freq / params.zoom,\r
-                               z * freq / params.zoom);\r
+        let sample = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiRipple3D2Raw(sample, params) * amp;\r
         amp = amp * params.gain;\r
         freq = freq * params.lacunarity;\r
@@ -4670,17 +4670,16 @@ fn voronoiCircularRippleRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 }\r
 \r
 fn generateVoronoiCircularRipple(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var x = pos.x + params.xShift;\r
-    var y = pos.y + params.yShift;\r
-    var z = pos.z + params.zShift;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var x = pos.x / zoom + params.xShift;\r
+    var y = pos.y / zoom + params.yShift;\r
+    var z = pos.z / zoom + params.zShift;\r
     var total: f32 = 0.0;\r
     var amp: f32 = 1.0;\r
-    var freq: f32 = params.freq;\r
+    var freq: f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
-        let sample = vec3<f32>(x * freq / params.zoom,\r
-                               y * freq / params.zoom,\r
-                               z * freq / params.zoom);\r
+        let sample = vec3<f32>(x * freq, y * freq, z * freq);\r
         total = total + voronoiCircularRippleRaw(sample, params) * amp;\r
         amp = amp * params.gain;\r
         freq = freq * params.lacunarity;\r
@@ -4760,15 +4759,16 @@ fn calculateRippleEffect(pos: vec3<f32>,\r
 \r
 // \u2014\u2014\u2014 generateRippleNoise \u2014\u2014\u2014\r
 fn generateRippleNoise(pos: vec3<f32>, p: NoiseParams) -> f32 {\r
-    var x = (pos.x + p.xShift) / p.zoom;\r
-    var y = (pos.y + p.yShift) / p.zoom;\r
-    var z = (pos.z + p.zShift) / p.zoom;\r
+    let zoom = max(p.zoom, 1e-6);\r
+    var x = pos.x / zoom + p.xShift;\r
+    var y = pos.y / zoom + p.yShift;\r
+    var z = pos.z / zoom + p.zShift;\r
     var sum: f32 = 0.0;\r
     var amp: f32 = 1.0;\r
-    var freq: f32 = p.freq;\r
+    var freq: f32 = max(p.freq, 1e-6);\r
     var angle: f32 = p.seedAngle * 2.0 * PI;\r
-    let angleInc = 2.0 * PI / f32(p.octaves);\r
-    let rippleFreqScaled = p.rippleFreq / p.zoom;\r
+    let angleInc = 2.0 * PI / max(f32(p.octaves), 1.0);\r
+    let rippleFreqScaled = p.rippleFreq;\r
     let neigh = i32(p.exp1);\r
 \r
     for (var i: u32 = 0u; i < p.octaves; i = i + 1u) {\r
@@ -4846,10 +4846,11 @@ fn hexWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // \u2014\u2014\u2014 2. HexWorms Generator \u2014\u2014\u2014\r
 fn generateHexWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var pos   = posIn / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var pos   = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
     var sum   : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         sum = sum + hexWormsRaw(pos * freq, params) * amp;\r
@@ -4893,10 +4894,11 @@ fn perlinWormsRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {\r
 \r
 // \u2014\u2014\u2014 PerlinWorms Generator \u2014\u2014\u2014\r
 fn generatePerlinWormsNoise(posIn: vec3<f32>, params: NoiseParams) -> f32 {\r
-    var pos   = posIn / params.zoom;\r
+    let zoom = max(params.zoom, 1e-6);\r
+    var pos   = posIn / zoom + vec3<f32>(params.xShift, params.yShift, params.zShift);\r
     var sum   : f32 = 0.0;\r
     var amp   : f32 = 1.0;\r
-    var freq  : f32 = params.freq;\r
+    var freq  : f32 = max(params.freq, 1e-6);\r
 \r
     for (var i: u32 = 0u; i < params.octaves; i = i + 1u) {\r
         sum = sum + perlinWormsRaw(pos * freq, params) * amp;\r
@@ -5074,7 +5076,593 @@ fn generateBlueNoise(pos : vec3<f32>, params: NoiseParams) -> f32 {\r
   return rClamped * 0.5 + 0.5;\r
 }\r
 \r
+const HYDRO_TAU : f32 = 6.283185307179586;\r
 \r
+fn hydroClamp01(x: f32) -> f32 {\r
+  return clamp(x, 0.0, 1.0);\r
+}\r
+\r
+fn hydroHash2(p: vec2<f32>) -> vec2<f32> {\r
+  let k = vec2<f32>(0.3183099, 0.3678794);\r
+  let q = p * k + k.yx;\r
+  return -1.0 + 2.0 * fract(16.0 * k * fract(q.x * q.y * (q.x + q.y)));\r
+}\r
+\r
+fn hydroSafeNormalize2(v: vec2<f32>) -> vec2<f32> {\r
+  let l = length(v);\r
+  if (l > 1e-10) {\r
+    return v / l;\r
+  }\r
+  return vec2<f32>(0.0, 0.0);\r
+}\r
+\r
+fn hydroPowInv(t: f32, power: f32) -> f32 {\r
+  return 1.0 - pow(1.0 - hydroClamp01(t), power);\r
+}\r
+\r
+fn hydroEaseOut(t: f32) -> f32 {\r
+  let v = 1.0 - hydroClamp01(t);\r
+  return 1.0 - v * v;\r
+}\r
+\r
+fn hydroSmoothStart(t: f32, smoothing: f32) -> f32 {\r
+  let s = max(smoothing, 1e-6);\r
+  if (t >= s) {\r
+    return t - 0.5 * s;\r
+  }\r
+  return 0.5 * t * t / s;\r
+}\r
+\r
+fn hydroLoadPrevClamped2D(fx: i32, fy: i32, fz: i32) -> vec4<f32> {\r
+  let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);\r
+  let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
+  return loadPrevRGBA(cx, cy, fz);\r
+}\r
+\r
+fn hydroFetchPosClamped2D(fx: i32, fy: i32, fz: i32) -> vec3<f32> {\r
+  let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);\r
+  let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);\r
+  return fetchPos(cx, cy, fz);\r
+}\r
+\r
+fn hydroResolutionScale() -> f32 {\r
+  let refRes = 1024.0;\r
+  let curRes = max(min(f32(frame.fullWidth), f32(frame.fullHeight)), 1.0);\r
+  return curRes / refRes;\r
+}\r
+\r
+fn hydroResolveFiniteSlope2D(fx: i32, fy: i32, fz: i32) -> vec2<f32> {\r
+  let hL = hydroLoadPrevClamped2D(fx - 1, fy, fz).x;\r
+  let hR = hydroLoadPrevClamped2D(fx + 1, fy, fz).x;\r
+  let hD = hydroLoadPrevClamped2D(fx, fy - 1, fz).x;\r
+  let hU = hydroLoadPrevClamped2D(fx, fy + 1, fz).x;\r
+\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x), 1e-6);\r
+  let dy = max(abs(pU.y - pD.y), 1e-6);\r
+\r
+  let dHdX = (hR - hL) / dx;\r
+  let dHdY = (hU - hD) / dy;\r
+\r
+  return vec2<f32>(dHdX, dHdY);\r
+}\r
+\r
+fn hydroGuideGaussian(dx: i32, dy: i32, sigmaPx: f32) -> f32 {\r
+  let s = max(sigmaPx, 0.05);\r
+  let d2 = f32(dx * dx + dy * dy);\r
+  return exp(-0.5 * d2 / (s * s));\r
+}\r
+\r
+fn hydroGuideHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {\r
+  let sigmaPx = sigmaWorld * hydroResolutionScale();\r
+\r
+  var sumW = 0.0;\r
+  var sumH = 0.0;\r
+\r
+  for (var j: i32 = -4; j <= 4; j = j + 1) {\r
+    for (var i: i32 = -4; i <= 4; i = i + 1) {\r
+      let h = hydroLoadPrevClamped2D(fx + i, fy + j, fz).x;\r
+      let w = hydroGuideGaussian(i, j, sigmaPx);\r
+      sumW += w;\r
+      sumH += h * w;\r
+    }\r
+  }\r
+\r
+  return sumH / max(sumW, 1e-6);\r
+}\r
+\r
+fn hydroDrainBlurWeight(dx: i32, dy: i32, sigmaPx: f32) -> f32 {\r
+  let s = max(sigmaPx, 0.05);\r
+  let d2 = f32(dx * dx + dy * dy);\r
+  return exp(-0.5 * d2 / (s * s));\r
+}\r
+\r
+fn hydroBlurredHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {\r
+  let sigmaPx = sigmaWorld * hydroResolutionScale();\r
+\r
+  var sumW = 0.0;\r
+  var sumH = 0.0;\r
+\r
+  for (var j: i32 = -4; j <= 4; j = j + 1) {\r
+    for (var i: i32 = -4; i <= 4; i = i + 1) {\r
+      let s = hydroLoadPrevClamped2D(fx + i, fy + j, fz).x;\r
+      let w = hydroDrainBlurWeight(i, j, sigmaPx);\r
+      sumW += w;\r
+      sumH += s * w;\r
+    }\r
+  }\r
+\r
+  return sumH / max(sumW, 1e-6);\r
+}\r
+\r
+fn hydroBlurredRidgeAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {\r
+  let sigmaPx = sigmaWorld * hydroResolutionScale();\r
+\r
+  var sumW = 0.0;\r
+  var sumR = 0.0;\r
+\r
+  for (var j: i32 = -4; j <= 4; j = j + 1) {\r
+    for (var i: i32 = -4; i <= 4; i = i + 1) {\r
+      let s = hydroLoadPrevClamped2D(fx + i, fy + j, fz);\r
+      let ridge = s.w * 2.0 - 1.0;\r
+      let w = hydroDrainBlurWeight(i, j, sigmaPx);\r
+      sumW += w;\r
+      sumR += ridge * w;\r
+    }\r
+  }\r
+\r
+  return sumR / max(sumW, 1e-6);\r
+}\r
+\r
+fn hydroPhacelleNoise(\r
+  p: vec2<f32>,\r
+  normDir: vec2<f32>,\r
+  freq: f32,\r
+  offset: f32,\r
+  normalization: f32\r
+) -> vec4<f32> {\r
+  let sideDir = normDir.yx * vec2<f32>(-1.0, 1.0) * freq * HYDRO_TAU;\r
+  let phaseOffset = offset * HYDRO_TAU;\r
+\r
+  let pInt = floor(p);\r
+  let pFrac = fract(p);\r
+\r
+  var phaseDir = vec2<f32>(0.0);\r
+  var weightSum = 0.0;\r
+\r
+  for (var j: i32 = -1; j <= 2; j = j + 1) {\r
+    for (var i: i32 = -1; i <= 2; i = i + 1) {\r
+      let gridOffset = vec2<f32>(f32(i), f32(j));\r
+      let gridPoint = pInt + gridOffset;\r
+      let randomOffset = hydroHash2(gridPoint) * 0.5;\r
+      let v = pFrac - gridOffset - randomOffset;\r
+\r
+      let sqrDist = dot(v, v);\r
+      var weight = exp(-sqrDist * 2.0);\r
+      weight = max(0.0, weight - 0.01111);\r
+\r
+      weightSum += weight;\r
+\r
+      let waveInput = dot(v, sideDir) + phaseOffset;\r
+      phaseDir += vec2<f32>(cos(waveInput), sin(waveInput)) * weight;\r
+    }\r
+  }\r
+\r
+  let interpolated = phaseDir / max(weightSum, 1e-6);\r
+  let mag = max(1.0 - normalization, length(interpolated));\r
+\r
+  return vec4<f32>(interpolated / max(mag, 1e-6), sideDir);\r
+}\r
+\r
+fn hydroPixelSpan2D(fx: i32, fy: i32, fz: i32) -> f32 {\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x) * 0.5, 1e-6);\r
+  let dy = max(abs(pU.y - pD.y) * 0.5, 1e-6);\r
+\r
+  return max(dx, dy);\r
+}\r
+\r
+fn hydroErosionFilter(\r
+  p: vec2<f32>,\r
+  heightAndSlopeIn: vec3<f32>,\r
+  fadeTargetIn: f32,\r
+  strengthIn: f32,\r
+  gullyWeightIn: f32,\r
+  detailIn: f32,\r
+  roundingIn: vec4<f32>,\r
+  onsetIn: vec4<f32>,\r
+  assumedSlopeIn: vec2<f32>,\r
+  scaleIn: f32,\r
+  octavesIn: u32,\r
+  lacunarityIn: f32,\r
+  gainIn: f32,\r
+  cellScaleIn: f32,\r
+  normalizationIn: f32,\r
+  pixelSpanIn: f32,\r
+  ridgeMapOut: ptr<function, f32>\r
+) -> vec4<f32> {\r
+  var heightAndSlope = heightAndSlopeIn;\r
+  var fadeTarget = clamp(fadeTargetIn, -1.0, 1.0);\r
+\r
+  let inputHeightAndSlope = heightAndSlopeIn;\r
+\r
+  var strength = strengthIn * scaleIn;\r
+  var freq = 1.0 / max(scaleIn * cellScaleIn, 1e-6);\r
+  let slopeLength = max(length(heightAndSlopeIn.yz), 1e-10);\r
+  var magnitude = 0.0;\r
+  var roundingMult = 1.0;\r
+\r
+  let roundingForInput =\r
+    mix(roundingIn.y, roundingIn.x, hydroClamp01(fadeTarget + 0.5)) * roundingIn.z;\r
+\r
+  var combiMask =\r
+    hydroEaseOut(hydroSmoothStart(slopeLength * onsetIn.x, roundingForInput * onsetIn.x));\r
+\r
+  var ridgeMapCombiMask = hydroEaseOut(slopeLength * onsetIn.z);\r
+  var ridgeMapFadeTarget = fadeTarget;\r
+\r
+  var gullySlope =\r
+    mix(\r
+      heightAndSlopeIn.yz,\r
+      hydroSafeNormalize2(heightAndSlopeIn.yz) * assumedSlopeIn.x,\r
+      assumedSlopeIn.y\r
+    );\r
+\r
+  let pixelSpan = max(pixelSpanIn, 1e-6);\r
+\r
+  for (var i: u32 = 0u; i < octavesIn; i = i + 1u) {\r
+    let stripeStep = freq * cellScaleIn * HYDRO_TAU * pixelSpan;\r
+    let stripeMask = 1.0 - smoothstep(1.05, 2.40, stripeStep);\r
+\r
+    if (stripeMask <= 1e-4) {\r
+      break;\r
+    }\r
+\r
+    var phacelle =\r
+      hydroPhacelleNoise(\r
+        p * freq,\r
+        hydroSafeNormalize2(gullySlope),\r
+        cellScaleIn,\r
+        0.25,\r
+        normalizationIn\r
+      );\r
+\r
+    phacelle = vec4<f32>(phacelle.xy, phacelle.z * -freq, phacelle.w * -freq);\r
+    let sloping = abs(phacelle.y);\r
+\r
+    let octaveStrength = strength * stripeMask;\r
+\r
+    gullySlope += sign(phacelle.y) * phacelle.zw * octaveStrength * gullyWeightIn;\r
+\r
+    let gullies = vec3<f32>(phacelle.x, phacelle.y * phacelle.zw);\r
+    let fadedGullies =\r
+      mix(vec3<f32>(fadeTarget, 0.0, 0.0), gullies * gullyWeightIn, combiMask);\r
+\r
+    heightAndSlope += fadedGullies * octaveStrength;\r
+    magnitude += octaveStrength;\r
+    fadeTarget = mix(fadeTarget, fadedGullies.x, stripeMask);\r
+\r
+    let roundingForOctave =\r
+      mix(roundingIn.y, roundingIn.x, hydroClamp01(phacelle.x + 0.5)) * roundingMult;\r
+\r
+    let newMask =\r
+      hydroEaseOut(hydroSmoothStart(sloping * onsetIn.y, roundingForOctave * onsetIn.y));\r
+\r
+    combiMask = hydroPowInv(combiMask, detailIn) * mix(1.0, newMask, stripeMask);\r
+\r
+    ridgeMapFadeTarget = mix(ridgeMapFadeTarget, gullies.x, ridgeMapCombiMask * stripeMask);\r
+\r
+    let newRidgeMapMask = hydroEaseOut(sloping * onsetIn.w);\r
+    ridgeMapCombiMask = ridgeMapCombiMask * mix(1.0, newRidgeMapMask, stripeMask);\r
+\r
+    strength *= gainIn;\r
+    freq *= lacunarityIn;\r
+    roundingMult *= roundingIn.w;\r
+  }\r
+\r
+  *ridgeMapOut = ridgeMapFadeTarget * (1.0 - ridgeMapCombiMask);\r
+\r
+  let delta = heightAndSlope - inputHeightAndSlope;\r
+  return vec4<f32>(delta, magnitude);\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  if (readFrom3D() || writeTo3D()) {\r
+    return;\r
+  }\r
+\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {\r
+    return;\r
+  }\r
+\r
+  let src = hydroLoadPrevClamped2D(fx, fy, fz);\r
+  let pos = fetchPos(fx, fy, fz);\r
+\r
+  var baseHeight = src.x;\r
+  var guideHeight = src.x;\r
+  let rawSlope = hydroResolveFiniteSlope2D(fx, fy, fz);\r
+  var guideSlope = rawSlope;\r
+\r
+  if (params.turbulence != 0u) {\r
+    baseHeight = src.w;\r
+    guideHeight = src.x;\r
+    guideSlope = src.yz;\r
+\r
+    if (length(guideSlope) < 1e-8) {\r
+      guideSlope = rawSlope;\r
+    }\r
+  }\r
+\r
+  let steerSlope = mix(rawSlope, guideSlope, 0.50);\r
+  let fadeHeight = mix(baseHeight, guideHeight, 0.28);\r
+\r
+  var erosionScale = params.zoom;\r
+  if (abs(erosionScale) < 1e-6) {\r
+    erosionScale = 0.15;\r
+  }\r
+\r
+  var domainScale = params.freq;\r
+  if (abs(domainScale) < 1e-6) {\r
+    domainScale = 1.0;\r
+  }\r
+\r
+  var erosionStrength = options.heightScale;\r
+  if (abs(erosionStrength) < 1e-6) {\r
+    erosionStrength = 1.0;\r
+  }\r
+  erosionStrength *= 0.22;\r
+\r
+  var gullyWeight = params.exp1;\r
+  if (abs(gullyWeight) < 1e-6) {\r
+    gullyWeight = 0.5;\r
+  }\r
+\r
+  var detail = params.seedAngle;\r
+  if (abs(detail) < 1e-6) {\r
+    detail = 1.5;\r
+  }\r
+\r
+  var fadeScale = params.exp2;\r
+  if (abs(fadeScale) < 1e-6) {\r
+    fadeScale = 1.6666667;\r
+  }\r
+\r
+  var cellScale = params.threshold;\r
+  if (abs(cellScale) < 1e-6) {\r
+    cellScale = 0.7;\r
+  }\r
+\r
+  var normalization = params.rippleFreq;\r
+  if (abs(normalization) < 1e-6) {\r
+    normalization = 0.5;\r
+  }\r
+  normalization = hydroClamp01(normalization);\r
+\r
+  var assumedSlopeValue = params.warpAmp;\r
+  if (abs(assumedSlopeValue) < 1e-6) {\r
+    assumedSlopeValue = 0.7;\r
+  }\r
+  assumedSlopeValue = max(assumedSlopeValue, 1e-4);\r
+\r
+  var assumedSlopeMix = params.gaborRadius;\r
+  if (abs(assumedSlopeMix) < 1e-6) {\r
+    assumedSlopeMix = 1.0;\r
+  }\r
+  assumedSlopeMix = hydroClamp01(assumedSlopeMix);\r
+\r
+  var onsetScale = params.terraceStep;\r
+  if (abs(onsetScale) < 1e-6) {\r
+    onsetScale = 8.0;\r
+  }\r
+  onsetScale = max(onsetScale / 8.0, 1e-4);\r
+\r
+  let rounding = vec4<f32>(\r
+    0.10,\r
+    0.00,\r
+    0.10,\r
+    max(params.lacunarity, 1.0)\r
+  );\r
+\r
+  let onset = vec4<f32>(\r
+    1.25,\r
+    1.25,\r
+    2.80,\r
+    1.50\r
+  ) * onsetScale;\r
+\r
+  let assumedSlope = vec2<f32>(assumedSlopeValue, assumedSlopeMix);\r
+\r
+  let seedShift = vec2<f32>(\r
+    f32(params.seed & 65535u) * 0.00001173,\r
+    f32((params.seed >> 16u) & 65535u) * 0.00000937\r
+  );\r
+\r
+  let domainP =\r
+    pos.xy * domainScale +\r
+    vec2<f32>(params.xShift, params.yShift) +\r
+    seedShift +\r
+    vec2<f32>(params.time * 0.021, -params.time * 0.017);\r
+\r
+  let fadeTarget = clamp((fadeHeight + params.zShift) * fadeScale, -1.0, 1.0);\r
+  let pixelSpan = hydroPixelSpan2D(fx, fy, fz);\r
+\r
+  var ridgeMap = 0.0;\r
+  let h = hydroErosionFilter(\r
+    domainP,\r
+    vec3<f32>(baseHeight, steerSlope.x, steerSlope.y),\r
+    fadeTarget,\r
+    erosionStrength,\r
+    gullyWeight,\r
+    detail,\r
+    rounding,\r
+    onset,\r
+    assumedSlope,\r
+    erosionScale,\r
+    max(params.octaves, 1u),\r
+    max(params.lacunarity, 1.0),\r
+    max(params.gain, 1e-4),\r
+    cellScale,\r
+    normalization,\r
+    pixelSpan,\r
+    &ridgeMap\r
+  );\r
+\r
+  let terrainHeightOffsetConst = options.baseRadius;\r
+  let terrainHeightOffsetFollowFade = hydroClamp01(max(params.edgeK, 0.0));\r
+\r
+  let offset =\r
+    mix(terrainHeightOffsetConst, -fadeTarget, terrainHeightOffsetFollowFade) * h.w;\r
+\r
+  let erodedHeight = baseHeight + h.x + offset;\r
+  let outSlope = steerSlope + h.yz;\r
+  let ridgeMapEncoded = hydroClamp01(ridgeMap * 0.5 + 0.5);\r
+\r
+  storeRGBA(\r
+    fx,\r
+    fy,\r
+    fz,\r
+    vec4<f32>(erodedHeight, outSlope.x, outSlope.y, ridgeMapEncoded)\r
+  );\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeHydrologyGuideField(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  if (readFrom3D() || writeTo3D()) {\r
+    return;\r
+  }\r
+\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {\r
+    return;\r
+  }\r
+\r
+  let src = hydroLoadPrevClamped2D(fx, fy, fz);\r
+  let rawHeight = src.x;\r
+\r
+  var sigma = abs(params.threshold);\r
+  if (sigma < 1e-6) {\r
+    sigma = 0.90;\r
+  }\r
+\r
+  var guideBlend = params.exp1;\r
+  if (abs(guideBlend) < 1e-6) {\r
+    guideBlend = 0.35;\r
+  }\r
+  guideBlend = hydroClamp01(guideBlend);\r
+\r
+  let blurredC = hydroGuideHeightAt(fx, fy, fz, sigma);\r
+  let blurredL = hydroGuideHeightAt(fx - 1, fy, fz, sigma);\r
+  let blurredR = hydroGuideHeightAt(fx + 1, fy, fz, sigma);\r
+  let blurredD = hydroGuideHeightAt(fx, fy - 1, fz, sigma);\r
+  let blurredU = hydroGuideHeightAt(fx, fy + 1, fz, sigma);\r
+\r
+  let guideHeight = mix(rawHeight, blurredC, guideBlend);\r
+  let guideL = mix(hydroLoadPrevClamped2D(fx - 1, fy, fz).x, blurredL, guideBlend);\r
+  let guideR = mix(hydroLoadPrevClamped2D(fx + 1, fy, fz).x, blurredR, guideBlend);\r
+  let guideD = mix(hydroLoadPrevClamped2D(fx, fy - 1, fz).x, blurredD, guideBlend);\r
+  let guideU = mix(hydroLoadPrevClamped2D(fx, fy + 1, fz).x, blurredU, guideBlend);\r
+\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x), 1e-6);\r
+  let dy = max(abs(pU.y - pD.y), 1e-6);\r
+\r
+  let guideSlopeX = (guideR - guideL) / dx;\r
+  let guideSlopeY = (guideU - guideD) / dy;\r
+\r
+  storeRGBA(\r
+    fx,\r
+    fy,\r
+    fz,\r
+    vec4<f32>(guideHeight, guideSlopeX, guideSlopeY, rawHeight)\r
+  );\r
+}\r
+\r
+fn computeHydroDrainageField(fx: i32, fy: i32, fz: i32) -> vec4<f32> {\r
+  let coarseSigma = 1.75;\r
+\r
+  let hC = hydroBlurredHeightAt(fx, fy, fz, coarseSigma);\r
+  let hL = hydroBlurredHeightAt(fx - 1, fy, fz, coarseSigma);\r
+  let hR = hydroBlurredHeightAt(fx + 1, fy, fz, coarseSigma);\r
+  let hD = hydroBlurredHeightAt(fx, fy - 1, fz, coarseSigma);\r
+  let hU = hydroBlurredHeightAt(fx, fy + 1, fz, coarseSigma);\r
+\r
+  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);\r
+  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);\r
+  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);\r
+  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);\r
+\r
+  let dx = max(abs(pR.x - pL.x), 1e-6);\r
+  let dy = max(abs(pU.y - pD.y), 1e-6);\r
+\r
+  let slope = vec2<f32>(\r
+    (hR - hL) / dx,\r
+    (hU - hD) / dy\r
+  );\r
+\r
+  let flowDir = -hydroSafeNormalize2(slope);\r
+\r
+  let ridgeBroad = hydroBlurredRidgeAt(fx, fy, fz, 1.6);\r
+  let valleyPrior = 1.0 - smoothstep(-0.12, 0.08, ridgeBroad);\r
+\r
+  let valleyDepth = max(0.0, (hL + hR + hD + hU) * 0.25 - hC);\r
+  let concavityGain = max(abs(params.edgeK), 1e-4) * 36.0;\r
+  let concavityMask = hydroClamp01(valleyDepth * concavityGain);\r
+\r
+  let slopeOnset = max(abs(params.warpAmp), 1e-4);\r
+  let slopeMask = hydroEaseOut(hydroClamp01(length(slope) / slopeOnset));\r
+\r
+  let contrast = max(abs(params.exp1), 1e-4);\r
+  let gain = max(abs(params.exp2), 1e-4);\r
+\r
+  var drainage = valleyPrior * concavityMask * slopeMask;\r
+  drainage = pow(hydroClamp01(drainage), contrast);\r
+  drainage = hydroClamp01(drainage * gain);\r
+\r
+  return vec4<f32>(\r
+    drainage,\r
+    valleyPrior,\r
+    flowDir.x * 0.5 + 0.5,\r
+    flowDir.y * 0.5 + 0.5\r
+  );\r
+}\r
+\r
+@compute @workgroup_size(8, 8, 1)\r
+fn computeHydrologyDrainageMask(@builtin(global_invocation_id) gid: vec3<u32>) {\r
+  if (readFrom3D() || writeTo3D()) {\r
+    return;\r
+  }\r
+\r
+  let fx = i32(frame.originX) + i32(gid.x);\r
+  let fy = i32(frame.originY) + i32(gid.y);\r
+  let fz = i32(frame.originZ) + i32(gid.z);\r
+\r
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {\r
+    return;\r
+  }\r
+\r
+  let outCol = computeHydroDrainageField(fx, fy, fz);\r
+  storeRGBA(fx, fy, fz, outCol);\r
+}\r
 \r
 // Shared tiling constants\r
 const WGX : u32 = 8u;\r
@@ -6771,4 +7359,4 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {\r
 \r
   return vec4<f32>(clamp(v, 0.0, 1.0));\r
 }\r
-`;var we=4096;var le=2048,Ie=8,ae=class{constructor(t,e){this.device=t,this.queue=e,this.maxBufferChunkBytes=8e6,this.entryPoints=["computePerlin","computeBillow","computeAntiBillow","computeRidge","computeAntiRidge","computeRidgedMultifractal","computeRidgedMultifractal2","computeRidgedMultifractal3","computeRidgedMultifractal4","computeAntiRidgedMultifractal","computeAntiRidgedMultifractal2","computeAntiRidgedMultifractal3","computeAntiRidgedMultifractal4","computeFBM","computeFBM2","computeFBM3","computeCellularBM1","computeCellularBM2","computeCellularBM3","computeVoronoiBM1","computeVoronoiBM2","computeVoronoiBM3","computeCellular","computeWorley","computeAntiCellular","computeAntiWorley","computeLanczosBillow","computeLanczosAntiBillow","computeVoronoiTileNoise","computeVoronoiCircleNoise","computeVoronoiCircle2","computeVoronoiFlatShade","computeVoronoiRipple3D","computeVoronoiRipple3D2","computeVoronoiCircularRipple","computeFVoronoiRipple3D","computeFVoronoiCircularRipple","computeRippleNoise","computeFractalRipples","computeHexWorms","computePerlinWorms","computeWhiteNoise","computeBlueNoise","computeSimplex","computeSimplexFBM","computeCurl2D","computeCurlFBM2D","computeDomainWarpFBM1","computeDomainWarpFBM2","computeGaborAnisotropic","computeGaborMagic","computeGaborFlow","computeTerraceNoise","computeFoamNoise","computeTurbulence","computePerlin4D","computeWorley4D","computeAntiWorley4D","computeCellular4D","computeAntiCellular4D","computeBillow4D","computeAntiBillow4D","computeLanczosBillow4D","computeLanczosAntiBillow4D","computeFBM4D","computeVoronoi4D","computeVoronoiBM1_4D","computeVoronoiBM2_4D","computeVoronoiBM3_4D","computeVoronoiBM1_4D_vec","computeVoronoiBM2_4D_vec","computeVoronoiBM3_4D_vec","computeWorleyBM1_4D","computeWorleyBM2_4D","computeWorleyBM3_4D","computeWorleyBM1_4D_vec","computeWorleyBM2_4D_vec","computeWorleyBM3_4D_vec","computeCellularBM1_4D","computeCellularBM2_4D","computeCellularBM3_4D","computeCellularBM1_4D_vec","computeCellularBM2_4D_vec","computeCellularBM3_4D_vec","computeTerraceNoise4D","computeFoamNoise4D","computeTurbulence4D","computeGauss5x5","computeNormal","computeNormal8","computeSphereNormal","computeNormalVolume","clearTexture"],this.shaderModule=t.createShaderModule({code:ze}),this.bindGroupLayout=t.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:1,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:2,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:3,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:4,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"2d-array"}},{binding:5,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:6,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:7,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"3d"}},{binding:8,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"3d"}}]}),this.pipelineLayout=t.createPipelineLayout({bindGroupLayouts:[this.bindGroupLayout]}),this.pipelines=new Map,this._texPairs=new Map,this._tid=null,this._tag=new WeakMap,this._default2DKey="__default2d",this._volumeCache=new Map,this.viewA=null,this.viewB=null,this.width=0,this.height=0,this.layers=1,this.isA=!0,this._initBuffers(),this._ensureDummies(),this._ctxMap=new WeakMap}_initBuffers(){this.optionsBuffer?.destroy(),this.paramsBuffer?.destroy(),this.permBuffer?.destroy(),this.nullPosBuffer?.destroy(),this.optionsBuffer=this.device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.paramsBuffer=this.device.createBuffer({size:88,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.permBuffer=this.device.createBuffer({size:512*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.nullPosBuffer=this.device.createBuffer({size:64,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.queue.writeBuffer(this.optionsBuffer,0,new ArrayBuffer(32)),this.queue.writeBuffer(this.paramsBuffer,0,new ArrayBuffer(88)),this.queue.writeBuffer(this.permBuffer,0,new Uint32Array(512))}_ensureDummies(){this._dummy2D_sampleTex||(this._dummy2D_sampleTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy2D_sampleView=this._dummy2D_sampleTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy2D_writeTex||(this._dummy2D_writeTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy2D_writeView=this._dummy2D_writeTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy3D_sampleTex||(this._dummy3D_sampleTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy3D_sampleView=this._dummy3D_sampleTex.createView({dimension:"3d"})),this._dummy3D_writeTex||(this._dummy3D_writeTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy3D_writeView=this._dummy3D_writeTex.createView({dimension:"3d"}))}_getMaxBufferChunkBytes(t){let e=this.device?.limits?.maxBufferSize??268435456,i=Math.max(1024*1024,Math.floor(e*.9)),r=Number.isFinite(t)?Math.floor(t):this.maxBufferChunkBytes;return(!Number.isFinite(r)||r<=0)&&(r=this.maxBufferChunkBytes),r=Math.max(4,r)&-4,Math.min(i,r)}_writeBufferChunked(t,e,i,r,a,n=null){let l=a|0;if(!(l>0))return;let s=this._getMaxBufferChunkBytes(n),f=0;for(;f<l;){let u=Math.min(s,l-f)|0;if(u=u&-4,u<=0)break;this.queue.writeBuffer(t,e+f|0,i,r+f|0,u),f=f+u|0}if(f!==l)throw new Error(`_writeBufferChunked: incomplete write ${f}/${l} bytes`)}async _readBGRA8TextureToRGBA8Pixels(t,e,i,r={}){let a=Math.max(1,e|0),n=Math.max(1,i|0),l=4,s=256,f=a*l,u=Math.ceil(f/s)*s,p=this.device?.limits?.maxBufferSize??256*1024*1024,m=Math.max(1024*1024,Math.floor(p*.9)),v=this._getMaxBufferChunkBytes(r.maxBufferChunkBytes);if(v<u&&(v=u),u>m)throw new Error(`_readBGRA8TextureToRGBA8Pixels: bytesPerRow=${u} exceeds safe buffer cap=${m}`);let c=Math.max(1,Math.floor(v/u))|0,g=new Uint8ClampedArray(a*n*4),h=[],y=this.device.createCommandEncoder();for(let b=0;b<n;b+=c){let z=Math.min(c,n-b)|0,_=u*z|0,D=this.device.createBuffer({size:_,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});y.copyTextureToBuffer({texture:t,origin:{x:0,y:b,z:0}},{buffer:D,bytesPerRow:u,rowsPerImage:z},{width:a,height:z,depthOrArrayLayers:1}),h.push({readBuffer:D,y0:b,rows:z})}if(this.queue.submit([y.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}for(let b of h){let{readBuffer:z,y0:_,rows:D}=b;await z.mapAsync(GPUMapMode.READ);let w=z.getMappedRange(),S=new Uint8Array(w);for(let q=0;q<D;q++){let C=q*u,N=(_+q)*a*4;for(let k=0;k<a;k++){let B=C+k*4,F=N+k*4;g[F+0]=S[B+2],g[F+1]=S[B+1],g[F+2]=S[B+0],g[F+3]=S[B+3]}}z.unmap(),z.destroy()}return g}resize(t){this.maxConfigs=t,this._initBuffers()}setPermTable(t){this.queue.writeBuffer(this.permBuffer,0,t)}setPosBuffer(t){this.posBuffer=t}setInputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.TEXTURE_BINDING)===0){console.warn("setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.");return}}catch{}if(this.inputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}setOutputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.STORAGE_BINDING)===0){console.warn("setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.");return}}catch{}if(this.outputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}buildPermTable(t=Date.now()){let i=new fe(t).perm,r=new Uint32Array(512);for(let a=0;a<512;a++)r[a]=i[a];this.setPermTable(r)}setOptions(t={}){Array.isArray(t.noiseChoices)?this.noiseChoices=t.noiseChoices:this.noiseChoices||(this.noiseChoices=[0]);let{getGradient:e=0,outputChannel:i=1,baseRadius:r=0,heightScale:a=1,useCustomPos:n=0,ioFlags:l=0}=t;this.useCustomPos=n>>>0;let s=new ArrayBuffer(32),f=new DataView(s);f.setUint32(0,e,!0),f.setUint32(4,this.useCustomPos,!0),f.setUint32(8,i,!0),f.setUint32(12,l>>>0,!0),f.setFloat32(16,r,!0),f.setFloat32(20,a,!0),f.setFloat32(24,0,!0),f.setFloat32(28,0,!0),this.queue.writeBuffer(this.optionsBuffer,0,s);for(let u of this._texPairs.values())u.bindGroupDirty=!0}setNoiseParams(t={}){let e=t||{},i=this._lastNoiseParams||{},r=Object.prototype.hasOwnProperty,a=(P,V)=>{let d=r.call(e,P)?e[P]:i[P],x=Number(d);if(Number.isFinite(x))return x;let M=Number(V);return Number.isFinite(M)?M:0},n=(P,V)=>{let d=r.call(e,P)?e[P]:i[P],x=Number(d);if(Number.isFinite(x))return x>>>0;let M=Number(V);return Number.isFinite(M)?M>>>0:0},l=(P,V)=>{let d=r.call(e,P)?e[P]:i[P],x=Number(d);if(Number.isFinite(x))return x|0;let M=Number(V);return Number.isFinite(M)?M|0:0},s=(P,V)=>{let d=r.call(e,P)?e[P]:i[P];return d===void 0?(V?1:0)>>>0:(d?1:0)>>>0},f=l("seed",i.seed??Date.now()|0),u=a("zoom",i.zoom??1),p=a("freq",i.freq??1),m=Math.max(u||0,1e-6),v=Math.max(p||0,1e-6),c=n("octaves",i.octaves??8),g=s("turbulence",i.turbulence??0),h=a("lacunarity",i.lacunarity??2),y=a("gain",i.gain??.5),b=a("xShift",i.xShift??0),z=a("yShift",i.yShift??0),_=a("zShift",i.zShift??0),D=a("seedAngle",i.seedAngle??0),w=a("exp1",i.exp1??1),S=a("exp2",i.exp2??0),q=a("threshold",i.threshold??.1),C=a("rippleFreq",i.rippleFreq??10),N=a("time",i.time??0),k=a("warpAmp",i.warpAmp??.5),B=a("gaborRadius",i.gaborRadius??4),F=a("terraceStep",i.terraceStep??8),I=s("toroidal",i.toroidal??0),G=n("voroMode",i.voroMode??0),U=a("edgeK",i.edgeK??0),W=new ArrayBuffer(88),T=new DataView(W),A=0;T.setUint32(A+0,f>>>0,!0),T.setFloat32(A+4,m,!0),T.setFloat32(A+8,v,!0),T.setUint32(A+12,c>>>0,!0),T.setFloat32(A+16,h,!0),T.setFloat32(A+20,y,!0),T.setFloat32(A+24,b,!0),T.setFloat32(A+28,z,!0),T.setFloat32(A+32,_,!0),T.setUint32(A+36,g>>>0,!0),T.setFloat32(A+40,D,!0),T.setFloat32(A+44,w,!0),T.setFloat32(A+48,S,!0),T.setFloat32(A+52,q,!0),T.setFloat32(A+56,C,!0),T.setFloat32(A+60,N,!0),T.setFloat32(A+64,k,!0),T.setFloat32(A+68,B,!0),T.setFloat32(A+72,F,!0),T.setUint32(A+76,I>>>0,!0),T.setUint32(A+80,G>>>0,!0),T.setFloat32(A+84,U,!0),this.queue.writeBuffer(this.paramsBuffer,0,W),this._lastNoiseParams={seed:f,zoom:m,freq:v,octaves:c,lacunarity:h,gain:y,xShift:b,yShift:z,zShift:_,turbulence:g,seedAngle:D,exp1:w,exp2:S,threshold:q,rippleFreq:C,time:N,warpAmp:k,gaborRadius:B,terraceStep:F,toroidal:I,voroMode:G,edgeK:U};for(let P of this._texPairs.values())P.bindGroupDirty=!0;for(let[P,V]of this._volumeCache)!V||!Array.isArray(V.chunks)||(V._bindGroupsDirty=!0)}_numOr0(t){let e=Number(t);return Number.isFinite(e)?e:0}_resolveScroll2D(t,e,i,r,a,n){let l=t||{},s=Math.max(1,e|0),f=Math.max(1,i|0),u=Math.max(1,(r??s)|0),p=Math.max(1,(a??f)|0),m=n?u:s,v=n?p:f,c=this._numOr0(l.offsetX)*m,g=this._numOr0(l.offsetY)*v,h=c+this._numOr0(l.offsetXf)+this._numOr0(l.originXf)+this._numOr0(l.originX),y=g+this._numOr0(l.offsetYf)+this._numOr0(l.originYf)+this._numOr0(l.originY);return{baseXf:h,baseYf:y}}_resolveScroll3D(t,e,i,r){let a=t||{},n=Math.max(1,e|0),l=Math.max(1,i|0),s=Math.max(1,r|0),f=this._numOr0(a.offsetX)*n,u=this._numOr0(a.offsetY)*l,p=this._numOr0(a.offsetZ)*s,m=f+this._numOr0(a.offsetXf)+this._numOr0(a.originXf)+this._numOr0(a.originX),v=u+this._numOr0(a.offsetYf)+this._numOr0(a.originYf)+this._numOr0(a.originY),c=p+this._numOr0(a.offsetZf)+this._numOr0(a.originZf)+this._numOr0(a.originZ),g=Math.floor(c)|0;return{baseXf:m,baseYf:v,baseZ:g}}_update2DTileFrames(t,e={}){let i=this._texPairs.get(t);if(!i||!Array.isArray(i.tiles)||i.tiles.length===0)return;let r=Number.isFinite(e.frameFullWidth)?e.frameFullWidth>>>0:i.fullWidth,a=Number.isFinite(e.frameFullHeight)?e.frameFullHeight>>>0:i.fullHeight,n=e.squareWorld||String(e.worldMode||"").toLowerCase()==="crop";if(e.squareWorld){let v=Math.max(r,a,i.fullWidth,i.fullHeight)>>>0;r=v,a=v}let l=i.fullWidth>>>0,s=i.fullHeight>>>0,{baseXf:f,baseYf:u}=this._resolveScroll2D(e,l,s,r,a,n),p=n?1:r/Math.max(1,l),m=n?1:a/Math.max(1,s);for(let v of i.tiles){let c=v?.frames?.[0];if(!c)continue;let g=v.originX|0,h=v.originY|0,y=(g+f)*p,b=(h+u)*m,z=r>0?y/r:0,_=a>0?b/a:0;this._writeFrameUniform(c,{fullWidth:r,fullHeight:a,tileWidth:i.tileWidth,tileHeight:i.tileHeight,originX:g,originY:h,originZ:0,fullDepth:1,tileDepth:1,layerIndex:v.layerIndex|0,layers:i.layers>>>0,originXf:z,originYf:_})}}_update3DChunkFrames(t,e=null,i={}){if(!t||!Array.isArray(t.chunks)||t.chunks.length===0)return;let r=e&&Number.isFinite(e?.w)?e.w>>>0:t.full.w,a=e&&Number.isFinite(e?.h)?e.h>>>0:t.full.h,n=e&&Number.isFinite(e?.d)?e.d>>>0:t.full.d,l=t.full.w>>>0,s=t.full.h>>>0,f=t.full.d>>>0,{baseXf:u,baseYf:p,baseZ:m}=this._resolveScroll3D(i,l,s,f),v=r/Math.max(1,l),c=a/Math.max(1,s);for(let g of t.chunks){g.fb||(g.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}));let h=((g.ox|0)+u)*v,y=((g.oy|0)+p)*c,b=r>0?h/r:0,z=a>0?y/a:0,_=(g.oz|0)+m|0;this._writeFrameUniform(g.fb,{fullWidth:r,fullHeight:a,tileWidth:g.w,tileHeight:g.h,originX:g.ox|0,originY:g.oy|0,originZ:_,fullDepth:n,tileDepth:g.d,layerIndex:0,layers:1,originXf:b,originYf:z})}}_compute2DTiling(t,e){let i=Math.min(t,we),r=Math.min(e,we),a=Math.ceil(t/i),n=Math.ceil(e/r),l=a*n;return{tileW:i,tileH:r,tilesX:a,tilesY:n,layers:l}}_create2DPair(t,e,i=null){let r=this._compute2DTiling(t,e),a=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST,n=v=>this.device.createTexture({label:v,size:[r.tileW,r.tileH,r.layers],format:"rgba16float",usage:a}),l={dimension:"2d-array",arrayLayerCount:r.layers},s=i!=null?String(i):String(this._texPairs.size),f=n(`2D texA ${t}x${e}x${r.layers} (${s})`),u=n(`2D texB ${t}x${e}x${r.layers} (${s})`),p=f.createView(l),m=u.createView(l);return p.label=`2D:viewA (${s})`,m.label=`2D:viewB (${s})`,this._tag.set(p,`2D:A (${s})`),this._tag.set(m,`2D:B (${s})`),this._texPairs.set(s,{texA:f,texB:u,viewA:p,viewB:m,fullWidth:t,fullHeight:e,tileWidth:r.tileW,tileHeight:r.tileH,tilesX:r.tilesX,tilesY:r.tilesY,layers:r.layers,isA:!0,tiles:null,bindGroupDirty:!0}),this._tid===null&&this.setActiveTexture(s),s}createShaderTextures(t,e){this._tid!==null&&this._texPairs.has(this._tid)&&this.destroyTexturePair(this._tid);let i=this._create2DPair(t,e);return this.setActiveTexture(i),i}destroyTexturePair(t){let e=String(t),i=this._texPairs.get(e);if(i){try{i.texA.destroy()}catch{}try{i.texB.destroy()}catch{}if(Array.isArray(i.tiles))for(let r of i.tiles){if(Array.isArray(r.frames))for(let a of r.frames)try{a.destroy()}catch{}if(r.posBuf&&r.posBuf!==this.nullPosBuffer)try{r.posBuf.destroy()}catch{}}this._texPairs.delete(e),this._tid===e&&(this._tid=null,this.inputTextureView=null,this.outputTextureView=null,this.viewA=null,this.viewB=null)}}destroyAllTexturePairs(){let t=Array.from(this._texPairs.keys());for(let e of t)this.destroyTexturePair(e)}setActiveTexture(t){let e=String(t);if(!this._texPairs.has(e))throw new Error("setActiveTexture: invalid id");this._tid=e;let i=this._texPairs.get(e);this.viewA=i.viewA,this.viewB=i.viewB,this.width=i.tileWidth,this.height=i.tileHeight,this.layers=i.layers,this.inputTextureView=i.isA?i.viewA:i.viewB,this.outputTextureView=i.isA?i.viewB:i.viewA}_buildPosBuffer(t,e,i){if(!(i instanceof Float32Array)||i.byteLength<=0)return this.nullPosBuffer;let r=Math.max(1,Math.floor(t)),a=Math.max(1,Math.floor(e)),l=r*a*4;if(i.length!==l)throw new Error(`_buildPosBuffer: customData length ${i.length} != expected ${l} (width=${r}, height=${a})`);let s=this.device?.limits?.maxBufferSize??2147483648,f=Math.floor(s*.98);if(i.byteLength>f)throw new Error(`_buildPosBuffer: ${i.byteLength} bytes exceeds maxBufferSize ${s} (w=${r}, h=${a})`);let u=this.device.createBuffer({size:i.byteLength,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});return this._writeBufferChunked(u,0,i.buffer,i.byteOffset,i.byteLength,this.maxBufferChunkBytes),u}_writeFrameUniform(t,e){let i=new ArrayBuffer(64),r=new DataView(i);r.setUint32(0,e.fullWidth>>>0,!0),r.setUint32(4,e.fullHeight>>>0,!0),r.setUint32(8,e.tileWidth>>>0,!0),r.setUint32(12,e.tileHeight>>>0,!0),r.setInt32(16,e.originX|0,!0),r.setInt32(20,e.originY|0,!0),r.setInt32(24,e.originZ|0,!0),r.setUint32(28,e.fullDepth>>>0,!0),r.setUint32(32,e.tileDepth>>>0,!0),r.setInt32(36,e.layerIndex|0,!0),r.setUint32(40,e.layers>>>0,!0),r.setUint32(44,0,!0),r.setFloat32(48,e.originXf??0,!0),r.setFloat32(52,e.originYf??0,!0),r.setFloat32(56,0,!0),r.setFloat32(60,0,!0),this.queue.writeBuffer(t,0,i)}_create2DTileBindGroups(t,e={}){let i=this._texPairs.get(t);if(!i)throw new Error("_create2DTileBindGroups: invalid tid");let a=((e.useCustomPos??0)|0)!==0&&e.customData instanceof Float32Array?e.customData:null,n=!!a,l=Array.isArray(i.tiles)&&i.tiles.some(f=>f&&f.posIsCustom);if(!n&&l&&(i.bindGroupDirty=!0),Array.isArray(i.tiles)&&!i.bindGroupDirty&&!n)return;let s=[];for(let f=0;f<i.tilesY;f++)for(let u=0;u<i.tilesX;u++){let p=f*i.tilesX+u,m=u*i.tileWidth,v=f*i.tileHeight,c=i.tiles&&i.tiles[p]||null,g=this.nullPosBuffer,h=!1;if(n)g=this._buildPosBuffer(i.tileWidth,i.tileHeight,a),h=g!==this.nullPosBuffer;else if(c&&c.posBuf&&!c.posIsCustom)g=c.posBuf,h=!1;else if(g=this.nullPosBuffer,h=!1,c&&c.posBuf&&c.posIsCustom)try{c.posBuf.destroy()}catch{}let y;c&&c.frames&&c.frames[0]?y=c.frames[0]:y=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let b=Number.isFinite(e.frameFullWidth)?e.frameFullWidth>>>0:i.fullWidth,z=Number.isFinite(e.frameFullHeight)?e.frameFullHeight>>>0:i.fullHeight,_=e.squareWorld||String(e.worldMode||"").toLowerCase()==="crop";if(e.squareWorld){let C=Math.max(b,z,i.fullWidth,i.fullHeight)>>>0;b=C,z=C}let D,w;if(_)D=m,w=v;else{let C=b/i.fullWidth,N=z/i.fullHeight;D=m*C,w=v*N}this._writeFrameUniform(y,{fullWidth:b,fullHeight:z,tileWidth:i.tileWidth,tileHeight:i.tileHeight,originX:m,originY:v,originZ:0,fullDepth:1,tileDepth:1,layerIndex:p,layers:i.layers,originXf:D,originYf:w});let S=c?.bgs?.[0]?.bgA??null,q=c?.bgs?.[0]?.bgB??null;(!S||!q||i.bindGroupDirty)&&(S=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewA},{binding:4,resource:i.viewB},{binding:5,resource:{buffer:g}},{binding:6,resource:{buffer:y}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]}),q=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewB},{binding:4,resource:i.viewA},{binding:5,resource:{buffer:g}},{binding:6,resource:{buffer:y}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]})),s.push({layerIndex:p,originX:m,originY:v,frames:[y],posBuf:g,posIsCustom:h,bgs:[{bgA:S,bgB:q}]})}i.tiles=s,i.bindGroupDirty=!1,this._tid===t&&(this._tiles=s)}async _runPipelines(t,e,i,r,a,n,l=1){let s=t,f=e,u=Array.isArray(n),p=0,m=this.device.createCommandEncoder(),v=m.beginComputePass();for(let c of this.noiseChoices){let g=typeof c=="number"?this.entryPoints[c]:c,h=this.pipelines.get(g);h||(h=this.device.createComputePipeline({layout:this.pipelineLayout,compute:{module:this.shaderModule,entryPoint:g}}),this.pipelines.set(g,h)),u&&this.setNoiseParams(n[p++]),v.setPipeline(h),v.setBindGroup(0,s),v.dispatchWorkgroups(Math.ceil(i/8),Math.ceil(r/8),l),[s,f]=[f,s]}return v.end(),this.queue.submit([m.finish()]),f}async computeToTexture(t,e,i={},r={}){let a=t|0,n=e|0;if(!(a>0&&n>0))throw new Error(`computeToTexture: invalid size ${t}x${e}`);let l=this._get2DKey(r),s=this._texPairs.get(l);s?(s.fullWidth!==a||s.fullHeight!==n)&&(this.destroyTexturePair(l),this._create2DPair(a,n,l)):this._create2DPair(a,n,l),this.setActiveTexture(l);let f=this._texPairs.get(l);if(!f)throw new Error("computeToTexture: missing pair after ensure");i&&!Array.isArray(i)&&this.setNoiseParams(i);let u=r||{},m=((u.useCustomPos??0)|0)!==0&&u.customData instanceof Float32Array?u.customData:null,v=m?1:0;this.setOptions({...u,ioFlags:0,useCustomPos:v});let c={...u,useCustomPos:v,customData:m};(!f.tiles||f.bindGroupDirty||m)&&this._create2DTileBindGroups(l,c),this._update2DTileFrames(l,c);let g=f.isA,h=null,y=null;for(let z of f.tiles){let{bgA:_,bgB:D}=z.bgs[0],w=h?h===_?_:D:g?_:D,S=w===_?D:_;h=await this._runPipelines(w,S,f.tileWidth,f.tileHeight,1,i,1),y={bgA:_,bgB:D}}let b=h===y.bgB;return f.isA=b,this.setActiveTexture(l),this.getCurrentView(l)}_get2DKey(t){let e=t&&t.textureKey!==void 0&&t.textureKey!==null?String(t.textureKey):"";return e&&e.length?e:this._default2DKey}get2DView(t){let e=String(t),i=this._texPairs.get(e);return i?i.isA?i.viewA:i.viewB:null}getCurrentView(t=null){let e=t!=null?String(t):this._tid,i=this._texPairs.get(e);return i?i.isA?i.viewA:i.viewB:null}_compute3DTiling(t,e,i){let r=Math.min(t,le),a=Math.min(e,le),n=this.device?.limits?.maxBufferSize??256*1024*1024,l=r*a*Ie,s=Math.max(1,Math.floor(n*.8/Math.max(1,l))),f=Math.min(i,le,s),u=Math.ceil(t/r),p=Math.ceil(e/a),m=Math.ceil(i/f);return{tw:r,th:a,td:f,nx:u,ny:p,nz:m}}_create3DChunks(t,e,i){let r=this._compute3DTiling(t,e,i),a=[],n=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST;for(let l=0;l<r.nz;l++)for(let s=0;s<r.ny;s++)for(let f=0;f<r.nx;f++){let u=f*r.tw,p=s*r.th,m=l*r.td,v=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:n}),c=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:n}),g=v.createView({dimension:"3d"}),h=c.createView({dimension:"3d"});v.label=`3D texA ${r.tw}x${r.th}x${r.td} @ (${f},${s},${l})`,c.label=`3D texB ${r.tw}x${r.th}x${r.td} @ (${f},${s},${l})`,g.label=`3D:viewA[${f},${s},${l}]`,h.label=`3D:viewB[${f},${s},${l}]`,this._tag.set(g,`3D:A[${f},${s},${l}]`),this._tag.set(h,`3D:B[${f},${s},${l}]`),a.push({texA:v,texB:c,viewA:g,viewB:h,ox:u,oy:p,oz:m,w:r.tw,h:r.th,d:r.td,isA:!0,fb:null,posBuf:null,bgA:null,bgB:null})}return{chunks:a,tile:{w:r.tw,h:r.th,d:r.td},full:{w:t,h:e,d:i},grid:{nx:r.nx,ny:r.ny,nz:r.nz}}}_destroy3DSet(t){if(t)for(let e of t.chunks){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(e.viewA=null,e.viewB=null,e.bgA=null,e.bgB=null,e.fb){try{e.fb.destroy()}catch{}e.fb=null}if(e.posBuf&&e.posBuf!==this.nullPosBuffer){try{e.posBuf.destroy()}catch{}e.posBuf=null}}}destroyAllVolumes(){for(let[t,e]of this._volumeCache)this._destroy3DSet(e),this._volumeCache.delete(t)}get3DView(t){let e=this._volumeCache.get(String(t));if(!e)return null;let i=e.chunks.map(r=>r.isA?r.viewA:r.viewB);return i.length===1?i[0]:{views:i,meta:{full:e.full,tile:e.tile,grid:e.grid}}}destroyVolume(t){let e=String(t),i=this._volumeCache.get(e);i&&(this._destroy3DSet(i),this._volumeCache.delete(e))}_getOrCreate3DVolume(t,e,i,r=null,a=null){let n=r?String(r):`${t}x${e}x${i}`,l=this._volumeCache.get(n);if(l)return l;l=this._create3DChunks(t,e,i);for(let s of l.chunks){s.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=a&&Number.isFinite(a?.w)?a.w>>>0:l.full.w,u=a&&Number.isFinite(a?.h)?a.h>>>0:l.full.h,p=a&&Number.isFinite(a?.d)?a.d>>>0:l.full.d,m=f/l.full.w,v=u/l.full.h,c=s.ox*m,g=s.oy*v;this._writeFrameUniform(s.fb,{fullWidth:f,fullHeight:u,tileWidth:s.w,tileHeight:s.h,originX:s.ox,originY:s.oy,originZ:s.oz,fullDepth:p,tileDepth:s.d,layerIndex:0,layers:1,originXf:c,originYf:g});let h=this._buildPosBuffer(s.w,s.h,null);s.posBuf=h;try{s.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:h}},{binding:6,resource:{buffer:s.fb}},{binding:7,resource:s.viewA},{binding:8,resource:s.viewB}]}),s.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:s.posBuf}},{binding:6,resource:{buffer:s.fb}},{binding:7,resource:s.viewB},{binding:8,resource:s.viewA}]})}catch(y){throw new Error(`_getOrCreate3DVolume: createBindGroup failed: ${y?.message||y}`)}}return l._bindGroupsDirty=!1,this._volumeCache.set(n,l),l}_recreate3DBindGroups(t,e=null){if(!t||!Array.isArray(t.chunks))return;let i=e&&Number.isFinite(e.w)?e.w>>>0:t.full.w,r=e&&Number.isFinite(e.h)?e.h>>>0:t.full.h,a=e&&Number.isFinite(e.d)?e.d>>>0:t.full.d;for(let n of t.chunks){if(!n.fb){n.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=i/t.full.w,u=r/t.full.h,p=n.ox*f,m=n.oy*u;this._writeFrameUniform(n.fb,{fullWidth:i,fullHeight:r,tileWidth:n.w,tileHeight:n.h,originX:n.ox,originY:n.oy,originZ:n.oz,fullDepth:a,tileDepth:n.d,layerIndex:0,layers:1,originXf:p,originYf:m})}n.posBuf||(n.posBuf=this._buildPosBuffer(n.w,n.h,null));let l=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:n.posBuf}},{binding:6,resource:{buffer:n.fb}},{binding:7,resource:n.viewA},{binding:8,resource:n.viewB}],s=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:n.posBuf}},{binding:6,resource:{buffer:n.fb}},{binding:7,resource:n.viewB},{binding:8,resource:n.viewA}];try{n.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:l}),n.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:s})}catch(f){throw new Error(`_recreate3DBindGroups: failed to create bind groups: ${f?.message||f}`)}}t._bindGroupsDirty=!1}async computeToTexture3D(t,e,i,r={},a={}){let n=t|0,l=e|0,s=i|0;if(!(n>0&&l>0&&s>0))throw new Error(`computeToTexture3D: invalid size ${t}x${e}x${i}`);r&&!Array.isArray(r)&&this.setNoiseParams(r);let f=a||{};this.setOptions({...f,ioFlags:3,useCustomPos:f.useCustomPos??this.useCustomPos});let u=a&&(Number.isFinite(a.frameFullWidth)||Number.isFinite(a.frameFullHeight)||Number.isFinite(a.frameFullDepth))?{w:Number.isFinite(a.frameFullWidth)?a.frameFullWidth>>>0:n,h:Number.isFinite(a.frameFullHeight)?a.frameFullHeight>>>0:l,d:Number.isFinite(a.frameFullDepth)?a.frameFullDepth>>>0:s}:null,p=this._getOrCreate3DVolume(n,l,s,a.id,u);if(!p)throw new Error("computeToTexture3D: failed to create or retrieve volume");(p._bindGroupsDirty||!p.chunks[0].bgA||!p.chunks[0].bgB)&&this._recreate3DBindGroups(p,u),this._update3DChunkFrames(p,u,a);let m=null;for(let c of p.chunks){let g=c.isA?c.bgA:c.bgB,h=c.isA?c.bgB:c.bgA;if(!g||!h)throw new Error("computeToTexture3D: missing bind groups (volume not initialized correctly)");m=await this._runPipelines(g,h,c.w,c.h,c.d,r,c.d),c.isA=m===c.bgB}let v=p.chunks.map(c=>c.isA?c.viewA:c.viewB);return v.length===1?v[0]:{views:v,meta:{full:p.full,tile:p.tile,grid:p.grid}}}configureCanvas(t){let e=navigator.gpu.getPreferredCanvasFormat&&navigator.gpu.getPreferredCanvasFormat()||"bgra8unorm",i=t.getContext("webgpu");i.configure({device:this.device,format:e,alphaMode:"opaque",size:[t.width,t.height]}),this._ctxMap.set(t,{ctx:i,size:[t.width,t.height]})}initBlitRender(){this.sampler||(this.sampler=this.device.createSampler({magFilter:"linear",minFilter:"linear",addressModeU:"clamp-to-edge",addressModeV:"clamp-to-edge"})),this.bgl2D||(this.bgl2D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline2D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl2D]}),vertex:{module:this.device.createShaderModule({code:ne}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:ne}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit2DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})),this.bgl3D||(this.bgl3D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"3d"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline3D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl3D]}),vertex:{module:this.device.createShaderModule({code:se}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:se}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit3DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}))}_renderCommonCanvasSetup(t,e){let i="bgra8unorm",r=this._ctxMap.get(t);if(r){let l=t.width|0,s=t.height|0;(r.size[0]!==l||r.size[1]!==s)&&(r.size=[l,s],r.ctx.configure({device:this.device,format:i,alphaMode:"opaque",size:r.size}))}else{let l=t.getContext("webgpu"),s=[t.width|0,t.height|0];l.configure({device:this.device,format:i,alphaMode:"opaque",size:s}),r={ctx:l,size:s},this._ctxMap.set(t,r)}let a=this.device.createCommandEncoder(),n=a.beginRenderPass({colorAttachments:[{view:r.ctx.getCurrentTexture().createView(),loadOp:e?"clear":"load",clearValue:{r:0,g:0,b:0,a:1},storeOp:"store"}]});return{enc:a,pass:n,ctxEntry:r}}renderTextureToCanvas(t,e,i={}){let{layer:r=0,channel:a=0,preserveCanvasSize:n=!0,clear:l=!0}=i;if(this.initBlitRender(),!n)try{let m=t.texture;m&&typeof m.width=="number"&&typeof m.height=="number"&&(e.width=m.width,e.height=m.height)}catch{}let s=new Uint32Array([r>>>0,a>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,s.buffer,s.byteOffset,s.byteLength);let f=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),{enc:u,pass:p}=this._renderCommonCanvasSetup(e,l);p.setPipeline(this.pipeline2D),p.setBindGroup(0,f),p.draw(6,1,0,0),p.end(),this.queue.submit([u.finish()])}renderTexture3DSliceToCanvas(t,e,i={}){let{depth:r,slice:a=0,zNorm:n=null,channel:l=0,chunk:s=0,preserveCanvasSize:f=!0,clear:u=!0}=i;this.initBlitRender();let p,m;if(t&&t.views&&Array.isArray(t.views)?(p=t.views[Math.max(0,Math.min(s|0,t.views.length-1))],m=t.meta?.tile?.d??r):(p=t,m=r),!p||!m)throw new Error("renderTexture3DSliceToCanvas: need a 3D view and its depth");if(!f)try{let z=p.texture;z&&typeof z.width=="number"&&typeof z.height=="number"&&(e.width=z.width,e.height=z.height)}catch{}let v=n??(Math.min(Math.max(a,0),m-1)+.5)/m;v=Math.min(Math.max(v,0),1);let c=new ArrayBuffer(16),g=new DataView(c);g.setFloat32(0,v,!0),g.setUint32(4,l>>>0,!0),g.setUint32(8,0,!0),g.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,c);let h=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:p},{binding:2,resource:{buffer:this.blit3DUbo}}]}),{enc:y,pass:b}=this._renderCommonCanvasSetup(e,u);b.setPipeline(this.pipeline3D),b.setBindGroup(0,h),b.draw(6,1,0,0),b.end(),this.queue.submit([y.finish()])}setExportBackground(t="black"){this.exportBackground=t}_resolveExportBackground(t){let e=t===void 0?this.exportBackground:t;if(e==null)return{r:0,g:0,b:0,a:1,transparent:!1};if(typeof e=="string"){let r=e.trim().toLowerCase();if(r==="transparent")return{r:0,g:0,b:0,a:0,transparent:!0};if(r==="black")return{r:0,g:0,b:0,a:1,transparent:!1};if(r==="white")return{r:1,g:1,b:1,a:1,transparent:!1};if(r[0]==="#")return this._parseHexBackground(r)}let i=r=>{let a=Number(r);if(!Number.isFinite(a))return 0;let n=a>1?a/255:a;return Math.min(Math.max(n,0),1)};if(Array.isArray(e)){let r=i(e[0]),a=i(e[1]),n=i(e[2]),l=e.length>=4?i(e[3]):1;return{r,g:a,b:n,a:l,transparent:l<=0}}if(typeof e=="object"){let r=i(e.r),a=i(e.g),n=i(e.b),l=e.a===void 0?1:i(e.a);return{r,g:a,b:n,a:l,transparent:l<=0}}return{r:0,g:0,b:0,a:1,transparent:!1}}_parseHexBackground(t){let e=String(t).trim().replace(/^#/,""),i=m=>m+m,r=0,a=0,n=0,l=255;if(e.length===3||e.length===4)r=parseInt(i(e[0]),16),a=parseInt(i(e[1]),16),n=parseInt(i(e[2]),16),e.length===4&&(l=parseInt(i(e[3]),16));else if(e.length===6||e.length===8)r=parseInt(e.slice(0,2),16),a=parseInt(e.slice(2,4),16),n=parseInt(e.slice(4,6),16),e.length===8&&(l=parseInt(e.slice(6,8),16));else return{r:0,g:0,b:0,a:1,transparent:!1};let s=r/255,f=a/255,u=n/255,p=l/255;return{r:s,g:f,b:u,a:p,transparent:p<=0}}_applyExportBackground(t,e){if(!t||!e||e.transparent)return;let i=Math.round(e.r*255),r=Math.round(e.g*255),a=Math.round(e.b*255),n=Math.round((e.a??1)*255);if(n<=0)return;let l=t.length|0;if(n>=255){for(let s=0;s<l;s+=4){let f=t[s+3]|0;if(f===255)continue;if(f===0){t[s+0]=i,t[s+1]=r,t[s+2]=a,t[s+3]=255;continue}let u=255-f;t[s+0]=(t[s+0]*f+i*u)/255|0,t[s+1]=(t[s+1]*f+r*u)/255|0,t[s+2]=(t[s+2]*f+a*u)/255|0,t[s+3]=255}return}for(let s=0;s<l;s+=4){let f=t[s+0]|0,u=t[s+1]|0,p=t[s+2]|0,m=t[s+3]|0,v=m+n*(255-m)/255|0;if(v<=0){t[s+0]=0,t[s+1]=0,t[s+2]=0,t[s+3]=0;continue}let c=i*n|0,g=r*n|0,h=a*n|0,y=f*m|0,b=u*m|0,z=p*m|0,_=255-m|0,D=y+c*_/255|0,w=b+g*_/255|0,S=z+h*_/255|0;t[s+0]=Math.min(255,Math.max(0,D*255/v|0)),t[s+1]=Math.min(255,Math.max(0,w*255/v|0)),t[s+2]=Math.min(255,Math.max(0,S*255/v|0)),t[s+3]=Math.min(255,Math.max(0,v))}}_forceOpaqueAlpha(t){let e=t.length|0;for(let i=3;i<e;i+=4)t[i]=255}async export2DTextureToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export2DTextureToPNGBlob: textureView is required");let a=Math.max(1,e|0),n=Math.max(1,i|0),l=r.layer??0,s=r.channel??0,f=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let p=this.device.createTexture({size:[a,n,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),m=new Uint32Array([l>>>0,s>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,m.buffer,m.byteOffset,m.byteLength);let v=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),c=this.device.createCommandEncoder(),g=c.beginRenderPass({colorAttachments:[{view:p.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});if(g.setPipeline(this.pipeline2D),g.setBindGroup(0,v),g.draw(6,1,0,0),g.end(),this.queue.submit([c.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let h=await this._readBGRA8TextureToRGBA8Pixels(p,a,n,{maxBufferChunkBytes:r.maxBufferChunkBytes??this.maxBufferChunkBytes});p.destroy();let y=r.useAlphaForBackground===!0;f.transparent||y?this._applyExportBackground(h,f):this._forceOpaqueAlpha(h);let b=document.createElement("canvas");b.width=a,b.height=n;let z=b.getContext("2d");if(!z)throw new Error("export2DTextureToPNGBlob: unable to get 2D context");return z.putImageData(new ImageData(h,a,n),0,0),await new Promise((D,w)=>{b.toBlob(S=>{S?D(S):w(new Error("export2DTextureToPNGBlob: toBlob returned null"))},"image/png")})}async exportCurrent2DToPNGBlob(t,e,i={}){let r=this.getCurrentView();if(!r)throw new Error("exportCurrent2DToPNGBlob: no active 2D texture view");return this.export2DTextureToPNGBlob(r,t,e,i)}async export3DSliceToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DSliceToPNGBlob: target is required");let a=Math.max(1,e|0),n=Math.max(1,i|0),{depth:l,slice:s=0,zNorm:f=null,channel:u=0,chunk:p=0}=r;if(!l||l<=0)throw new Error("export3DSliceToPNGBlob: depth must be provided and > 0");let m=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let v,c;if(t&&t.views&&Array.isArray(t.views)){let P=Math.max(0,Math.min(p|0,t.views.length-1));v=t.views[P],c=t.meta?.tile?.d??l}else v=t,c=l;if(!v||!c)throw new Error("export3DSliceToPNGBlob: need a 3D view and its depth");let g=f??(Math.min(Math.max(s,0),c-1)+.5)/c;g=Math.min(Math.max(g,0),1);let y=this.device.createTexture({size:[a,n,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),b=new ArrayBuffer(16),z=new DataView(b);z.setFloat32(0,g,!0),z.setUint32(4,u>>>0,!0),z.setUint32(8,0,!0),z.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,b);let _=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:v},{binding:2,resource:{buffer:this.blit3DUbo}}]}),D=this.device.createCommandEncoder(),w=D.beginRenderPass({colorAttachments:[{view:y.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});w.setPipeline(this.pipeline3D),w.setBindGroup(0,_),w.draw(6,1,0,0),w.end();let S=4,q=256,C=a*S,N=Math.ceil(C/q)*q,k=N*n,B=this.device.createBuffer({size:k,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});D.copyTextureToBuffer({texture:y},{buffer:B,bytesPerRow:N,rowsPerImage:n},{width:a,height:n,depthOrArrayLayers:1}),this.queue.submit([D.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await B.mapAsync(GPUMapMode.READ);let F=B.getMappedRange(),I=new Uint8Array(F),G=new Uint8ClampedArray(a*n*S),U=0;for(let P=0;P<n;P++){let V=P*N;for(let d=0;d<a;d++){let x=V+d*4;G[U++]=I[x+2],G[U++]=I[x+1],G[U++]=I[x+0],G[U++]=I[x+3]}}B.unmap(),B.destroy(),y.destroy(),this._applyExportBackground(G,m);let W=document.createElement("canvas");W.width=a,W.height=n;let T=W.getContext("2d");if(!T)throw new Error("export3DSliceToPNGBlob: unable to get 2D context");return T.putImageData(new ImageData(G,a,n),0,0),await new Promise((P,V)=>{W.toBlob(d=>{d?P(d):V(new Error("export3DSliceToPNGBlob: toBlob returned null"))},"image/png")})}async _render3DSliceToRGBA8Pixels(t,e,i,r,a=0,n=null){if(!t)throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");let l=Math.max(1,e|0),s=Math.max(1,i|0);this.initBlitRender();let f=Math.min(Math.max(Number(r)||0,0),1),p=this.device.createTexture({size:[l,s,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),m=new ArrayBuffer(16),v=new DataView(m);v.setFloat32(0,f,!0),v.setUint32(4,a>>>0,!0),v.setUint32(8,0,!0),v.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,m);let c=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit3DUbo}}]}),g=this.device.createCommandEncoder(),h=g.beginRenderPass({colorAttachments:[{view:p.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});h.setPipeline(this.pipeline3D),h.setBindGroup(0,c),h.draw(6,1,0,0),h.end();let y=4,b=256,z=l*y,_=Math.ceil(z/b)*b,D=_*s,w=this.device.createBuffer({size:D,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});g.copyTextureToBuffer({texture:p},{buffer:w,bytesPerRow:_,rowsPerImage:s},{width:l,height:s,depthOrArrayLayers:1}),this.queue.submit([g.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await w.mapAsync(GPUMapMode.READ);let S=w.getMappedRange(),q=new Uint8Array(S),C=new Uint8ClampedArray(l*s*y),N=0;for(let k=0;k<s;k++){let B=k*_;for(let F=0;F<l;F++){let I=B+F*4;C[N++]=q[I+2],C[N++]=q[I+1],C[N++]=q[I+0],C[N++]=q[I+3]}}return w.unmap(),w.destroy(),p.destroy(),n&&this._applyExportBackground(C,n),C}async export3DTilesetToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DTilesetToPNGBlob: target is required");let a=Math.max(1,e|0),n=Math.max(1,(i??e)|0),{depth:l,channel:s=0,chunk:f=0,tilesAcross:u=16,tilesDown:p=null,startSlice:m=0,sliceCount:v=null}=r,c=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let g,h;if(t&&t.views&&Array.isArray(t.views)){let B=Math.max(0,Math.min(f|0,t.views.length-1));g=t.views[B],h=t.meta?.tile?.d??l}else g=t,h=l;if(!g)throw new Error("export3DTilesetToPNGBlob: missing 3D view");if(!h||h<=0)throw new Error("export3DTilesetToPNGBlob: depth must be provided and > 0");let y=Math.max(1,u|0),b=p!=null?Math.max(1,p|0):Math.ceil(h/y),z=Math.min(Math.max(m|0,0),h-1),_=v!=null?Math.max(0,v|0):h-z,D=a*y,w=n*b,S=new Uint8ClampedArray(D*w*4),q=Math.min(h,z+_);for(let B=z;B<q;B++){let F=B-z,I=F%y,G=F/y|0;if(G>=b)break;let U=(B+.5)/h,W=await this._render3DSliceToRGBA8Pixels(g,a,n,U,s,c),T=I*a,A=G*n;for(let P=0;P<n;P++){let V=P*a*4,d=((A+P)*D+T)*4;S.set(W.subarray(V,V+a*4),d)}}let C=document.createElement("canvas");C.width=D,C.height=w;let N=C.getContext("2d");if(!N)throw new Error("export3DTilesetToPNGBlob: unable to get 2D context");return N.putImageData(new ImageData(S,D,w),0,0),await new Promise((B,F)=>{C.toBlob(I=>{I?B(I):F(new Error("export3DTilesetToPNGBlob: toBlob returned null"))},"image/png")})}},fe=class{constructor(t=Date.now()){t<1e7&&(t*=1e7),this.seedN=t,this.seedK=t,this.perm=new Uint8Array(512),this.seed(t)}seed(t){let e=this.xorshift(t);for(let i=0;i<256;i++)this.perm[i]=i;for(let i=255;i>0;i--){let r=Math.floor(e()*(i+1));[this.perm[i],this.perm[r]]=[this.perm[r],this.perm[i]]}for(let i=0;i<256;i++)this.perm[i+256]=this.perm[i]}setSeed(t){this.seedN=t,this.seed(t),this.resetSeed()}random(t,e,i){let r;return typeof i=="number"?r=this.perm[(t&255)+this.perm[(e&255)+this.perm[i&255]]]&255:r=this.perm[(t&255)+this.perm[e&255]]&255,this.perm[r]/255*2-1}seededRandom(){this.seedK+=Math.E;let t=1e9*Math.sin(this.seedK);return t-Math.floor(t)}resetSeed(){this.seedK=this.seedN}xorshift(t){let e=t;return function(){return e^=e<<13,e^=e>>17,e^=e<<5,(e<0?1+~e:e)/4294967295}}dot(t,e=0,i=0,r=0){return t[0]*e+t[1]*i+t[2]*r}};document.body.insertAdjacentHTML("afterbegin",be);var Ge=6,Le={computeCellular:"CellularPattern",computeWorley:"WorleyPattern",computeAntiCellular:"AntiCellularPattern",computeAntiWorley:"AntiWorleyPattern",computeWhiteNoise:"White Noise",computeBlueNoise:"Blue Noise"},We={computeRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeAntiRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeRidgedMultifractal:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal2:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal3:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal4:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeFBM:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM2:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM3:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeVoronoiBM1:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM2:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM3:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeCellular:{clamp:{threshold:[0,1]}},computeWorley:{clamp:{threshold:[0,1]}},computeAntiCellular:{clamp:{threshold:[0,1]}},computeAntiWorley:{clamp:{threshold:[0,1]}},computeSimplexFBM:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurl2D:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurlFBM2D:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM1:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM2:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeGaborAnisotropic:{clamp:{gaborRadius:[.5,6]}},computeFoamNoise:{force:{turbulence:1},clamp:{gain:[.5,.95]}}},R=128,_e="toroidalDemo",J=new Map,L=[],ee=Object.create(null);function H(o){let t=String(o||""),e=Le[t];if(e)return e;let i=t;return i.startsWith("compute")&&(i=i.slice(7)),i||t}function Ue(o,t){let e=Object.create(null),i=Array.isArray(o)?o:[],r=Math.max(0,t|0),a=Math.max(0,i.length-r);for(let n=0;n<a;n++)e[n]=H(i[n]);return e}function Oe(){return Object.keys(ee).map(o=>Number(o)).filter(o=>Number.isInteger(o)&&o>=0).sort((o,t)=>o-t)}function Ye(){let o=[];for(let t=0;t<L.length;t++){let e=L[t];typeof e!="string"||!e||e!=="clearTexture"&&o.push(t)}return o}function Xe(o){let t=L[o];return t&&We[String(t)]||null}function Z(o,t,e,i){if(!Object.prototype.hasOwnProperty.call(o,t))return;let r=Number(o[t]);if(!Number.isFinite(r))return;let a=Number(e),n=Number(i);o[t]=Math.min(Math.max(r,a),n)}function Se(o,t){let e={...t},i=Xe(o);if(i&&i.clamp){let a=i.clamp;a.freq&&Z(e,"freq",a.freq[0],a.freq[1]),a.gain&&Z(e,"gain",a.gain[0],a.gain[1]),a.octaves&&Z(e,"octaves",a.octaves[0],a.octaves[1]),a.threshold&&Z(e,"threshold",a.threshold[0],a.threshold[1]),a.warpAmp&&Z(e,"warpAmp",a.warpAmp[0],a.warpAmp[1]),a.gaborRadius&&Z(e,"gaborRadius",a.gaborRadius[0],a.gaborRadius[1]),a.edgeK&&Z(e,"edgeK",a.edgeK[0],a.edgeK[1])}if(i&&i.force)for(let[a,n]of Object.entries(i.force))e[a]=n;let r=J.get(o);if(r)for(let[a,n]of Object.entries(r))typeof n=="number"&&Number.isFinite(n)&&(e[a]=n);return e}function ge(){let o=(a,n)=>{let l=document.getElementById(a);if(!l)return n;let s=Number(l.value);return Number.isFinite(s)?s:n},t=(a,n)=>{let l=o(a,n);return Number.isFinite(l)?Math.max(0,Math.floor(l)):n},e=Math.max(1,Math.floor(o("noise-seed",1234567890))),i=document.getElementById("noise-turbulence"),r=i&&i.checked?1:0;return{seed:e,zoom:o("noise-zoom",1),freq:o("noise-freq",1),octaves:Math.max(1,Math.floor(o("noise-octaves",8))),lacunarity:o("noise-lacunarity",2),gain:o("noise-gain",.5),xShift:o("noise-xShift",0),yShift:o("noise-yShift",0),zShift:o("noise-zShift",0),turbulence:r,seedAngle:o("noise-seedAngle",0),exp1:o("noise-exp1",1),exp2:o("noise-exp2",0),threshold:o("noise-threshold",.1),rippleFreq:o("noise-rippleFreq",10),time:o("noise-time",0),warpAmp:o("noise-warpAmp",.5),gaborRadius:o("noise-gaborRadius",4),terraceStep:o("noise-terraceStep",8),toroidal:0,voroMode:t("noise-voroMode",0),edgeK:o("noise-edgeK",0)}}function Ze(){let o=document.querySelectorAll('input[type="checkbox"][name="noise-type"]'),t=[];return o.forEach(e=>{if(e.checked){let i=Number(e.dataset.bit);Number.isInteger(i)&&t.push(i)}}),t}function Q(){let o=document.getElementById("z-slice"),t=document.getElementById("z-slice-num"),e=0;return o?e=Number(o.value):t&&(e=Number(t.value)),Number.isFinite(e)||(e=0),e=Math.min(Math.max(Math.round(e),0),R-1),o&&String(o.value)!==String(e)&&(o.value=String(e)),t&&String(t.value)!==String(e)&&(t.value=String(e)),e}function oe(o,t=null,e=null,i="contain"){o.style.display="block",o.style.margin="0",o.style.padding="0",o.style.border="0",o.style.outline="0",o.style.background="transparent",o.style.width=t!=null?`${t}px`:"100%",o.style.height=e!=null?`${e}px`:"100%",o.style.objectFit=i,o.style.objectPosition="center",o.style.imageRendering="crisp-edges",o.style.imageRendering="pixelated"}function ve(o,t,e,i,r=null,a=null){let n=Math.max(1,e|0),l=Math.max(1,i|0);oe(t,r,a);let s=!1;return(t.width!==n||t.height!==l)&&(t.width=n,t.height=l,s=!0),o&&typeof o.configureCanvas=="function"&&s&&o.configureCanvas(t),s}function He(o){o.style.display="grid",o.style.width="100%",o.style.height="100%",o.style.aspectRatio="1 / 1",o.style.gridTemplateColumns="repeat(3, 1fr)",o.style.gridTemplateRows="repeat(3, 1fr)",o.style.gap="0",o.style.padding="0",o.style.margin="0",o.style.border="0",o.style.lineHeight="0",o.style.fontSize="0",o.style.alignItems="stretch",o.style.justifyItems="stretch",o.style.alignContent="stretch",o.style.justifyContent="stretch",o.style.overflow="hidden",o.style.background="#000"}function Ke(){let o=document.getElementById("noise-canvas"),t=document.getElementById("view-stack");if(!o&&t&&(o=document.createElement("canvas"),o.id="noise-canvas",o.width=800,o.height=800,t.appendChild(o)),!o)throw new Error("Missing main preview canvas (#noise-canvas)");oe(o,null,null,"contain");let e=document.getElementById("mosaic");if(!e)throw new Error("Missing #mosaic container");let i=9,r=Array.from(e.querySelectorAll("canvas"));if(r.length!==i){e.innerHTML="",r=[];for(let a=0;a<i;a++){let n=document.createElement("canvas");n.width=R,n.height=R,oe(n,null,null,"fill"),e.appendChild(n),r.push(n)}}else r.forEach(a=>oe(a,null,null,"fill"));return He(e),{mainCanvas:o,mosaicCanvases:r}}function Be(o){return o.length?o.map(e=>ee[e]||String(e)).join(", "):ee[0]||"Perlin"}function Pe(o){let t=document.getElementById(o);if(!t)throw new Error(`Missing #${o}`);return t}function $e(){let o=Pe("noise-type-list");o.innerHTML="";let t=Oe();for(let e of t){let i=document.createElement("label"),r=document.createElement("input");r.type="checkbox",r.name="noise-type",r.dataset.bit=String(e),e===0&&(r.checked=!0),i.appendChild(r),i.appendChild(document.createTextNode(" "+(ee[e]||String(e)))),o.appendChild(i)}}function je(o){return(Array.isArray(o)?o:[]).filter(e=>typeof e=="string"&&/4D/.test(e)&&e!=="clearTexture").slice()}function Qe(o){let t=Pe("toroidal-type-list");t.innerHTML="";let e=je(o),i=new Set(["computePerlin4D","computeWorley4D"]),r=!1;for(let a of e){let n=document.createElement("label"),l=document.createElement("input");l.type="checkbox",l.name="toroidal-type",l.dataset.entry=a;let s=L.indexOf(a);Number.isInteger(s)&&s>=0&&(l.dataset.bit=String(s)),i.has(a)&&(l.checked=!0,r=!0),n.appendChild(l),n.appendChild(document.createTextNode(" "+H(a))),t.appendChild(n)}if(!r&&e.length){let a=t.querySelector('input[type="checkbox"][name="toroidal-type"]');a&&(a.checked=!0)}}function j(){let o=document.querySelectorAll('input[type="checkbox"][name="toroidal-type"]'),t=[];if(o.forEach(e=>{if(!e.checked)return;let i=String(e.dataset.entry||"");if(!i)return;let r=Number(e.dataset.bit);Number.isInteger(r)||(r=L.indexOf(i)),Number.isInteger(r)||(r=-1),t.push({bit:r,entry:i})}),!t.length){let e=["computePerlin4D","computeWorley4D"];for(let i of e){if(!L.includes(i))continue;let r=L.indexOf(i);t.push({bit:r,entry:i})}}return t}function ce(o){let t=document.getElementById("mosaic-caption");if(!t)return;let e=Array.isArray(o)?o:[],i=e.length?e.map(r=>H(r)).join(" + "):"None";t.textContent=`A single toroidal Z slice from a 4D volume. Modes: ${i}. Repeated in X and Y. Use the Z slice control to see different slices.`}function Je(){let o=document.getElementById("override-mode");if(!o)return;o.innerHTML="";let t=Ye();for(let e of t){let i=L[e],r=document.createElement("option");r.value=String(e),r.textContent=`${e}: ${H(i)}`,o.appendChild(r)}t.length&&(o.value=String(t[0]))}function pe(o){let t=J.get(o)||{},e=(r,a)=>{let n=document.getElementById(r);if(!n)return;let l=t[a];n.value=typeof l=="number"&&Number.isFinite(l)?String(l):""},i=(r,a)=>{let n=document.getElementById(r);if(!n)return;let l=t[a];n.value=typeof l=="number"&&Number.isFinite(l)?String(l):""};e("ov-zoom","zoom"),e("ov-freq","freq"),e("ov-lacunarity","lacunarity"),e("ov-gain","gain"),e("ov-octaves","octaves"),i("ov-turbulence","turbulence"),e("ov-seedAngle","seedAngle"),e("ov-exp1","exp1"),e("ov-exp2","exp2"),e("ov-rippleFreq","rippleFreq"),e("ov-time","time"),e("ov-warp","warpAmp"),e("ov-threshold","threshold"),i("ov-voroMode","voroMode"),e("ov-edgeK","edgeK"),e("ov-gabor","gaborRadius"),e("ov-terraceStep","terraceStep"),e("ov-xShift","xShift"),e("ov-yShift","yShift"),e("ov-zShift","zShift")}function ue(){let o=document.getElementById("override-mode");if(!o)return;let t=Number(o.value);if(!Number.isInteger(t))return;let e=C=>{let N=document.getElementById(C);if(!N)return null;let k=String(N.value).trim();if(!k)return null;let B=Number(k);return Number.isFinite(B)?B:null},i=C=>{let N=document.getElementById(C);if(!N)return null;let k=String(N.value).trim();if(!k)return null;let B=Number(k);return Number.isFinite(B)?B:null},r={},a=e("ov-zoom"),n=e("ov-freq"),l=e("ov-lacunarity"),s=e("ov-gain"),f=e("ov-octaves"),u=i("ov-turbulence"),p=e("ov-seedAngle"),m=e("ov-exp1"),v=e("ov-exp2"),c=e("ov-rippleFreq"),g=e("ov-time"),h=e("ov-warp"),y=e("ov-threshold"),b=i("ov-voroMode"),z=e("ov-edgeK"),_=e("ov-gabor"),D=e("ov-terraceStep"),w=e("ov-xShift"),S=e("ov-yShift"),q=e("ov-zShift");a!==null&&(r.zoom=a),n!==null&&(r.freq=n),l!==null&&(r.lacunarity=l),s!==null&&(r.gain=s),f!==null&&(r.octaves=f),u!==null&&(r.turbulence=Math.max(0,Math.floor(u))),p!==null&&(r.seedAngle=p),m!==null&&(r.exp1=m),v!==null&&(r.exp2=v),c!==null&&(r.rippleFreq=c),g!==null&&(r.time=g),h!==null&&(r.warpAmp=h),y!==null&&(r.threshold=y),b!==null&&(r.voroMode=Math.max(0,Math.floor(b))),z!==null&&(r.edgeK=z),_!==null&&(r.gaborRadius=_),D!==null&&(r.terraceStep=D),w!==null&&(r.xShift=w),S!==null&&(r.yShift=S),q!==null&&(r.zShift=q),Object.keys(r).length?J.set(t,r):J.delete(t)}function me(o){return typeof o=="string"&&/4d/i.test(o)}function et(o,t=800){let e=document.getElementById("res-width"),i=document.getElementById("res-height"),r=(p,m)=>{let v=Number(p);return Number.isFinite(v)?Math.max(1,Math.floor(v)):m|0},a=o?.device?.limits||{},n=a.maxTextureDimension2D??8192,l=a.maxStorageTextureDimension2D??n,s=Math.min(n,l)|0,f=r(e?.value,t),u=r(i?.value,t);return f=Math.min(f,s),u=Math.min(u,s),e&&String(e.value)!==String(f)&&(e.value=String(f)),i&&String(i.value)!==String(u)&&(i.value=String(u)),{w:f,h:u}}function tt(o,t,e,i){let a=Math.min(e,2048),n=Math.min(i,2048);ve(o,t,a,n)}function te(o){let t=document.getElementById("preview-meta");t&&(t.textContent=o)}function $(o){let t=document.getElementById("preview-stats");t&&(t.textContent=o)}function Ce(){let o=(t,e=0)=>{let i=document.getElementById(t);if(!i)return e;let r=Number(i.value);return Number.isFinite(r)?r:e};return{x:o("res-offsetX",0),y:o("res-offsetY",0),z:o("res-offsetZ",0)}}function he(o){if(!o)return"";let t=Number(o.x)||0,e=Number(o.y)||0,i=Number(o.z)||0,r=1e-9;if(Math.abs(t)<r&&Math.abs(e)<r&&Math.abs(i)<r)return"";let a=n=>Math.abs(n)>=1?n.toFixed(2):n.toFixed(6);return` \xB7 tile offset ${a(t)},${a(e)},${a(i)}`}function it(o){if(!o)return;let t=o.resW|0,e=o.resH|0,i=Array.isArray(o.noiseBits)?o.noiseBits:[],a=i.some(s=>me(L[s]))?" \xB7 toroidal(4D)":"",n=Math.max(t,e)|0,l=he(o.tileOffsets);te(`Height field preview \xB7 ${t}\xD7${e} \xB7 world ${n}\xD7${n} \xB7 modes: ${Be(i)}${a}${l}`),typeof o.computeMs=="number"&&typeof o.blitMs=="number"?$(`GPU compute ${o.computeMs.toFixed(1)} ms \xB7 blit ${o.blitMs.toFixed(1)} ms`):$("")}async function K(o){let t=o?.queue||o?.device?.queue;if(!(!t||typeof t.onSubmittedWorkDone!="function"))try{await t.onSubmittedWorkDone()}catch{}}async function De(o,t,e={}){let i=e.updateUI!==!1,{w:r,h:a}=et(o,800),n=Ce(),l=Math.max(r,a)|0;tt(o,t,r,a);let s=ge();o.buildPermTable(s.seed|0);let f=Ze(),u=f.length?f:[0],p={getGradient:0,outputChannel:1,baseRadius:0,heightScale:1,useCustomPos:0,squareWorld:!0,worldMode:"crop"},m={offsetX:Number(n.x)||0,offsetY:Number(n.y)||0,offsetZ:Number(n.z)||0};await K(o);let v=performance.now();await o.computeToTexture(r,a,s,{...p,...m,noiseChoices:["clearTexture"]});for(let _ of u){let D=L[_],w=Se(_,s);w.toroidal=me(D)?1:0,await o.computeToTexture(r,a,w,{...p,...m,noiseChoices:[_]})}await K(o);let c=performance.now(),g=o.getCurrentView();await K(o);let h=performance.now();g&&o.renderTextureToCanvas(g,t,{layer:0,channel:0,preserveCanvasSize:!0,clear:!0}),await K(o);let y=performance.now(),b=c-v,z=y-h;if(i){let D=u.some(S=>me(L[S]))?" \xB7 toroidal(4D)":"",w=he(n);te(`Height field preview \xB7 ${r}\xD7${a} \xB7 world ${l}\xD7${l} \xB7 modes: ${Be(u)}${D}${w}`),$(`GPU compute ${b.toFixed(1)} ms \xB7 blit ${z.toFixed(1)} ms`)}return{resW:r,resH:a,noiseBits:u,computeMs:b,blitMs:z,tileOffsets:n}}async function Me(o,t,e,i={}){let r=i.draw!==!1,a=i.updateUI!==!1,n=ge();o.buildPermTable(n.seed|0);let l=Ce(),s={...n,toroidal:1},f=j();ce(f.map(c=>c.entry)),await K(o);let u=performance.now(),p=await o.computeToTexture3D(R,R,R,s,{noiseChoices:["clearTexture"],outputChannel:1,id:_e});for(let c of f){let g=c.bit,h=c.entry,y=Number.isInteger(g)&&g>=0?Se(g,s):{...s};y.toroidal=1,p=await o.computeToTexture3D(R,R,R,y,{noiseChoices:[h],outputChannel:1,id:_e})}await K(o);let m=performance.now();e.lastToroidalVolumeView=p,e.lastToroidalComputeMs=m-u;let v=0;if(r&&(v=de(o,p,t)),a){let c=f.length?f.map(b=>H(b.entry)).join(" + "):"None",g=he(l);te(`Toroidal tiles \xB7 ${R}\xB3 \xB7 modes: ${c} \xB7 Z slice: ${Q()}${g}`);let h=e.lastToroidalComputeMs.toFixed(1),y=v.toFixed(1);$(r?`GPU volume compute ${h} ms \xB7 slice blit ${y} ms`:`GPU volume compute ${h} ms`)}return{computeMs:e.lastToroidalComputeMs,sliceBlitMs:v}}function de(o,t,e,i={}){if(!t)return 0;let r=R,n=(Q()+.5)/r,l=Array.isArray(e)?e:[],s=l.length||9,f=performance.now();for(let p=0;p<s;p++){let m=l[p];m&&(ve(o,m,R,R),o.renderTexture3DSliceToCanvas(t,m,{depth:r,zNorm:n,channel:0,chunk:0,preserveCanvasSize:!0,clear:!0}))}return performance.now()-f}function O(){let o=document.getElementById("view-tab-tileset");return o&&o.checked?"tileset":"main"}async function rt(){let o=document.getElementById("preview-stats");if(!navigator.gpu){console.error("WebGPU not available in this browser."),o&&(o.textContent="WebGPU not available in this browser.");return}let t=await navigator.gpu.requestAdapter();if(!t){console.error("Failed to get GPU adapter."),o&&(o.textContent="Failed to get GPU adapter.");return}let e=await t.requestDevice({requiredLimits:{maxBufferSize:t.limits.maxBufferSize}}),i=new ae(e,e.queue);L=Array.isArray(i.entryPoints)?i.entryPoints.slice():[],ee=Ue(L,Ge),$e(),Qe(L),Je();let{mainCanvas:r,mosaicCanvases:a}=Ke();i.configureCanvas(r),a.forEach(d=>i.configureCanvas(d));let n=document.getElementById("override-mode");if(n){let d=Number(n.value);Number.isInteger(d)&&pe(d)}let l={lastToroidalVolumeView:null,lastToroidalComputeMs:0,lastMainInfo:null},s={main:!0,tileset:!0},f=!1,u=!1,p=()=>{u=!0,!f&&(f=!0,requestAnimationFrame(async()=>{u=!1;let d=O();try{if(d==="main")s.main?(s.main=!1,l.lastMainInfo=await De(i,r,{updateUI:!0})):it(l.lastMainInfo);else if(s.tileset||!l.lastToroidalVolumeView)s.tileset=!1,await Me(i,a,l,{draw:!0,updateUI:!0});else{let x=de(i,l.lastToroidalVolumeView,a),M=j(),E=M.length?M.map(Y=>H(Y.entry)).join(" + "):"None";te(`Toroidal tiles \xB7 ${R}\xB3 \xB7 modes: ${E} \xB7 Z slice: ${Q()}`),$(`GPU volume compute ${l.lastToroidalComputeMs.toFixed(1)} ms \xB7 slice blit ${x.toFixed(1)} ms`)}}catch(x){console.error(x),o&&(o.textContent=String(x))}f=!1,u&&p()}))},m=(d=!0)=>{s.main=!0,d&&O()==="main"&&p()},v=(d=!0)=>{s.tileset=!0,d&&O()==="tileset"&&p()},c=()=>{s.main=!0,s.tileset=!0,p()};["ov-zoom","ov-freq","ov-lacunarity","ov-gain","ov-octaves","ov-turbulence","ov-seedAngle","ov-exp1","ov-exp2","ov-rippleFreq","ov-time","ov-warp","ov-threshold","ov-voroMode","ov-edgeK","ov-gabor","ov-terraceStep","ov-xShift","ov-yShift","ov-zShift"].forEach(d=>{let x=document.getElementById(d);x&&x.addEventListener("change",()=>{ue(),c()})}),n&&n.addEventListener("change",()=>{let d=Number(n.value);Number.isInteger(d)&&pe(d)});let h=document.getElementById("ov-clear");h&&h.addEventListener("click",()=>{let d=document.getElementById("override-mode");if(!d)return;let x=Number(d.value);Number.isInteger(x)&&(J.delete(x),pe(x),c())});let y=document.getElementById("render-btn");y&&y.addEventListener("click",()=>{O()==="main"?m(!0):v(!0)});let b=document.getElementById("apply-res");b&&b.addEventListener("click",()=>{c()}),["res-offsetX","res-offsetY","res-offsetZ"].forEach(d=>{let x=document.getElementById(d);x&&(x.addEventListener("input",()=>{s.main=!0,s.tileset=!0,p()}),x.addEventListener("change",()=>{s.main=!0,s.tileset=!0,p()}))}),["noise-seed","noise-zoom","noise-freq","noise-octaves","noise-lacunarity","noise-gain","noise-xShift","noise-yShift","noise-zShift","noise-voroMode","noise-threshold","noise-edgeK","noise-seedAngle","noise-turbulence","noise-time","noise-warpAmp","noise-gaborRadius","noise-terraceStep","noise-exp1","noise-exp2","noise-rippleFreq"].forEach(d=>{let x=document.getElementById(d);x&&(x.addEventListener("input",()=>{s.main=!0,s.tileset=!0,p()}),x.addEventListener("change",()=>{s.main=!0,s.tileset=!0,p()}))});let _=document.getElementById("noise-type-list");_&&_.addEventListener("change",d=>{let x=d.target;!x||x.name!=="noise-type"||m(!0)});let D=document.getElementById("toroidal-type-list");D&&D.addEventListener("change",d=>{let x=d.target;!x||x.name!=="toroidal-type"||(ce(j().map(M=>M.entry)),v(!0))});let w=document.getElementById("z-slice"),S=document.getElementById("z-slice-num"),q=()=>{if(O()!=="tileset"||!l.lastToroidalVolumeView)return;let d=de(i,l.lastToroidalVolumeView,a);te(`Toroidal tiles \xB7 ${R}\xB3 \xB7 Z slice: ${Q()}`),$(`GPU volume compute ${l.lastToroidalComputeMs.toFixed(1)} ms \xB7 slice blit ${d.toFixed(1)} ms`)},C=(d,x=!0)=>{let M=Number(d);Number.isFinite(M)||(M=0),M=Math.round(M);let E=R|0;M=(M%E+E)%E,w&&String(w.value)!==String(M)&&(w.value=String(M)),S&&String(S.value)!==String(M)&&(S.value=String(M)),x&&q()};w&&(w.addEventListener("input",()=>{C(Number(w.value),!0)}),w.addEventListener("keydown",d=>{if(d.key!=="ArrowLeft"&&d.key!=="ArrowRight")return;d.preventDefault();let x=Number(w.step),M=Number.isFinite(x)&&x>0?Math.round(x):1,E=Number(w.value),Y=Number.isFinite(E)?Math.round(E):0,X=d.key==="ArrowLeft"?Y-M:Y+M;C(X,!0)})),S&&(S.addEventListener("change",()=>{C(Number(S.value),!0)}),S.addEventListener("keydown",d=>{if(d.key!=="ArrowDown"&&d.key!=="ArrowUp")return;d.preventDefault();let x=Number(S.value),M=Number.isFinite(x)?Math.round(x):0,E=d.key==="ArrowDown"?M-1:M+1;C(E,!0)}));let N=document.getElementById("view-tab-preview"),k=document.getElementById("view-tab-tileset");N&&N.addEventListener("change",()=>{p()}),k&&k.addEventListener("change",()=>{p()});function B(d,x){let M=URL.createObjectURL(d),E=document.createElement("a");E.href=M,E.download=x,document.body.appendChild(E),E.click(),E.remove(),URL.revokeObjectURL(M)}function F(d){return String(d||"").trim().replace(/\s+/g,"_").replace(/[^a-zA-Z0-9._-]+/g,"").slice(0,120)}function I(){let d=document.querySelector('input[type="radio"][name="export-bg"]:checked'),x=String(d?.value||"transparent");return x==="black"||x==="white"||x==="transparent"?x:"transparent"}function G(d){let x=I();return d&&typeof d.setExportBackground=="function"&&d.setExportBackground(x),x}function U(d){G(d),document.querySelectorAll('input[type="radio"][name="export-bg"]').forEach(M=>{M.addEventListener("change",()=>{G(d)})})}async function W(){ue(),await Me(i,a,l,{draw:O()==="tileset",updateUI:O()==="tileset"})}let T=document.getElementById("download-main");T&&T.addEventListener("click",async()=>{try{ue();let d=G(i),x=Number(document.getElementById("res-width")?.value)||800,M=Number(document.getElementById("res-height")?.value)||800;ve(i,r,x,M),await De(i,r,{updateUI:O()==="main"});let E=await i.exportCurrent2DToPNGBlob(x,M,{layer:0,channel:0,background:d});B(E,"noise-main.png")}catch(d){console.error("download-main failed:",d),o&&(o.textContent="Export main PNG failed: "+d)}});let A=document.getElementById("download-tile");A&&A.addEventListener("click",async()=>{try{let d=G(i);if(await W(),!l.lastToroidalVolumeView){console.warn("No toroidal volume available for export");return}let x=R,M=R,E=R,X=(Q()+.5)/E,ie=await i.export3DSliceToPNGBlob(l.lastToroidalVolumeView,x,M,{depth:E,zNorm:X,channel:0,chunk:0,background:d});B(ie,"noise-tile.png")}catch(d){console.error("download-tile failed:",d),o&&(o.textContent="Export tile PNG failed: "+d)}});async function P(d,x){if(!x)return;let M=G(d);if(await W(),!x.lastToroidalVolumeView){console.warn("No toroidal volume available for tileset export");return}let E=ge(),Y=j().map(ke=>ke.entry),X=16,ie=R,xe=R,re=R,ye=Math.ceil(re/X),Te=await d.export3DTilesetToPNGBlob(x.lastToroidalVolumeView,ie,xe,{depth:re,channel:0,chunk:0,tilesAcross:X,tilesDown:ye,startSlice:0,sliceCount:re,background:M}),Ae=F(Y.map(H).join("+"))||"tileset",Ne=F(E.seed),qe=`noise-tileset_${Ae}_seed${Ne}_${ie}x${xe}_z${re}_${X}x${ye}.png`;B(Te,qe)}let V=document.getElementById("download-tileset");V&&V.addEventListener("click",async()=>{try{await P(i,l)}catch(d){console.error("download-tileset failed:",d),o&&(o.textContent="Export tileset failed: "+d)}}),U(i),ce(j().map(d=>d.entry)),p()}document.addEventListener("DOMContentLoaded",()=>{rt().catch(o=>console.error(o))});})();
+`;var we=4096;var le=2048,Le=8,ae=class{constructor(t,e){this.device=t,this.queue=e,this.maxBufferChunkBytes=8e6,this.entryPoints=["computePerlin","computeBillow","computeAntiBillow","computeRidge","computeAntiRidge","computeRidgedMultifractal","computeRidgedMultifractal2","computeRidgedMultifractal3","computeRidgedMultifractal4","computeAntiRidgedMultifractal","computeAntiRidgedMultifractal2","computeAntiRidgedMultifractal3","computeAntiRidgedMultifractal4","computeFBM","computeFBM2","computeFBM3","computeCellularBM1","computeCellularBM2","computeCellularBM3","computeVoronoiBM1","computeVoronoiBM2","computeVoronoiBM3","computeCellular","computeWorley","computeAntiCellular","computeAntiWorley","computeLanczosBillow","computeLanczosAntiBillow","computeVoronoiTileNoise","computeVoronoiCircleNoise","computeVoronoiCircle2","computeVoronoiFlatShade","computeVoronoiRipple3D","computeVoronoiRipple3D2","computeVoronoiCircularRipple","computeFVoronoiRipple3D","computeFVoronoiCircularRipple","computeRippleNoise","computeFractalRipples","computeHexWorms","computePerlinWorms","computeWhiteNoise","computeBlueNoise","computeSimplex","computeSimplexFBM","computeCurl2D","computeCurlFBM2D","computeDomainWarpFBM1","computeDomainWarpFBM2","computeGaborAnisotropic","computeGaborMagic","computeGaborFlow","computeTerraceNoise","computeFoamNoise","computeTurbulence","computePerlin4D","computeWorley4D","computeAntiWorley4D","computeCellular4D","computeAntiCellular4D","computeBillow4D","computeAntiBillow4D","computeLanczosBillow4D","computeLanczosAntiBillow4D","computeFBM4D","computeVoronoi4D","computeVoronoiBM1_4D","computeVoronoiBM2_4D","computeVoronoiBM3_4D","computeVoronoiBM1_4D_vec","computeVoronoiBM2_4D_vec","computeVoronoiBM3_4D_vec","computeWorleyBM1_4D","computeWorleyBM2_4D","computeWorleyBM3_4D","computeWorleyBM1_4D_vec","computeWorleyBM2_4D_vec","computeWorleyBM3_4D_vec","computeCellularBM1_4D","computeCellularBM2_4D","computeCellularBM3_4D","computeCellularBM1_4D_vec","computeCellularBM2_4D_vec","computeCellularBM3_4D_vec","computeTerraceNoise4D","computeFoamNoise4D","computeTurbulence4D","computeHydrologyErosionHeightfield","computeHydrologyGuideField","computeHydrologyDrainageMask","computeGauss5x5","computeNormal","computeNormal8","computeSphereNormal","computeNormalVolume","clearTexture"],this.shaderModule=t.createShaderModule({code:ze}),this.bindGroupLayout=t.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:1,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:2,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:3,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:4,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"2d-array"}},{binding:5,visibility:GPUShaderStage.COMPUTE,buffer:{type:"read-only-storage"}},{binding:6,visibility:GPUShaderStage.COMPUTE,buffer:{type:"uniform"}},{binding:7,visibility:GPUShaderStage.COMPUTE,texture:{sampleType:"float",viewDimension:"3d"}},{binding:8,visibility:GPUShaderStage.COMPUTE,storageTexture:{access:"write-only",format:"rgba16float",viewDimension:"3d"}}]}),this.pipelineLayout=t.createPipelineLayout({bindGroupLayouts:[this.bindGroupLayout]}),this.pipelines=new Map,this._texPairs=new Map,this._tid=null,this._tag=new WeakMap,this._default2DKey="__default2d",this._volumeCache=new Map,this.viewA=null,this.viewB=null,this.width=0,this.height=0,this.layers=1,this.isA=!0,this._initBuffers(),this._ensureDummies(),this._ctxMap=new WeakMap}_initBuffers(){this.optionsBuffer?.destroy(),this.paramsBuffer?.destroy(),this.permBuffer?.destroy(),this.nullPosBuffer?.destroy(),this.optionsBuffer=this.device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.paramsBuffer=this.device.createBuffer({size:88,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.permBuffer=this.device.createBuffer({size:512*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.nullPosBuffer=this.device.createBuffer({size:64,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST}),this.queue.writeBuffer(this.optionsBuffer,0,new ArrayBuffer(32)),this.queue.writeBuffer(this.paramsBuffer,0,new ArrayBuffer(88)),this.queue.writeBuffer(this.permBuffer,0,new Uint32Array(512))}_ensureDummies(){this._dummy2D_sampleTex||(this._dummy2D_sampleTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy2D_sampleView=this._dummy2D_sampleTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy2D_writeTex||(this._dummy2D_writeTex=this.device.createTexture({size:[1,1,1],format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy2D_writeView=this._dummy2D_writeTex.createView({dimension:"2d-array",arrayLayerCount:1})),this._dummy3D_sampleTex||(this._dummy3D_sampleTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC}),this._dummy3D_sampleView=this._dummy3D_sampleTex.createView({dimension:"3d"})),this._dummy3D_writeTex||(this._dummy3D_writeTex=this.device.createTexture({size:{width:1,height:1,depthOrArrayLayers:1},dimension:"3d",format:"rgba16float",usage:GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.COPY_DST}),this._dummy3D_writeView=this._dummy3D_writeTex.createView({dimension:"3d"}))}_getMaxBufferChunkBytes(t){let e=this.device?.limits?.maxBufferSize??268435456,i=Math.max(1024*1024,Math.floor(e*.9)),r=Number.isFinite(t)?Math.floor(t):this.maxBufferChunkBytes;return(!Number.isFinite(r)||r<=0)&&(r=this.maxBufferChunkBytes),r=Math.max(4,r)&-4,Math.min(i,r)}_writeBufferChunked(t,e,i,r,a,n=null){let l=a|0;if(!(l>0))return;let s=this._getMaxBufferChunkBytes(n),f=0;for(;f<l;){let u=Math.min(s,l-f)|0;if(u=u&-4,u<=0)break;this.queue.writeBuffer(t,e+f|0,i,r+f|0,u),f=f+u|0}if(f!==l)throw new Error(`_writeBufferChunked: incomplete write ${f}/${l} bytes`)}async _readBGRA8TextureToRGBA8Pixels(t,e,i,r={}){let a=Math.max(1,e|0),n=Math.max(1,i|0),l=4,s=256,f=a*l,u=Math.ceil(f/s)*s,p=this.device?.limits?.maxBufferSize??256*1024*1024,d=Math.max(1024*1024,Math.floor(p*.9)),h=this._getMaxBufferChunkBytes(r.maxBufferChunkBytes);if(h<u&&(h=u),u>d)throw new Error(`_readBGRA8TextureToRGBA8Pixels: bytesPerRow=${u} exceeds safe buffer cap=${d}`);let c=Math.max(1,Math.floor(h/u))|0,g=new Uint8ClampedArray(a*n*4),x=[],y=this.device.createCommandEncoder();for(let b=0;b<n;b+=c){let z=Math.min(c,n-b)|0,_=u*z|0,D=this.device.createBuffer({size:_,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});y.copyTextureToBuffer({texture:t,origin:{x:0,y:b,z:0}},{buffer:D,bytesPerRow:u,rowsPerImage:z},{width:a,height:z,depthOrArrayLayers:1}),x.push({readBuffer:D,y0:b,rows:z})}if(this.queue.submit([y.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}for(let b of x){let{readBuffer:z,y0:_,rows:D}=b;await z.mapAsync(GPUMapMode.READ);let w=z.getMappedRange(),M=new Uint8Array(w);for(let k=0;k<D;k++){let C=k*u,N=(_+k)*a*4;for(let q=0;q<a;q++){let B=C+q*4,F=N+q*4;g[F+0]=M[B+2],g[F+1]=M[B+1],g[F+2]=M[B+0],g[F+3]=M[B+3]}}z.unmap(),z.destroy()}return g}resize(t){this.maxConfigs=t,this._initBuffers()}setPermTable(t){this.queue.writeBuffer(this.permBuffer,0,t)}setPosBuffer(t){this.posBuffer=t}setInputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.TEXTURE_BINDING)===0){console.warn("setInputTextureView: provided texture view not created with TEXTURE_BINDING; ignoring.");return}}catch{}if(this.inputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}setOutputTextureView(t){try{if(((t?.texture?.usage??0)&GPUTextureUsage.STORAGE_BINDING)===0){console.warn("setOutputTextureView: provided texture view not created with STORAGE_BINDING; ignoring.");return}}catch{}if(this.outputTextureView=t,this._tid!==null){let e=this._texPairs.get(this._tid);e&&(e.bindGroupDirty=!0)}}buildPermTable(t=Date.now()){let i=new fe(t).perm,r=new Uint32Array(512);for(let a=0;a<512;a++)r[a]=i[a];this.setPermTable(r)}setOptions(t={}){Array.isArray(t.noiseChoices)?this.noiseChoices=t.noiseChoices:this.noiseChoices||(this.noiseChoices=[0]);let{getGradient:e=0,outputChannel:i=1,baseRadius:r=0,heightScale:a=1,useCustomPos:n=0,ioFlags:l=0}=t;this.useCustomPos=n>>>0;let s=new ArrayBuffer(32),f=new DataView(s);f.setUint32(0,e,!0),f.setUint32(4,this.useCustomPos,!0),f.setUint32(8,i,!0),f.setUint32(12,l>>>0,!0),f.setFloat32(16,r,!0),f.setFloat32(20,a,!0),f.setFloat32(24,0,!0),f.setFloat32(28,0,!0),this.queue.writeBuffer(this.optionsBuffer,0,s);for(let u of this._texPairs.values())u.bindGroupDirty=!0}setNoiseParams(t={}){let e=t||{},i=this._lastNoiseParams||{},r=Object.prototype.hasOwnProperty,a=(P,I)=>{let m=r.call(e,P)?e[P]:i[P],v=Number(m);if(Number.isFinite(v))return v;let S=Number(I);return Number.isFinite(S)?S:0},n=(P,I)=>{let m=r.call(e,P)?e[P]:i[P],v=Number(m);if(Number.isFinite(v))return v>>>0;let S=Number(I);return Number.isFinite(S)?S>>>0:0},l=(P,I)=>{let m=r.call(e,P)?e[P]:i[P],v=Number(m);if(Number.isFinite(v))return v|0;let S=Number(I);return Number.isFinite(S)?S|0:0},s=(P,I)=>{let m=r.call(e,P)?e[P]:i[P];return m===void 0?(I?1:0)>>>0:(m?1:0)>>>0},f=l("seed",i.seed??Date.now()|0),u=a("zoom",i.zoom??1),p=a("freq",i.freq??1),d=Math.max(u||0,1e-6),h=Math.max(p||0,1e-6),c=n("octaves",i.octaves??8),g=s("turbulence",i.turbulence??0),x=a("lacunarity",i.lacunarity??2),y=a("gain",i.gain??.5),b=a("xShift",i.xShift??0),z=a("yShift",i.yShift??0),_=a("zShift",i.zShift??0),D=a("seedAngle",i.seedAngle??0),w=a("exp1",i.exp1??1),M=a("exp2",i.exp2??0),k=a("threshold",i.threshold??.1),C=a("rippleFreq",i.rippleFreq??10),N=a("time",i.time??0),q=a("warpAmp",i.warpAmp??.5),B=a("gaborRadius",i.gaborRadius??4),F=a("terraceStep",i.terraceStep??8),L=s("toroidal",i.toroidal??0),V=n("voroMode",i.voroMode??0),U=a("edgeK",i.edgeK??0),W=new ArrayBuffer(88),A=new DataView(W),T=0;A.setUint32(T+0,f>>>0,!0),A.setFloat32(T+4,d,!0),A.setFloat32(T+8,h,!0),A.setUint32(T+12,c>>>0,!0),A.setFloat32(T+16,x,!0),A.setFloat32(T+20,y,!0),A.setFloat32(T+24,b,!0),A.setFloat32(T+28,z,!0),A.setFloat32(T+32,_,!0),A.setUint32(T+36,g>>>0,!0),A.setFloat32(T+40,D,!0),A.setFloat32(T+44,w,!0),A.setFloat32(T+48,M,!0),A.setFloat32(T+52,k,!0),A.setFloat32(T+56,C,!0),A.setFloat32(T+60,N,!0),A.setFloat32(T+64,q,!0),A.setFloat32(T+68,B,!0),A.setFloat32(T+72,F,!0),A.setUint32(T+76,L>>>0,!0),A.setUint32(T+80,V>>>0,!0),A.setFloat32(T+84,U,!0),this.queue.writeBuffer(this.paramsBuffer,0,W),this._lastNoiseParams={seed:f,zoom:d,freq:h,octaves:c,lacunarity:x,gain:y,xShift:b,yShift:z,zShift:_,turbulence:g,seedAngle:D,exp1:w,exp2:M,threshold:k,rippleFreq:C,time:N,warpAmp:q,gaborRadius:B,terraceStep:F,toroidal:L,voroMode:V,edgeK:U};for(let P of this._texPairs.values())P.bindGroupDirty=!0;for(let[P,I]of this._volumeCache)!I||!Array.isArray(I.chunks)||(I._bindGroupsDirty=!0)}_numOr0(t){let e=Number(t);return Number.isFinite(e)?e:0}_resolveScroll2D(t,e,i,r,a,n){let l=t||{},s=Math.max(1,e|0),f=Math.max(1,i|0),u=Math.max(1,(r??s)|0),p=Math.max(1,(a??f)|0),d=n?u:s,h=n?p:f,c=this._numOr0(l.offsetX)*d,g=this._numOr0(l.offsetY)*h,x=c+this._numOr0(l.offsetXf)+this._numOr0(l.originXf)+this._numOr0(l.originX),y=g+this._numOr0(l.offsetYf)+this._numOr0(l.originYf)+this._numOr0(l.originY);return{baseXf:x,baseYf:y}}_resolveScroll3D(t,e,i,r){let a=t||{},n=Math.max(1,e|0),l=Math.max(1,i|0),s=Math.max(1,r|0),f=this._numOr0(a.offsetX)*n,u=this._numOr0(a.offsetY)*l,p=this._numOr0(a.offsetZ)*s,d=f+this._numOr0(a.offsetXf)+this._numOr0(a.originXf)+this._numOr0(a.originX),h=u+this._numOr0(a.offsetYf)+this._numOr0(a.originYf)+this._numOr0(a.originY),c=p+this._numOr0(a.offsetZf)+this._numOr0(a.originZf)+this._numOr0(a.originZ),g=Math.floor(c)|0;return{baseXf:d,baseYf:h,baseZ:g}}_update2DTileFrames(t,e={}){let i=this._texPairs.get(t);if(!i||!Array.isArray(i.tiles)||i.tiles.length===0)return;let r=Number.isFinite(e.frameFullWidth)?e.frameFullWidth>>>0:i.fullWidth,a=Number.isFinite(e.frameFullHeight)?e.frameFullHeight>>>0:i.fullHeight,n=e.squareWorld||String(e.worldMode||"").toLowerCase()==="crop";if(e.squareWorld){let h=Math.max(r,a,i.fullWidth,i.fullHeight)>>>0;r=h,a=h}let l=i.fullWidth>>>0,s=i.fullHeight>>>0,{baseXf:f,baseYf:u}=this._resolveScroll2D(e,l,s,r,a,n),p=n?1:r/Math.max(1,l),d=n?1:a/Math.max(1,s);for(let h of i.tiles){let c=h?.frames?.[0];if(!c)continue;let g=h.originX|0,x=h.originY|0,y=(g+f)*p,b=(x+u)*d,z=r>0?y/r:0,_=a>0?b/a:0;this._writeFrameUniform(c,{fullWidth:r,fullHeight:a,tileWidth:i.tileWidth,tileHeight:i.tileHeight,originX:g,originY:x,originZ:0,fullDepth:1,tileDepth:1,layerIndex:h.layerIndex|0,layers:i.layers>>>0,originXf:z,originYf:_})}}_update3DChunkFrames(t,e=null,i={}){if(!t||!Array.isArray(t.chunks)||t.chunks.length===0)return;let r=e&&Number.isFinite(e?.w)?e.w>>>0:t.full.w,a=e&&Number.isFinite(e?.h)?e.h>>>0:t.full.h,n=e&&Number.isFinite(e?.d)?e.d>>>0:t.full.d,l=t.full.w>>>0,s=t.full.h>>>0,f=t.full.d>>>0,{baseXf:u,baseYf:p,baseZ:d}=this._resolveScroll3D(i,l,s,f),h=r/Math.max(1,l),c=a/Math.max(1,s);for(let g of t.chunks){g.fb||(g.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}));let x=((g.ox|0)+u)*h,y=((g.oy|0)+p)*c,b=r>0?x/r:0,z=a>0?y/a:0,_=(g.oz|0)+d|0;this._writeFrameUniform(g.fb,{fullWidth:r,fullHeight:a,tileWidth:g.w,tileHeight:g.h,originX:g.ox|0,originY:g.oy|0,originZ:_,fullDepth:n,tileDepth:g.d,layerIndex:0,layers:1,originXf:b,originYf:z})}}_compute2DTiling(t,e){let i=Math.min(t,we),r=Math.min(e,we),a=Math.ceil(t/i),n=Math.ceil(e/r),l=a*n;return{tileW:i,tileH:r,tilesX:a,tilesY:n,layers:l}}_create2DPair(t,e,i=null){let r=this._compute2DTiling(t,e),a=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST,n=h=>this.device.createTexture({label:h,size:[r.tileW,r.tileH,r.layers],format:"rgba16float",usage:a}),l={dimension:"2d-array",arrayLayerCount:r.layers},s=i!=null?String(i):String(this._texPairs.size),f=n(`2D texA ${t}x${e}x${r.layers} (${s})`),u=n(`2D texB ${t}x${e}x${r.layers} (${s})`),p=f.createView(l),d=u.createView(l);return p.label=`2D:viewA (${s})`,d.label=`2D:viewB (${s})`,this._tag.set(p,`2D:A (${s})`),this._tag.set(d,`2D:B (${s})`),this._texPairs.set(s,{texA:f,texB:u,viewA:p,viewB:d,fullWidth:t,fullHeight:e,tileWidth:r.tileW,tileHeight:r.tileH,tilesX:r.tilesX,tilesY:r.tilesY,layers:r.layers,isA:!0,tiles:null,bindGroupDirty:!0}),this._tid===null&&this.setActiveTexture(s),s}createShaderTextures(t,e){this._tid!==null&&this._texPairs.has(this._tid)&&this.destroyTexturePair(this._tid);let i=this._create2DPair(t,e);return this.setActiveTexture(i),i}destroyTexturePair(t){let e=String(t),i=this._texPairs.get(e);if(i){try{i.texA.destroy()}catch{}try{i.texB.destroy()}catch{}if(Array.isArray(i.tiles))for(let r of i.tiles){if(Array.isArray(r.frames))for(let a of r.frames)try{a.destroy()}catch{}if(r.posBuf&&r.posBuf!==this.nullPosBuffer)try{r.posBuf.destroy()}catch{}}this._texPairs.delete(e),this._tid===e&&(this._tid=null,this.inputTextureView=null,this.outputTextureView=null,this.viewA=null,this.viewB=null)}}destroyAllTexturePairs(){let t=Array.from(this._texPairs.keys());for(let e of t)this.destroyTexturePair(e)}setActiveTexture(t){let e=String(t);if(!this._texPairs.has(e))throw new Error("setActiveTexture: invalid id");this._tid=e;let i=this._texPairs.get(e);this.viewA=i.viewA,this.viewB=i.viewB,this.width=i.tileWidth,this.height=i.tileHeight,this.layers=i.layers,this.inputTextureView=i.isA?i.viewA:i.viewB,this.outputTextureView=i.isA?i.viewB:i.viewA}_buildPosBuffer(t,e,i){if(!(i instanceof Float32Array)||i.byteLength<=0)return this.nullPosBuffer;let r=Math.max(1,Math.floor(t)),a=Math.max(1,Math.floor(e)),l=r*a*4;if(i.length!==l)throw new Error(`_buildPosBuffer: customData length ${i.length} != expected ${l} (width=${r}, height=${a})`);let s=this.device?.limits?.maxBufferSize??2147483648,f=Math.floor(s*.98);if(i.byteLength>f)throw new Error(`_buildPosBuffer: ${i.byteLength} bytes exceeds maxBufferSize ${s} (w=${r}, h=${a})`);let u=this.device.createBuffer({size:i.byteLength,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});return this._writeBufferChunked(u,0,i.buffer,i.byteOffset,i.byteLength,this.maxBufferChunkBytes),u}_writeFrameUniform(t,e){let i=new ArrayBuffer(64),r=new DataView(i);r.setUint32(0,e.fullWidth>>>0,!0),r.setUint32(4,e.fullHeight>>>0,!0),r.setUint32(8,e.tileWidth>>>0,!0),r.setUint32(12,e.tileHeight>>>0,!0),r.setInt32(16,e.originX|0,!0),r.setInt32(20,e.originY|0,!0),r.setInt32(24,e.originZ|0,!0),r.setUint32(28,e.fullDepth>>>0,!0),r.setUint32(32,e.tileDepth>>>0,!0),r.setInt32(36,e.layerIndex|0,!0),r.setUint32(40,e.layers>>>0,!0),r.setUint32(44,0,!0),r.setFloat32(48,e.originXf??0,!0),r.setFloat32(52,e.originYf??0,!0),r.setFloat32(56,0,!0),r.setFloat32(60,0,!0),this.queue.writeBuffer(t,0,i)}_create2DTileBindGroups(t,e={}){let i=this._texPairs.get(t);if(!i)throw new Error("_create2DTileBindGroups: invalid tid");let a=((e.useCustomPos??0)|0)!==0&&e.customData instanceof Float32Array?e.customData:null,n=!!a,l=Array.isArray(i.tiles)&&i.tiles.some(f=>f&&f.posIsCustom);if(!n&&l&&(i.bindGroupDirty=!0),Array.isArray(i.tiles)&&!i.bindGroupDirty&&!n)return;let s=[];for(let f=0;f<i.tilesY;f++)for(let u=0;u<i.tilesX;u++){let p=f*i.tilesX+u,d=u*i.tileWidth,h=f*i.tileHeight,c=i.tiles&&i.tiles[p]||null,g=this.nullPosBuffer,x=!1;if(n)g=this._buildPosBuffer(i.tileWidth,i.tileHeight,a),x=g!==this.nullPosBuffer;else if(c&&c.posBuf&&!c.posIsCustom)g=c.posBuf,x=!1;else if(g=this.nullPosBuffer,x=!1,c&&c.posBuf&&c.posIsCustom)try{c.posBuf.destroy()}catch{}let y;c&&c.frames&&c.frames[0]?y=c.frames[0]:y=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let b=Number.isFinite(e.frameFullWidth)?e.frameFullWidth>>>0:i.fullWidth,z=Number.isFinite(e.frameFullHeight)?e.frameFullHeight>>>0:i.fullHeight,_=e.squareWorld||String(e.worldMode||"").toLowerCase()==="crop";if(e.squareWorld){let C=Math.max(b,z,i.fullWidth,i.fullHeight)>>>0;b=C,z=C}let D,w;if(_)D=d,w=h;else{let C=b/i.fullWidth,N=z/i.fullHeight;D=d*C,w=h*N}this._writeFrameUniform(y,{fullWidth:b,fullHeight:z,tileWidth:i.tileWidth,tileHeight:i.tileHeight,originX:d,originY:h,originZ:0,fullDepth:1,tileDepth:1,layerIndex:p,layers:i.layers,originXf:D,originYf:w});let M=c?.bgs?.[0]?.bgA??null,k=c?.bgs?.[0]?.bgB??null;(!M||!k||i.bindGroupDirty)&&(M=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewA},{binding:4,resource:i.viewB},{binding:5,resource:{buffer:g}},{binding:6,resource:{buffer:y}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]}),k=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:i.viewB},{binding:4,resource:i.viewA},{binding:5,resource:{buffer:g}},{binding:6,resource:{buffer:y}},{binding:7,resource:this._dummy3D_sampleView},{binding:8,resource:this._dummy3D_writeView}]})),s.push({layerIndex:p,originX:d,originY:h,frames:[y],posBuf:g,posIsCustom:x,bgs:[{bgA:M,bgB:k}]})}i.tiles=s,i.bindGroupDirty=!1,this._tid===t&&(this._tiles=s)}async _runPipelines(t,e,i,r,a,n,l=1){let s=t,f=e,u=Array.isArray(n),p=0,d=this.device.createCommandEncoder(),h=d.beginComputePass();for(let c of this.noiseChoices){let g=typeof c=="number"?this.entryPoints[c]:c,x=this.pipelines.get(g);x||(x=this.device.createComputePipeline({layout:this.pipelineLayout,compute:{module:this.shaderModule,entryPoint:g}}),this.pipelines.set(g,x)),u&&this.setNoiseParams(n[p++]),h.setPipeline(x),h.setBindGroup(0,s),h.dispatchWorkgroups(Math.ceil(i/8),Math.ceil(r/8),l),[s,f]=[f,s]}return h.end(),this.queue.submit([d.finish()]),f}async computeToTexture(t,e,i={},r={}){let a=t|0,n=e|0;if(!(a>0&&n>0))throw new Error(`computeToTexture: invalid size ${t}x${e}`);let l=this._get2DKey(r),s=this._texPairs.get(l);s?(s.fullWidth!==a||s.fullHeight!==n)&&(this.destroyTexturePair(l),this._create2DPair(a,n,l)):this._create2DPair(a,n,l),this.setActiveTexture(l);let f=this._texPairs.get(l);if(!f)throw new Error("computeToTexture: missing pair after ensure");i&&!Array.isArray(i)&&this.setNoiseParams(i);let u=r||{},d=((u.useCustomPos??0)|0)!==0&&u.customData instanceof Float32Array?u.customData:null,h=d?1:0;this.setOptions({...u,ioFlags:0,useCustomPos:h});let c={...u,useCustomPos:h,customData:d};(!f.tiles||f.bindGroupDirty||d)&&this._create2DTileBindGroups(l,c),this._update2DTileFrames(l,c);let g=f.isA,x=null,y=null;for(let z of f.tiles){let{bgA:_,bgB:D}=z.bgs[0],w=x?x===_?_:D:g?_:D,M=w===_?D:_;x=await this._runPipelines(w,M,f.tileWidth,f.tileHeight,1,i,1),y={bgA:_,bgB:D}}let b=x===y.bgB;return f.isA=b,this.setActiveTexture(l),this.getCurrentView(l)}_get2DKey(t){let e=t&&t.textureKey!==void 0&&t.textureKey!==null?String(t.textureKey):"";return e&&e.length?e:this._default2DKey}get2DView(t){let e=String(t),i=this._texPairs.get(e);return i?i.isA?i.viewA:i.viewB:null}getCurrentView(t=null){let e=t!=null?String(t):this._tid,i=this._texPairs.get(e);return i?i.isA?i.viewA:i.viewB:null}_compute3DTiling(t,e,i){let r=Math.min(t,le),a=Math.min(e,le),n=this.device?.limits?.maxBufferSize??256*1024*1024,l=r*a*Le,s=Math.max(1,Math.floor(n*.8/Math.max(1,l))),f=Math.min(i,le,s),u=Math.ceil(t/r),p=Math.ceil(e/a),d=Math.ceil(i/f);return{tw:r,th:a,td:f,nx:u,ny:p,nz:d}}_create3DChunks(t,e,i){let r=this._compute3DTiling(t,e,i),a=[],n=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC|GPUTextureUsage.COPY_DST;for(let l=0;l<r.nz;l++)for(let s=0;s<r.ny;s++)for(let f=0;f<r.nx;f++){let u=f*r.tw,p=s*r.th,d=l*r.td,h=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:n}),c=this.device.createTexture({size:{width:r.tw,height:r.th,depthOrArrayLayers:r.td},dimension:"3d",format:"rgba16float",usage:n}),g=h.createView({dimension:"3d"}),x=c.createView({dimension:"3d"});h.label=`3D texA ${r.tw}x${r.th}x${r.td} @ (${f},${s},${l})`,c.label=`3D texB ${r.tw}x${r.th}x${r.td} @ (${f},${s},${l})`,g.label=`3D:viewA[${f},${s},${l}]`,x.label=`3D:viewB[${f},${s},${l}]`,this._tag.set(g,`3D:A[${f},${s},${l}]`),this._tag.set(x,`3D:B[${f},${s},${l}]`),a.push({texA:h,texB:c,viewA:g,viewB:x,ox:u,oy:p,oz:d,w:r.tw,h:r.th,d:r.td,isA:!0,fb:null,posBuf:null,bgA:null,bgB:null})}return{chunks:a,tile:{w:r.tw,h:r.th,d:r.td},full:{w:t,h:e,d:i},grid:{nx:r.nx,ny:r.ny,nz:r.nz}}}_destroy3DSet(t){if(t)for(let e of t.chunks){try{e.texA.destroy()}catch{}try{e.texB.destroy()}catch{}if(e.viewA=null,e.viewB=null,e.bgA=null,e.bgB=null,e.fb){try{e.fb.destroy()}catch{}e.fb=null}if(e.posBuf&&e.posBuf!==this.nullPosBuffer){try{e.posBuf.destroy()}catch{}e.posBuf=null}}}destroyAllVolumes(){for(let[t,e]of this._volumeCache)this._destroy3DSet(e),this._volumeCache.delete(t)}get3DView(t){let e=this._volumeCache.get(String(t));if(!e)return null;let i=e.chunks.map(r=>r.isA?r.viewA:r.viewB);return i.length===1?i[0]:{views:i,meta:{full:e.full,tile:e.tile,grid:e.grid}}}destroyVolume(t){let e=String(t),i=this._volumeCache.get(e);i&&(this._destroy3DSet(i),this._volumeCache.delete(e))}_getOrCreate3DVolume(t,e,i,r=null,a=null){let n=r?String(r):`${t}x${e}x${i}`,l=this._volumeCache.get(n);if(l)return l;l=this._create3DChunks(t,e,i);for(let s of l.chunks){s.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=a&&Number.isFinite(a?.w)?a.w>>>0:l.full.w,u=a&&Number.isFinite(a?.h)?a.h>>>0:l.full.h,p=a&&Number.isFinite(a?.d)?a.d>>>0:l.full.d,d=f/l.full.w,h=u/l.full.h,c=s.ox*d,g=s.oy*h;this._writeFrameUniform(s.fb,{fullWidth:f,fullHeight:u,tileWidth:s.w,tileHeight:s.h,originX:s.ox,originY:s.oy,originZ:s.oz,fullDepth:p,tileDepth:s.d,layerIndex:0,layers:1,originXf:c,originYf:g});let x=this._buildPosBuffer(s.w,s.h,null);s.posBuf=x;try{s.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:x}},{binding:6,resource:{buffer:s.fb}},{binding:7,resource:s.viewA},{binding:8,resource:s.viewB}]}),s.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:s.posBuf}},{binding:6,resource:{buffer:s.fb}},{binding:7,resource:s.viewB},{binding:8,resource:s.viewA}]})}catch(y){throw new Error(`_getOrCreate3DVolume: createBindGroup failed: ${y?.message||y}`)}}return l._bindGroupsDirty=!1,this._volumeCache.set(n,l),l}_recreate3DBindGroups(t,e=null){if(!t||!Array.isArray(t.chunks))return;let i=e&&Number.isFinite(e.w)?e.w>>>0:t.full.w,r=e&&Number.isFinite(e.h)?e.h>>>0:t.full.h,a=e&&Number.isFinite(e.d)?e.d>>>0:t.full.d;for(let n of t.chunks){if(!n.fb){n.fb=this.device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});let f=i/t.full.w,u=r/t.full.h,p=n.ox*f,d=n.oy*u;this._writeFrameUniform(n.fb,{fullWidth:i,fullHeight:r,tileWidth:n.w,tileHeight:n.h,originX:n.ox,originY:n.oy,originZ:n.oz,fullDepth:a,tileDepth:n.d,layerIndex:0,layers:1,originXf:p,originYf:d})}n.posBuf||(n.posBuf=this._buildPosBuffer(n.w,n.h,null));let l=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:n.posBuf}},{binding:6,resource:{buffer:n.fb}},{binding:7,resource:n.viewA},{binding:8,resource:n.viewB}],s=[{binding:0,resource:{buffer:this.optionsBuffer}},{binding:1,resource:{buffer:this.paramsBuffer}},{binding:2,resource:{buffer:this.permBuffer}},{binding:3,resource:this._dummy2D_sampleView},{binding:4,resource:this._dummy2D_writeView},{binding:5,resource:{buffer:n.posBuf}},{binding:6,resource:{buffer:n.fb}},{binding:7,resource:n.viewB},{binding:8,resource:n.viewA}];try{n.bgA=this.device.createBindGroup({layout:this.bindGroupLayout,entries:l}),n.bgB=this.device.createBindGroup({layout:this.bindGroupLayout,entries:s})}catch(f){throw new Error(`_recreate3DBindGroups: failed to create bind groups: ${f?.message||f}`)}}t._bindGroupsDirty=!1}async computeToTexture3D(t,e,i,r={},a={}){let n=t|0,l=e|0,s=i|0;if(!(n>0&&l>0&&s>0))throw new Error(`computeToTexture3D: invalid size ${t}x${e}x${i}`);r&&!Array.isArray(r)&&this.setNoiseParams(r);let f=a||{};this.setOptions({...f,ioFlags:3,useCustomPos:f.useCustomPos??this.useCustomPos});let u=a&&(Number.isFinite(a.frameFullWidth)||Number.isFinite(a.frameFullHeight)||Number.isFinite(a.frameFullDepth))?{w:Number.isFinite(a.frameFullWidth)?a.frameFullWidth>>>0:n,h:Number.isFinite(a.frameFullHeight)?a.frameFullHeight>>>0:l,d:Number.isFinite(a.frameFullDepth)?a.frameFullDepth>>>0:s}:null,p=this._getOrCreate3DVolume(n,l,s,a.id,u);if(!p)throw new Error("computeToTexture3D: failed to create or retrieve volume");(p._bindGroupsDirty||!p.chunks[0].bgA||!p.chunks[0].bgB)&&this._recreate3DBindGroups(p,u),this._update3DChunkFrames(p,u,a);let d=null;for(let c of p.chunks){let g=c.isA?c.bgA:c.bgB,x=c.isA?c.bgB:c.bgA;if(!g||!x)throw new Error("computeToTexture3D: missing bind groups (volume not initialized correctly)");d=await this._runPipelines(g,x,c.w,c.h,c.d,r,c.d),c.isA=d===c.bgB}let h=p.chunks.map(c=>c.isA?c.viewA:c.viewB);return h.length===1?h[0]:{views:h,meta:{full:p.full,tile:p.tile,grid:p.grid}}}configureCanvas(t){let e=navigator.gpu.getPreferredCanvasFormat&&navigator.gpu.getPreferredCanvasFormat()||"bgra8unorm",i=t.getContext("webgpu");i.configure({device:this.device,format:e,alphaMode:"opaque",size:[t.width,t.height]}),this._ctxMap.set(t,{ctx:i,size:[t.width,t.height]})}initBlitRender(){this.sampler||(this.sampler=this.device.createSampler({magFilter:"linear",minFilter:"linear",addressModeU:"clamp-to-edge",addressModeV:"clamp-to-edge"})),this.bgl2D||(this.bgl2D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"2d-array"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline2D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl2D]}),vertex:{module:this.device.createShaderModule({code:ne}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:ne}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit2DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})),this.bgl3D||(this.bgl3D=this.device.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},{binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:"float",viewDimension:"3d"}},{binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:"uniform"}}]}),this.pipeline3D=this.device.createRenderPipeline({layout:this.device.createPipelineLayout({bindGroupLayouts:[this.bgl3D]}),vertex:{module:this.device.createShaderModule({code:se}),entryPoint:"vs_main"},fragment:{module:this.device.createShaderModule({code:se}),entryPoint:"fs_main",targets:[{format:"bgra8unorm"}]},primitive:{topology:"triangle-list"}}),this.blit3DUbo=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}))}_renderCommonCanvasSetup(t,e){let i="bgra8unorm",r=this._ctxMap.get(t);if(r){let l=t.width|0,s=t.height|0;(r.size[0]!==l||r.size[1]!==s)&&(r.size=[l,s],r.ctx.configure({device:this.device,format:i,alphaMode:"opaque",size:r.size}))}else{let l=t.getContext("webgpu"),s=[t.width|0,t.height|0];l.configure({device:this.device,format:i,alphaMode:"opaque",size:s}),r={ctx:l,size:s},this._ctxMap.set(t,r)}let a=this.device.createCommandEncoder(),n=a.beginRenderPass({colorAttachments:[{view:r.ctx.getCurrentTexture().createView(),loadOp:e?"clear":"load",clearValue:{r:0,g:0,b:0,a:1},storeOp:"store"}]});return{enc:a,pass:n,ctxEntry:r}}renderTextureToCanvas(t,e,i={}){let{layer:r=0,channel:a=0,preserveCanvasSize:n=!0,clear:l=!0}=i;if(this.initBlitRender(),!n)try{let d=t.texture;d&&typeof d.width=="number"&&typeof d.height=="number"&&(e.width=d.width,e.height=d.height)}catch{}let s=new Uint32Array([r>>>0,a>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,s.buffer,s.byteOffset,s.byteLength);let f=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),{enc:u,pass:p}=this._renderCommonCanvasSetup(e,l);p.setPipeline(this.pipeline2D),p.setBindGroup(0,f),p.draw(6,1,0,0),p.end(),this.queue.submit([u.finish()])}renderTexture3DSliceToCanvas(t,e,i={}){let{depth:r,slice:a=0,zNorm:n=null,channel:l=0,chunk:s=0,preserveCanvasSize:f=!0,clear:u=!0}=i;this.initBlitRender();let p,d;if(t&&t.views&&Array.isArray(t.views)?(p=t.views[Math.max(0,Math.min(s|0,t.views.length-1))],d=t.meta?.tile?.d??r):(p=t,d=r),!p||!d)throw new Error("renderTexture3DSliceToCanvas: need a 3D view and its depth");if(!f)try{let z=p.texture;z&&typeof z.width=="number"&&typeof z.height=="number"&&(e.width=z.width,e.height=z.height)}catch{}let h=n??(Math.min(Math.max(a,0),d-1)+.5)/d;h=Math.min(Math.max(h,0),1);let c=new ArrayBuffer(16),g=new DataView(c);g.setFloat32(0,h,!0),g.setUint32(4,l>>>0,!0),g.setUint32(8,0,!0),g.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,c);let x=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:p},{binding:2,resource:{buffer:this.blit3DUbo}}]}),{enc:y,pass:b}=this._renderCommonCanvasSetup(e,u);b.setPipeline(this.pipeline3D),b.setBindGroup(0,x),b.draw(6,1,0,0),b.end(),this.queue.submit([y.finish()])}setExportBackground(t="black"){this.exportBackground=t}_resolveExportBackground(t){let e=t===void 0?this.exportBackground:t;if(e==null)return{r:0,g:0,b:0,a:1,transparent:!1};if(typeof e=="string"){let r=e.trim().toLowerCase();if(r==="transparent")return{r:0,g:0,b:0,a:0,transparent:!0};if(r==="black")return{r:0,g:0,b:0,a:1,transparent:!1};if(r==="white")return{r:1,g:1,b:1,a:1,transparent:!1};if(r[0]==="#")return this._parseHexBackground(r)}let i=r=>{let a=Number(r);if(!Number.isFinite(a))return 0;let n=a>1?a/255:a;return Math.min(Math.max(n,0),1)};if(Array.isArray(e)){let r=i(e[0]),a=i(e[1]),n=i(e[2]),l=e.length>=4?i(e[3]):1;return{r,g:a,b:n,a:l,transparent:l<=0}}if(typeof e=="object"){let r=i(e.r),a=i(e.g),n=i(e.b),l=e.a===void 0?1:i(e.a);return{r,g:a,b:n,a:l,transparent:l<=0}}return{r:0,g:0,b:0,a:1,transparent:!1}}_parseHexBackground(t){let e=String(t).trim().replace(/^#/,""),i=d=>d+d,r=0,a=0,n=0,l=255;if(e.length===3||e.length===4)r=parseInt(i(e[0]),16),a=parseInt(i(e[1]),16),n=parseInt(i(e[2]),16),e.length===4&&(l=parseInt(i(e[3]),16));else if(e.length===6||e.length===8)r=parseInt(e.slice(0,2),16),a=parseInt(e.slice(2,4),16),n=parseInt(e.slice(4,6),16),e.length===8&&(l=parseInt(e.slice(6,8),16));else return{r:0,g:0,b:0,a:1,transparent:!1};let s=r/255,f=a/255,u=n/255,p=l/255;return{r:s,g:f,b:u,a:p,transparent:p<=0}}_applyExportBackground(t,e){if(!t||!e||e.transparent)return;let i=Math.round(e.r*255),r=Math.round(e.g*255),a=Math.round(e.b*255),n=Math.round((e.a??1)*255);if(n<=0)return;let l=t.length|0;if(n>=255){for(let s=0;s<l;s+=4){let f=t[s+3]|0;if(f===255)continue;if(f===0){t[s+0]=i,t[s+1]=r,t[s+2]=a,t[s+3]=255;continue}let u=255-f;t[s+0]=(t[s+0]*f+i*u)/255|0,t[s+1]=(t[s+1]*f+r*u)/255|0,t[s+2]=(t[s+2]*f+a*u)/255|0,t[s+3]=255}return}for(let s=0;s<l;s+=4){let f=t[s+0]|0,u=t[s+1]|0,p=t[s+2]|0,d=t[s+3]|0,h=d+n*(255-d)/255|0;if(h<=0){t[s+0]=0,t[s+1]=0,t[s+2]=0,t[s+3]=0;continue}let c=i*n|0,g=r*n|0,x=a*n|0,y=f*d|0,b=u*d|0,z=p*d|0,_=255-d|0,D=y+c*_/255|0,w=b+g*_/255|0,M=z+x*_/255|0;t[s+0]=Math.min(255,Math.max(0,D*255/h|0)),t[s+1]=Math.min(255,Math.max(0,w*255/h|0)),t[s+2]=Math.min(255,Math.max(0,M*255/h|0)),t[s+3]=Math.min(255,Math.max(0,h))}}_forceOpaqueAlpha(t){let e=t.length|0;for(let i=3;i<e;i+=4)t[i]=255}async export2DTextureToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export2DTextureToPNGBlob: textureView is required");let a=Math.max(1,e|0),n=Math.max(1,i|0),l=r.layer??0,s=r.channel??0,f=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let p=this.device.createTexture({size:[a,n,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),d=new Uint32Array([l>>>0,s>>>0,0,0]);this.queue.writeBuffer(this.blit2DUbo,0,d.buffer,d.byteOffset,d.byteLength);let h=this.device.createBindGroup({layout:this.bgl2D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit2DUbo}}]}),c=this.device.createCommandEncoder(),g=c.beginRenderPass({colorAttachments:[{view:p.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});if(g.setPipeline(this.pipeline2D),g.setBindGroup(0,h),g.draw(6,1,0,0),g.end(),this.queue.submit([c.finish()]),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let x=await this._readBGRA8TextureToRGBA8Pixels(p,a,n,{maxBufferChunkBytes:r.maxBufferChunkBytes??this.maxBufferChunkBytes});p.destroy();let y=r.useAlphaForBackground===!0;f.transparent||y?this._applyExportBackground(x,f):this._forceOpaqueAlpha(x);let b=document.createElement("canvas");b.width=a,b.height=n;let z=b.getContext("2d");if(!z)throw new Error("export2DTextureToPNGBlob: unable to get 2D context");return z.putImageData(new ImageData(x,a,n),0,0),await new Promise((D,w)=>{b.toBlob(M=>{M?D(M):w(new Error("export2DTextureToPNGBlob: toBlob returned null"))},"image/png")})}async exportCurrent2DToPNGBlob(t,e,i={}){let r=this.getCurrentView();if(!r)throw new Error("exportCurrent2DToPNGBlob: no active 2D texture view");return this.export2DTextureToPNGBlob(r,t,e,i)}async export3DSliceToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DSliceToPNGBlob: target is required");let a=Math.max(1,e|0),n=Math.max(1,i|0),{depth:l,slice:s=0,zNorm:f=null,channel:u=0,chunk:p=0}=r;if(!l||l<=0)throw new Error("export3DSliceToPNGBlob: depth must be provided and > 0");let d=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let h,c;if(t&&t.views&&Array.isArray(t.views)){let P=Math.max(0,Math.min(p|0,t.views.length-1));h=t.views[P],c=t.meta?.tile?.d??l}else h=t,c=l;if(!h||!c)throw new Error("export3DSliceToPNGBlob: need a 3D view and its depth");let g=f??(Math.min(Math.max(s,0),c-1)+.5)/c;g=Math.min(Math.max(g,0),1);let y=this.device.createTexture({size:[a,n,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),b=new ArrayBuffer(16),z=new DataView(b);z.setFloat32(0,g,!0),z.setUint32(4,u>>>0,!0),z.setUint32(8,0,!0),z.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,b);let _=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:h},{binding:2,resource:{buffer:this.blit3DUbo}}]}),D=this.device.createCommandEncoder(),w=D.beginRenderPass({colorAttachments:[{view:y.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});w.setPipeline(this.pipeline3D),w.setBindGroup(0,_),w.draw(6,1,0,0),w.end();let M=4,k=256,C=a*M,N=Math.ceil(C/k)*k,q=N*n,B=this.device.createBuffer({size:q,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});D.copyTextureToBuffer({texture:y},{buffer:B,bytesPerRow:N,rowsPerImage:n},{width:a,height:n,depthOrArrayLayers:1}),this.queue.submit([D.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await B.mapAsync(GPUMapMode.READ);let F=B.getMappedRange(),L=new Uint8Array(F),V=new Uint8ClampedArray(a*n*M),U=0;for(let P=0;P<n;P++){let I=P*N;for(let m=0;m<a;m++){let v=I+m*4;V[U++]=L[v+2],V[U++]=L[v+1],V[U++]=L[v+0],V[U++]=L[v+3]}}B.unmap(),B.destroy(),y.destroy(),this._applyExportBackground(V,d);let W=document.createElement("canvas");W.width=a,W.height=n;let A=W.getContext("2d");if(!A)throw new Error("export3DSliceToPNGBlob: unable to get 2D context");return A.putImageData(new ImageData(V,a,n),0,0),await new Promise((P,I)=>{W.toBlob(m=>{m?P(m):I(new Error("export3DSliceToPNGBlob: toBlob returned null"))},"image/png")})}async _render3DSliceToRGBA8Pixels(t,e,i,r,a=0,n=null){if(!t)throw new Error("_render3DSliceToRGBA8Pixels: view3D is required");let l=Math.max(1,e|0),s=Math.max(1,i|0);this.initBlitRender();let f=Math.min(Math.max(Number(r)||0,0),1),p=this.device.createTexture({size:[l,s,1],format:"bgra8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC}),d=new ArrayBuffer(16),h=new DataView(d);h.setFloat32(0,f,!0),h.setUint32(4,a>>>0,!0),h.setUint32(8,0,!0),h.setUint32(12,0,!0),this.queue.writeBuffer(this.blit3DUbo,0,d);let c=this.device.createBindGroup({layout:this.bgl3D,entries:[{binding:0,resource:this.sampler},{binding:1,resource:t},{binding:2,resource:{buffer:this.blit3DUbo}}]}),g=this.device.createCommandEncoder(),x=g.beginRenderPass({colorAttachments:[{view:p.createView(),loadOp:"clear",storeOp:"store",clearValue:{r:0,g:0,b:0,a:0}}]});x.setPipeline(this.pipeline3D),x.setBindGroup(0,c),x.draw(6,1,0,0),x.end();let y=4,b=256,z=l*y,_=Math.ceil(z/b)*b,D=_*s,w=this.device.createBuffer({size:D,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});g.copyTextureToBuffer({texture:p},{buffer:w,bytesPerRow:_,rowsPerImage:s},{width:l,height:s,depthOrArrayLayers:1}),this.queue.submit([g.finish()]),this.queue&&this.queue.onSubmittedWorkDone&&await this.queue.onSubmittedWorkDone(),await w.mapAsync(GPUMapMode.READ);let M=w.getMappedRange(),k=new Uint8Array(M),C=new Uint8ClampedArray(l*s*y),N=0;for(let q=0;q<s;q++){let B=q*_;for(let F=0;F<l;F++){let L=B+F*4;C[N++]=k[L+2],C[N++]=k[L+1],C[N++]=k[L+0],C[N++]=k[L+3]}}return w.unmap(),w.destroy(),p.destroy(),n&&this._applyExportBackground(C,n),C}async export3DTilesetToPNGBlob(t,e,i,r={}){if(!t)throw new Error("export3DTilesetToPNGBlob: target is required");let a=Math.max(1,e|0),n=Math.max(1,(i??e)|0),{depth:l,channel:s=0,chunk:f=0,tilesAcross:u=16,tilesDown:p=null,startSlice:d=0,sliceCount:h=null}=r,c=this._resolveExportBackground(r.background);if(this.initBlitRender(),this.queue&&this.queue.onSubmittedWorkDone)try{await this.queue.onSubmittedWorkDone()}catch{}let g,x;if(t&&t.views&&Array.isArray(t.views)){let B=Math.max(0,Math.min(f|0,t.views.length-1));g=t.views[B],x=t.meta?.tile?.d??l}else g=t,x=l;if(!g)throw new Error("export3DTilesetToPNGBlob: missing 3D view");if(!x||x<=0)throw new Error("export3DTilesetToPNGBlob: depth must be provided and > 0");let y=Math.max(1,u|0),b=p!=null?Math.max(1,p|0):Math.ceil(x/y),z=Math.min(Math.max(d|0,0),x-1),_=h!=null?Math.max(0,h|0):x-z,D=a*y,w=n*b,M=new Uint8ClampedArray(D*w*4),k=Math.min(x,z+_);for(let B=z;B<k;B++){let F=B-z,L=F%y,V=F/y|0;if(V>=b)break;let U=(B+.5)/x,W=await this._render3DSliceToRGBA8Pixels(g,a,n,U,s,c),A=L*a,T=V*n;for(let P=0;P<n;P++){let I=P*a*4,m=((T+P)*D+A)*4;M.set(W.subarray(I,I+a*4),m)}}let C=document.createElement("canvas");C.width=D,C.height=w;let N=C.getContext("2d");if(!N)throw new Error("export3DTilesetToPNGBlob: unable to get 2D context");return N.putImageData(new ImageData(M,D,w),0,0),await new Promise((B,F)=>{C.toBlob(L=>{L?B(L):F(new Error("export3DTilesetToPNGBlob: toBlob returned null"))},"image/png")})}},fe=class{constructor(t=Date.now()){t<1e7&&(t*=1e7),this.seedN=t,this.seedK=t,this.perm=new Uint8Array(512),this.seed(t)}seed(t){let e=this.xorshift(t);for(let i=0;i<256;i++)this.perm[i]=i;for(let i=255;i>0;i--){let r=Math.floor(e()*(i+1));[this.perm[i],this.perm[r]]=[this.perm[r],this.perm[i]]}for(let i=0;i<256;i++)this.perm[i+256]=this.perm[i]}setSeed(t){this.seedN=t,this.seed(t),this.resetSeed()}random(t,e,i){let r;return typeof i=="number"?r=this.perm[(t&255)+this.perm[(e&255)+this.perm[i&255]]]&255:r=this.perm[(t&255)+this.perm[e&255]]&255,this.perm[r]/255*2-1}seededRandom(){this.seedK+=Math.E;let t=1e9*Math.sin(this.seedK);return t-Math.floor(t)}resetSeed(){this.seedK=this.seedN}xorshift(t){let e=t;return function(){return e^=e<<13,e^=e>>17,e^=e<<5,(e<0?1+~e:e)/4294967295}}dot(t,e=0,i=0,r=0){return t[0]*e+t[1]*i+t[2]*r}};document.body.insertAdjacentHTML("afterbegin",be);var Ve=6,Ge={computeCellular:"CellularPattern",computeWorley:"WorleyPattern",computeAntiCellular:"AntiCellularPattern",computeAntiWorley:"AntiWorleyPattern",computeWhiteNoise:"White Noise",computeBlueNoise:"Blue Noise"},We={computeRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeAntiRidge:{clamp:{freq:[.25,8],gain:[.2,.8],octaves:[1,12]}},computeRidgedMultifractal:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal2:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal3:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeRidgedMultifractal4:{clamp:{freq:[.25,8],gain:[.2,.9],octaves:[2,14]}},computeFBM:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM2:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeFBM3:{clamp:{gain:[.2,.8],octaves:[2,10]}},computeVoronoiBM1:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM2:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeVoronoiBM3:{clamp:{threshold:[0,1],edgeK:[0,64]}},computeCellular:{clamp:{threshold:[0,1]}},computeWorley:{clamp:{threshold:[0,1]}},computeAntiCellular:{clamp:{threshold:[0,1]}},computeAntiWorley:{clamp:{threshold:[0,1]}},computeSimplexFBM:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurl2D:{force:{turbulence:1},clamp:{warpAmp:[.1,2],freq:[.25,6]}},computeCurlFBM2D:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM1:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeDomainWarpFBM2:{force:{turbulence:1},clamp:{warpAmp:[.1,3]}},computeGaborAnisotropic:{clamp:{gaborRadius:[.5,6]}},computeFoamNoise:{force:{turbulence:1},clamp:{gain:[.5,.95]}}},E=128,_e="toroidalDemo",J=new Map,G=[],ee=Object.create(null);function Z(o){let t=String(o||""),e=Ge[t];if(e)return e;let i=t;return i.startsWith("compute")&&(i=i.slice(7)),i||t}function Ue(o,t){let e=Object.create(null),i=Array.isArray(o)?o:[],r=Math.max(0,t|0),a=Math.max(0,i.length-r);for(let n=0;n<a;n++)e[n]=Z(i[n]);return e}function Oe(){return Object.keys(ee).map(o=>Number(o)).filter(o=>Number.isInteger(o)&&o>=0).sort((o,t)=>o-t)}function Ye(){let o=[];for(let t=0;t<G.length;t++){let e=G[t];typeof e!="string"||!e||e!=="clearTexture"&&o.push(t)}return o}function Xe(o){let t=G[o];return t&&We[String(t)]||null}function H(o,t,e,i){if(!Object.prototype.hasOwnProperty.call(o,t))return;let r=Number(o[t]);if(!Number.isFinite(r))return;let a=Number(e),n=Number(i);o[t]=Math.min(Math.max(r,a),n)}function Me(o,t){let e={...t},i=Xe(o);if(i&&i.clamp){let a=i.clamp;a.freq&&H(e,"freq",a.freq[0],a.freq[1]),a.gain&&H(e,"gain",a.gain[0],a.gain[1]),a.octaves&&H(e,"octaves",a.octaves[0],a.octaves[1]),a.threshold&&H(e,"threshold",a.threshold[0],a.threshold[1]),a.warpAmp&&H(e,"warpAmp",a.warpAmp[0],a.warpAmp[1]),a.gaborRadius&&H(e,"gaborRadius",a.gaborRadius[0],a.gaborRadius[1]),a.edgeK&&H(e,"edgeK",a.edgeK[0],a.edgeK[1])}if(i&&i.force)for(let[a,n]of Object.entries(i.force))e[a]=n;let r=J.get(o);if(r)for(let[a,n]of Object.entries(r))typeof n=="number"&&Number.isFinite(n)&&(e[a]=n);return e}function ge(){let o=(a,n)=>{let l=document.getElementById(a);if(!l)return n;let s=Number(l.value);return Number.isFinite(s)?s:n},t=(a,n)=>{let l=o(a,n);return Number.isFinite(l)?Math.max(0,Math.floor(l)):n},e=Math.max(1,Math.floor(o("noise-seed",1234567892))),i=document.getElementById("noise-turbulence"),r=i&&i.checked?1:0;return{seed:e,zoom:o("noise-zoom",1),freq:o("noise-freq",1),octaves:Math.max(1,Math.floor(o("noise-octaves",8))),lacunarity:o("noise-lacunarity",2),gain:o("noise-gain",.5),xShift:o("noise-xShift",0),yShift:o("noise-yShift",0),zShift:o("noise-zShift",0),turbulence:r,seedAngle:o("noise-seedAngle",0),exp1:o("noise-exp1",1),exp2:o("noise-exp2",0),threshold:o("noise-threshold",.1),rippleFreq:o("noise-rippleFreq",10),time:o("noise-time",0),warpAmp:o("noise-warpAmp",.5),gaborRadius:o("noise-gaborRadius",4),terraceStep:o("noise-terraceStep",8),toroidal:0,voroMode:t("noise-voroMode",0),edgeK:o("noise-edgeK",0)}}function He(){let o=document.querySelectorAll('input[type="checkbox"][name="noise-type"]'),t=[];return o.forEach(e=>{if(e.checked){let i=Number(e.dataset.bit);Number.isInteger(i)&&t.push(i)}}),t}function Q(){let o=document.getElementById("z-slice"),t=document.getElementById("z-slice-num"),e=0;return o?e=Number(o.value):t&&(e=Number(t.value)),Number.isFinite(e)||(e=0),e=Math.min(Math.max(Math.round(e),0),E-1),o&&String(o.value)!==String(e)&&(o.value=String(e)),t&&String(t.value)!==String(e)&&(t.value=String(e)),e}function oe(o,t=null,e=null,i="contain"){o.style.display="block",o.style.margin="0",o.style.padding="0",o.style.border="0",o.style.outline="0",o.style.background="transparent",o.style.width=t!=null?`${t}px`:"100%",o.style.height=e!=null?`${e}px`:"100%",o.style.objectFit=i,o.style.objectPosition="center",o.style.imageRendering="crisp-edges",o.style.imageRendering="pixelated"}function he(o,t,e,i,r=null,a=null){let n=Math.max(1,e|0),l=Math.max(1,i|0);oe(t,r,a);let s=!1;return(t.width!==n||t.height!==l)&&(t.width=n,t.height=l,s=!0),o&&typeof o.configureCanvas=="function"&&s&&o.configureCanvas(t),s}function Ze(o){o.style.display="grid",o.style.width="100%",o.style.height="100%",o.style.aspectRatio="1 / 1",o.style.gridTemplateColumns="repeat(3, 1fr)",o.style.gridTemplateRows="repeat(3, 1fr)",o.style.gap="0",o.style.padding="0",o.style.margin="0",o.style.border="0",o.style.lineHeight="0",o.style.fontSize="0",o.style.alignItems="stretch",o.style.justifyItems="stretch",o.style.alignContent="stretch",o.style.justifyContent="stretch",o.style.overflow="hidden",o.style.background="#000"}function Ke(){let o=document.getElementById("noise-canvas"),t=document.getElementById("view-stack");if(!o&&t&&(o=document.createElement("canvas"),o.id="noise-canvas",o.width=800,o.height=800,t.appendChild(o)),!o)throw new Error("Missing main preview canvas (#noise-canvas)");oe(o,null,null,"contain");let e=document.getElementById("mosaic");if(!e)throw new Error("Missing #mosaic container");let i=9,r=Array.from(e.querySelectorAll("canvas"));if(r.length!==i){e.innerHTML="",r=[];for(let a=0;a<i;a++){let n=document.createElement("canvas");n.width=E,n.height=E,oe(n,null,null,"fill"),e.appendChild(n),r.push(n)}}else r.forEach(a=>oe(a,null,null,"fill"));return Ze(e),{mainCanvas:o,mosaicCanvases:r}}function Be(o){return o.length?o.map(e=>ee[e]||String(e)).join(", "):ee[0]||"Perlin"}function Pe(o){let t=document.getElementById(o);if(!t)throw new Error(`Missing #${o}`);return t}function je(){let o=Pe("noise-type-list");o.innerHTML="";let t=Oe();for(let e of t){let i=document.createElement("label"),r=document.createElement("input");r.type="checkbox",r.name="noise-type",r.dataset.bit=String(e),e===0&&(r.checked=!0),i.appendChild(r),i.appendChild(document.createTextNode(" "+(ee[e]||String(e)))),o.appendChild(i)}}function $e(o){return(Array.isArray(o)?o:[]).filter(e=>typeof e=="string"&&/4D/.test(e)&&e!=="clearTexture").slice()}function Qe(o){let t=Pe("toroidal-type-list");t.innerHTML="";let e=$e(o),i=new Set(["computePerlin4D","computeWorley4D"]),r=!1;for(let a of e){let n=document.createElement("label"),l=document.createElement("input");l.type="checkbox",l.name="toroidal-type",l.dataset.entry=a;let s=G.indexOf(a);Number.isInteger(s)&&s>=0&&(l.dataset.bit=String(s)),i.has(a)&&(l.checked=!0,r=!0),n.appendChild(l),n.appendChild(document.createTextNode(" "+Z(a))),t.appendChild(n)}if(!r&&e.length){let a=t.querySelector('input[type="checkbox"][name="toroidal-type"]');a&&(a.checked=!0)}}function $(){let o=document.querySelectorAll('input[type="checkbox"][name="toroidal-type"]'),t=[];if(o.forEach(e=>{if(!e.checked)return;let i=String(e.dataset.entry||"");if(!i)return;let r=Number(e.dataset.bit);Number.isInteger(r)||(r=G.indexOf(i)),Number.isInteger(r)||(r=-1),t.push({bit:r,entry:i})}),!t.length){let e=["computePerlin4D","computeWorley4D"];for(let i of e){if(!G.includes(i))continue;let r=G.indexOf(i);t.push({bit:r,entry:i})}}return t}function ce(o){let t=document.getElementById("mosaic-caption");if(!t)return;let e=Array.isArray(o)?o:[],i=e.length?e.map(r=>Z(r)).join(" + "):"None";t.textContent=`A single toroidal Z slice from a 4D volume. Modes: ${i}. Repeated in X and Y. Use the Z slice control to see different slices.`}function Je(){let o=document.getElementById("override-mode");if(!o)return;o.innerHTML="";let t=Ye();for(let e of t){let i=G[e],r=document.createElement("option");r.value=String(e),r.textContent=`${e}: ${Z(i)}`,o.appendChild(r)}t.length&&(o.value=String(t[0]))}function pe(o){let t=J.get(o)||{},e=(r,a)=>{let n=document.getElementById(r);if(!n)return;let l=t[a];n.value=typeof l=="number"&&Number.isFinite(l)?String(l):""},i=(r,a)=>{let n=document.getElementById(r);if(!n)return;let l=t[a];n.value=typeof l=="number"&&Number.isFinite(l)?String(l):""};e("ov-zoom","zoom"),e("ov-freq","freq"),e("ov-lacunarity","lacunarity"),e("ov-gain","gain"),e("ov-octaves","octaves"),i("ov-turbulence","turbulence"),e("ov-seedAngle","seedAngle"),e("ov-exp1","exp1"),e("ov-exp2","exp2"),e("ov-rippleFreq","rippleFreq"),e("ov-time","time"),e("ov-warp","warpAmp"),e("ov-threshold","threshold"),i("ov-voroMode","voroMode"),e("ov-edgeK","edgeK"),e("ov-gabor","gaborRadius"),e("ov-terraceStep","terraceStep"),e("ov-xShift","xShift"),e("ov-yShift","yShift"),e("ov-zShift","zShift")}function ue(){let o=document.getElementById("override-mode");if(!o)return;let t=Number(o.value);if(!Number.isInteger(t))return;let e=C=>{let N=document.getElementById(C);if(!N)return null;let q=String(N.value).trim();if(!q)return null;let B=Number(q);return Number.isFinite(B)?B:null},i=C=>{let N=document.getElementById(C);if(!N)return null;let q=String(N.value).trim();if(!q)return null;let B=Number(q);return Number.isFinite(B)?B:null},r={},a=e("ov-zoom"),n=e("ov-freq"),l=e("ov-lacunarity"),s=e("ov-gain"),f=e("ov-octaves"),u=i("ov-turbulence"),p=e("ov-seedAngle"),d=e("ov-exp1"),h=e("ov-exp2"),c=e("ov-rippleFreq"),g=e("ov-time"),x=e("ov-warp"),y=e("ov-threshold"),b=i("ov-voroMode"),z=e("ov-edgeK"),_=e("ov-gabor"),D=e("ov-terraceStep"),w=e("ov-xShift"),M=e("ov-yShift"),k=e("ov-zShift");a!==null&&(r.zoom=a),n!==null&&(r.freq=n),l!==null&&(r.lacunarity=l),s!==null&&(r.gain=s),f!==null&&(r.octaves=f),u!==null&&(r.turbulence=Math.max(0,Math.floor(u))),p!==null&&(r.seedAngle=p),d!==null&&(r.exp1=d),h!==null&&(r.exp2=h),c!==null&&(r.rippleFreq=c),g!==null&&(r.time=g),x!==null&&(r.warpAmp=x),y!==null&&(r.threshold=y),b!==null&&(r.voroMode=Math.max(0,Math.floor(b))),z!==null&&(r.edgeK=z),_!==null&&(r.gaborRadius=_),D!==null&&(r.terraceStep=D),w!==null&&(r.xShift=w),M!==null&&(r.yShift=M),k!==null&&(r.zShift=k),Object.keys(r).length?J.set(t,r):J.delete(t)}function de(o){return typeof o=="string"&&/4d/i.test(o)}function et(o,t=800){let e=document.getElementById("res-width"),i=document.getElementById("res-height"),r=(p,d)=>{let h=Number(p);return Number.isFinite(h)?Math.max(1,Math.floor(h)):d|0},a=o?.device?.limits||{},n=a.maxTextureDimension2D??8192,l=a.maxStorageTextureDimension2D??n,s=Math.min(n,l)|0,f=r(e?.value,t),u=r(i?.value,t);return f=Math.min(f,s),u=Math.min(u,s),e&&String(e.value)!==String(f)&&(e.value=String(f)),i&&String(i.value)!==String(u)&&(i.value=String(u)),{w:f,h:u}}function tt(o,t,e,i){let a=Math.min(e,2048),n=Math.min(i,2048);he(o,t,a,n)}function te(o){let t=document.getElementById("preview-meta");t&&(t.textContent=o)}function j(o){let t=document.getElementById("preview-stats");t&&(t.textContent=o)}function Ce(){let o=(t,e=0)=>{let i=document.getElementById(t);if(!i)return e;let r=Number(i.value);return Number.isFinite(r)?r:e};return{x:o("res-offsetX",0),y:o("res-offsetY",0),z:o("res-offsetZ",0)}}function xe(o){if(!o)return"";let t=Number(o.x)||0,e=Number(o.y)||0,i=Number(o.z)||0,r=1e-9;if(Math.abs(t)<r&&Math.abs(e)<r&&Math.abs(i)<r)return"";let a=n=>Math.abs(n)>=1?n.toFixed(2):n.toFixed(6);return` \xB7 tile offset ${a(t)},${a(e)},${a(i)}`}function it(o){if(!o)return;let t=o.resW|0,e=o.resH|0,i=Array.isArray(o.noiseBits)?o.noiseBits:[],a=i.some(s=>de(G[s]))?" \xB7 toroidal(4D)":"",n=Math.max(t,e)|0,l=xe(o.tileOffsets);te(`Height field preview \xB7 ${t}\xD7${e} \xB7 world ${n}\xD7${n} \xB7 modes: ${Be(i)}${a}${l}`),typeof o.computeMs=="number"&&typeof o.blitMs=="number"?j(`GPU compute ${o.computeMs.toFixed(1)} ms \xB7 blit ${o.blitMs.toFixed(1)} ms`):j("")}async function K(o){let t=o?.queue||o?.device?.queue;if(!(!t||typeof t.onSubmittedWorkDone!="function"))try{await t.onSubmittedWorkDone()}catch{}}async function De(o,t,e={}){let i=e.updateUI!==!1,{w:r,h:a}=et(o,800),n=Ce(),l=Math.max(r,a)|0;tt(o,t,r,a);let s=ge();o.buildPermTable(s.seed|0);let f=He(),u=f.length?f:[0],p={getGradient:0,outputChannel:1,baseRadius:0,heightScale:1,useCustomPos:0,squareWorld:!0,worldMode:"crop"},d={offsetX:Number(n.x)||0,offsetY:Number(n.y)||0,offsetZ:Number(n.z)||0};await K(o);let h=performance.now();await o.computeToTexture(r,a,s,{...p,...d,noiseChoices:["clearTexture"]});for(let _ of u){let D=G[_],w=Me(_,s);w.toroidal=de(D)?1:0,await o.computeToTexture(r,a,w,{...p,...d,noiseChoices:[_]})}await K(o);let c=performance.now(),g=o.getCurrentView();await K(o);let x=performance.now();g&&o.renderTextureToCanvas(g,t,{layer:0,channel:0,preserveCanvasSize:!0,clear:!0}),await K(o);let y=performance.now(),b=c-h,z=y-x;if(i){let D=u.some(M=>de(G[M]))?" \xB7 toroidal(4D)":"",w=xe(n);te(`Height field preview \xB7 ${r}\xD7${a} \xB7 world ${l}\xD7${l} \xB7 modes: ${Be(u)}${D}${w}`),j(`GPU compute ${b.toFixed(1)} ms \xB7 blit ${z.toFixed(1)} ms`)}return{resW:r,resH:a,noiseBits:u,computeMs:b,blitMs:z,tileOffsets:n}}async function Se(o,t,e,i={}){let r=i.draw!==!1,a=i.updateUI!==!1,n=ge();o.buildPermTable(n.seed|0);let l=Ce(),s={...n,toroidal:1},f=$();ce(f.map(c=>c.entry)),await K(o);let u=performance.now(),p=await o.computeToTexture3D(E,E,E,s,{noiseChoices:["clearTexture"],outputChannel:1,id:_e});for(let c of f){let g=c.bit,x=c.entry,y=Number.isInteger(g)&&g>=0?Me(g,s):{...s};y.toroidal=1,p=await o.computeToTexture3D(E,E,E,y,{noiseChoices:[x],outputChannel:1,id:_e})}await K(o);let d=performance.now();e.lastToroidalVolumeView=p,e.lastToroidalComputeMs=d-u;let h=0;if(r&&(h=me(o,p,t)),a){let c=f.length?f.map(b=>Z(b.entry)).join(" + "):"None",g=xe(l);te(`Toroidal tiles \xB7 ${E}\xB3 \xB7 modes: ${c} \xB7 Z slice: ${Q()}${g}`);let x=e.lastToroidalComputeMs.toFixed(1),y=h.toFixed(1);j(r?`GPU volume compute ${x} ms \xB7 slice blit ${y} ms`:`GPU volume compute ${x} ms`)}return{computeMs:e.lastToroidalComputeMs,sliceBlitMs:h}}function me(o,t,e,i={}){if(!t)return 0;let r=E,n=(Q()+.5)/r,l=Array.isArray(e)?e:[],s=l.length||9,f=performance.now();for(let p=0;p<s;p++){let d=l[p];d&&(he(o,d,E,E),o.renderTexture3DSliceToCanvas(t,d,{depth:r,zNorm:n,channel:0,chunk:0,preserveCanvasSize:!0,clear:!0}))}return performance.now()-f}function O(){let o=document.getElementById("view-tab-tileset");return o&&o.checked?"tileset":"main"}async function rt(){let o=document.getElementById("preview-stats");if(!navigator.gpu){console.error("WebGPU not available in this browser."),o&&(o.textContent="WebGPU not available in this browser.");return}let t=await navigator.gpu.requestAdapter();if(!t){console.error("Failed to get GPU adapter."),o&&(o.textContent="Failed to get GPU adapter.");return}let e=await t.requestDevice({requiredLimits:{maxBufferSize:t.limits.maxBufferSize}}),i=new ae(e,e.queue);G=Array.isArray(i.entryPoints)?i.entryPoints.slice():[],ee=Ue(G,Ve),je(),Qe(G),Je();let{mainCanvas:r,mosaicCanvases:a}=Ke();i.configureCanvas(r),a.forEach(m=>i.configureCanvas(m));let n=document.getElementById("override-mode");if(n){let m=Number(n.value);Number.isInteger(m)&&pe(m)}let l={lastToroidalVolumeView:null,lastToroidalComputeMs:0,lastMainInfo:null},s={main:!0,tileset:!0},f=!1,u=!1,p=()=>{u=!0,!f&&(f=!0,requestAnimationFrame(async()=>{u=!1;let m=O();try{if(m==="main")s.main?(s.main=!1,l.lastMainInfo=await De(i,r,{updateUI:!0})):it(l.lastMainInfo);else if(s.tileset||!l.lastToroidalVolumeView)s.tileset=!1,await Se(i,a,l,{draw:!0,updateUI:!0});else{let v=me(i,l.lastToroidalVolumeView,a),S=$(),R=S.length?S.map(Y=>Z(Y.entry)).join(" + "):"None";te(`Toroidal tiles \xB7 ${E}\xB3 \xB7 modes: ${R} \xB7 Z slice: ${Q()}`),j(`GPU volume compute ${l.lastToroidalComputeMs.toFixed(1)} ms \xB7 slice blit ${v.toFixed(1)} ms`)}}catch(v){console.error(v),o&&(o.textContent=String(v))}f=!1,u&&p()}))},d=(m=!0)=>{s.main=!0,m&&O()==="main"&&p()},h=(m=!0)=>{s.tileset=!0,m&&O()==="tileset"&&p()},c=()=>{s.main=!0,s.tileset=!0,p()};["ov-zoom","ov-freq","ov-lacunarity","ov-gain","ov-octaves","ov-turbulence","ov-seedAngle","ov-exp1","ov-exp2","ov-rippleFreq","ov-time","ov-warp","ov-threshold","ov-voroMode","ov-edgeK","ov-gabor","ov-terraceStep","ov-xShift","ov-yShift","ov-zShift"].forEach(m=>{let v=document.getElementById(m);v&&v.addEventListener("change",()=>{ue(),c()})}),n&&n.addEventListener("change",()=>{let m=Number(n.value);Number.isInteger(m)&&pe(m)});let x=document.getElementById("ov-clear");x&&x.addEventListener("click",()=>{let m=document.getElementById("override-mode");if(!m)return;let v=Number(m.value);Number.isInteger(v)&&(J.delete(v),pe(v),c())});let y=document.getElementById("render-btn");y&&y.addEventListener("click",()=>{O()==="main"?d(!0):h(!0)});let b=document.getElementById("apply-res");b&&b.addEventListener("click",()=>{c()}),["res-offsetX","res-offsetY","res-offsetZ"].forEach(m=>{let v=document.getElementById(m);v&&(v.addEventListener("input",()=>{s.main=!0,s.tileset=!0,p()}),v.addEventListener("change",()=>{s.main=!0,s.tileset=!0,p()}))}),["noise-seed","noise-zoom","noise-freq","noise-octaves","noise-lacunarity","noise-gain","noise-xShift","noise-yShift","noise-zShift","noise-voroMode","noise-threshold","noise-edgeK","noise-seedAngle","noise-turbulence","noise-time","noise-warpAmp","noise-gaborRadius","noise-terraceStep","noise-exp1","noise-exp2","noise-rippleFreq"].forEach(m=>{let v=document.getElementById(m);v&&(v.addEventListener("input",()=>{s.main=!0,s.tileset=!0,p()}),v.addEventListener("change",()=>{s.main=!0,s.tileset=!0,p()}))});let _=document.getElementById("noise-type-list");_&&_.addEventListener("change",m=>{let v=m.target;!v||v.name!=="noise-type"||d(!0)});let D=document.getElementById("toroidal-type-list");D&&D.addEventListener("change",m=>{let v=m.target;!v||v.name!=="toroidal-type"||(ce($().map(S=>S.entry)),h(!0))});let w=document.getElementById("z-slice"),M=document.getElementById("z-slice-num"),k=()=>{if(O()!=="tileset"||!l.lastToroidalVolumeView)return;let m=me(i,l.lastToroidalVolumeView,a);te(`Toroidal tiles \xB7 ${E}\xB3 \xB7 Z slice: ${Q()}`),j(`GPU volume compute ${l.lastToroidalComputeMs.toFixed(1)} ms \xB7 slice blit ${m.toFixed(1)} ms`)},C=(m,v=!0)=>{let S=Number(m);Number.isFinite(S)||(S=0),S=Math.round(S);let R=E|0;S=(S%R+R)%R,w&&String(w.value)!==String(S)&&(w.value=String(S)),M&&String(M.value)!==String(S)&&(M.value=String(S)),v&&k()};w&&(w.addEventListener("input",()=>{C(Number(w.value),!0)}),w.addEventListener("keydown",m=>{if(m.key!=="ArrowLeft"&&m.key!=="ArrowRight")return;m.preventDefault();let v=Number(w.step),S=Number.isFinite(v)&&v>0?Math.round(v):1,R=Number(w.value),Y=Number.isFinite(R)?Math.round(R):0,X=m.key==="ArrowLeft"?Y-S:Y+S;C(X,!0)})),M&&(M.addEventListener("change",()=>{C(Number(M.value),!0)}),M.addEventListener("keydown",m=>{if(m.key!=="ArrowDown"&&m.key!=="ArrowUp")return;m.preventDefault();let v=Number(M.value),S=Number.isFinite(v)?Math.round(v):0,R=m.key==="ArrowDown"?S-1:S+1;C(R,!0)}));let N=document.getElementById("view-tab-preview"),q=document.getElementById("view-tab-tileset");N&&N.addEventListener("change",()=>{p()}),q&&q.addEventListener("change",()=>{p()});function B(m,v){let S=URL.createObjectURL(m),R=document.createElement("a");R.href=S,R.download=v,document.body.appendChild(R),R.click(),R.remove(),URL.revokeObjectURL(S)}function F(m){return String(m||"").trim().replace(/\s+/g,"_").replace(/[^a-zA-Z0-9._-]+/g,"").slice(0,120)}function L(){let m=document.querySelector('input[type="radio"][name="export-bg"]:checked'),v=String(m?.value||"transparent");return v==="black"||v==="white"||v==="transparent"?v:"transparent"}function V(m){let v=L();return m&&typeof m.setExportBackground=="function"&&m.setExportBackground(v),v}function U(m){V(m),document.querySelectorAll('input[type="radio"][name="export-bg"]').forEach(S=>{S.addEventListener("change",()=>{V(m)})})}async function W(){ue(),await Se(i,a,l,{draw:O()==="tileset",updateUI:O()==="tileset"})}let A=document.getElementById("download-main");A&&A.addEventListener("click",async()=>{try{ue();let m=V(i),v=Number(document.getElementById("res-width")?.value)||800,S=Number(document.getElementById("res-height")?.value)||800;he(i,r,v,S),await De(i,r,{updateUI:O()==="main"});let R=await i.exportCurrent2DToPNGBlob(v,S,{layer:0,channel:0,background:m});B(R,"noise-main.png")}catch(m){console.error("download-main failed:",m),o&&(o.textContent="Export main PNG failed: "+m)}});let T=document.getElementById("download-tile");T&&T.addEventListener("click",async()=>{try{let m=V(i);if(await W(),!l.lastToroidalVolumeView){console.warn("No toroidal volume available for export");return}let v=E,S=E,R=E,X=(Q()+.5)/R,ie=await i.export3DSliceToPNGBlob(l.lastToroidalVolumeView,v,S,{depth:R,zNorm:X,channel:0,chunk:0,background:m});B(ie,"noise-tile.png")}catch(m){console.error("download-tile failed:",m),o&&(o.textContent="Export tile PNG failed: "+m)}});async function P(m,v){if(!v)return;let S=V(m);if(await W(),!v.lastToroidalVolumeView){console.warn("No toroidal volume available for tileset export");return}let R=ge(),Y=$().map(qe=>qe.entry),X=16,ie=E,ve=E,re=E,ye=Math.ceil(re/X),Ae=await m.export3DTilesetToPNGBlob(v.lastToroidalVolumeView,ie,ve,{depth:re,channel:0,chunk:0,tilesAcross:X,tilesDown:ye,startSlice:0,sliceCount:re,background:S}),Te=F(Y.map(Z).join("+"))||"tileset",Ne=F(R.seed),ke=`noise-tileset_${Te}_seed${Ne}_${ie}x${ve}_z${re}_${X}x${ye}.png`;B(Ae,ke)}let I=document.getElementById("download-tileset");I&&I.addEventListener("click",async()=>{try{await P(i,l)}catch(m){console.error("download-tileset failed:",m),o&&(o.textContent="Export tileset failed: "+m)}}),U(i),ce($().map(m=>m.entry)),p()}document.addEventListener("DOMContentLoaded",()=>{rt().catch(o=>console.error(o))});})();

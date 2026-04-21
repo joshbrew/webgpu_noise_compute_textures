@@ -211,7 +211,7 @@ function readGlobalParamsFromUI() {
     return Math.max(0, Math.floor(n));
   };
 
-  const seed = Math.max(1, Math.floor(getNum("noise-seed", 1234567890)));
+  const seed = Math.max(1, Math.floor(getNum("noise-seed", 1234567892)));
   const turbEl = document.getElementById("noise-turbulence");
   const turbulence = turbEl && turbEl.checked ? 1 : 0;
 
