@@ -17,7 +17,7 @@ This repo has two main parts:
 The helper aims to:
 
 - Compose many noise modes into a single height field using GPU compute
-- Generate toroidal 3D volumes from 4D noise kernels
+- Generate tileable (toroidal) 3D volumes from 4D noise kernels, they repeat in 3 directions!
 - Visualize 2D array textures and 3D slices in WebGPU canvases
 - Reuse GPU resources where possible and dispose them explicitly when you are done
 
