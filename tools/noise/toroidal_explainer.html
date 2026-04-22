@@ -1,0 +1,1502 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Torus ↔ Flat map — vertex-sampled or fixed-res (Perlin4D / Worley4D)</title>
+  <style>
+    /* full-viewport dark theme */
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: #0b0f14;
+      color: #e6e6e6;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+
+    #c {
+      width: 100vw;
+      height: 100vh;
+      display: block
+    }
+
+    /* UI panel */
+    #ui {
+      position: fixed;
+      left: 12px;
+      top: 10px;
+      z-index: 50;
+      background: rgba(0, 0, 0, 0.72);
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.35;
+      min-width: 520px;
+      max-width: 46vw;
+      overflow: auto;
+      max-height: 92vh;
+      transition: width .18s ease
+    }
+
+    #ui.collapsed {
+      min-width: 36px;
+      width: 36px;
+      max-width: 36px;
+      padding: 8px;
+      overflow: visible
+    }
+
+    #uiHeader {
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    #collapseBtn {
+      margin-left: auto;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: #0f1720;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      cursor: pointer
+    }
+
+    #uiContent {
+      margin-top: 8px
+    }
+
+    /* basic layout helpers */
+    .row {
+      margin: 6px 0
+    }
+
+    .lbl {
+      display: inline-block;
+      width: 190px;
+      opacity: .9
+    }
+
+    input[type=range] {
+      width: 180px
+    }
+
+    select,
+    input,
+    button {
+      vertical-align: middle
+    }
+
+    .legend {
+      margin-top: 8px;
+      opacity: .85
+    }
+
+    /* legend swatches */
+    .sw {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 6px;
+      vertical-align: -2px
+    }
+
+    .u {
+      background: #ff6060
+    }
+
+    .v {
+      background: #60a0ff
+    }
+
+    label.inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    hr {
+      border-color: rgba(255, 255, 255, 0.06);
+      margin: 8px 0
+    }
+
+    /* button look */
+    button {
+      padding: 5px 9px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: #1a2330;
+      color: #e6e6e6;
+      cursor: pointer
+    }
+
+    button:active {
+      transform: translateY(1px)
+    }
+
+    .small {
+      font-size: 12px;
+      opacity: 0.85
+    }
+
+    /* debug canvas container */
+    #debugWrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px
+    }
+
+    #debugLabel {
+      font-size: 12px;
+      opacity: .85
+    }
+
+    #debugCanvas {
+      width: 192px;
+      height: 192px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: #0b0f14
+    }
+  </style>
+</head>
+
+<body>
+  <div id="ui">
+    <div id="uiHeader">
+      <div style="font-weight:600">Torus ↔ Flat map</div>
+      <button id="collapseBtn">◀</button>
+    </div>
+
+    <div id="uiContent">
+      <!-- mode selection -->
+      <div class="row"><span class="lbl">Mode</span>
+        <select id="mode">
+          <option value="std">Standard torus (R³)</option>
+          <option value="clifford">Clifford torus (stereo)</option>
+        </select>
+      </div>
+
+      <!-- mapping toggles -->
+      <div class="row"><span class="lbl">Equal arclength (std)</span><input id="eqArc" type="checkbox"></div>
+      <div class="row"><span class="lbl">Spiral / Shear mapping</span><input id="spiral" type="checkbox"></div>
+      <div class="row"><span class="lbl">Twist (turns)</span><input id="twist" type="range" min="-4" max="4" step="0.25"
+          value="1"><span id="twistv" style="margin-left:8px">1.00</span></div>
+
+      <!-- torus radii -->
+      <div class="row"><span class="lbl">Major R</span><input id="R" type="range" min="0" max="2.5" step="0.01"
+          value="1.00"><span id="Rval" style="margin-left:8px">1.00</span></div>
+      <div class="row"><span class="lbl">Minor r</span><input id="r" type="range" min="0.0" max="2.5" step="0.01"
+          value="0.50"><span id="rval" style="margin-left:8px">0.50</span></div>
+
+      <!-- base segment counts -->
+      <div class="row"><span class="lbl">U segs (base)</span><input id="su" type="range" min="8" max="256" step="1"
+          value="96"><span id="suval" style="margin-left:8px">96</span></div>
+      <div class="row"><span class="lbl">V segs</span><input id="sv" type="range" min="8" max="256" step="1"
+          value="96"><span id="svval" style="margin-left:8px">96</span></div>
+
+      <!-- adaptive U per V-row -->
+      <div class="row"><span class="lbl">Adaptive U per-row (mapper)</span><input id="adaptiveNu" type="checkbox"></div>
+      <div class="row small"><span class="lbl">Adaptive Nu range</span><span id="nuRange"
+          style="margin-left:8px">—</span></div>
+
+      <hr>
+
+      <!-- overlays -->
+      <div class="row"><label class="inline"><input id="showOverlay" type="checkbox" checked> Show torus overlay</label>
+      </div>
+      <div class="row"><label class="inline"><input id="showPlaneOverlay" type="checkbox" checked> Show flat map
+          overlay</label></div>
+
+      <!-- coloring controls -->
+      <div style="margin-top:8px;font-size:12px;opacity:.9">Coloring controls (applied to both surfaces):</div>
+      <div class="row"><span class="lbl">Symmetry axis</span>
+        <select id="symAxis">
+          <option value="none">none</option>
+          <option value="u">u (around hole)</option>
+          <option value="v">v (tube)</option>
+        </select>
+      </div>
+      <div class="row"><span class="lbl">Symmetry count</span><input id="symCount" type="range" min="1" max="8" step="1"
+          value="4"><span id="symCountV" style="margin-left:8px">4</span></div>
+      <div class="row"><span class="lbl">Symmetry strength</span><input id="symStrength" type="range" min="0" max="1"
+          step="0.01" value="0.6"><span id="symStrengthV" style="margin-left:8px">0.60</span></div>
+
+      <hr>
+
+      <!-- flat rectangle mapping preview -->
+      <div style="font-size:13px;margin-bottom:6px">Flat rectangle (maps → torus perimeter)</div>
+      <div class="row"><span class="lbl">Rect U center</span><input id="rectU" type="range" min="0" max="1" step="0.001"
+          value="0.5"><span id="rectUv" style="margin-left:8px">0.50</span></div>
+      <div class="row"><span class="lbl">Rect V center</span><input id="rectV" type="range" min="0" max="1" step="0.001"
+          value="0.5"><span id="rectVv" style="margin-left:8px">0.50</span></div>
+      <div class="row"><span class="lbl">Rect U size</span><input id="rectUsz" type="range" min="0.01" max="1"
+          step="0.001" value="0.2"><span id="rectUszv" style="margin-left:8px">0.20</span></div>
+      <div class="row"><span class="lbl">Rect V size</span><input id="rectVsz" type="range" min="0.01" max="1"
+          step="0.001" value="0.2"><span id="rectVszv" style="margin-left:8px">0.20</span></div>
+      <div class="row"><label class="inline"><input id="drawMappedRect" type="checkbox" checked> Draw mapped rectangle
+          perimeter</label></div>
+
+      <hr>
+
+      <!-- section helpers -->
+      <div style="font-size:13px;margin-bottom:6px">Section helpers (around u = θ)</div>
+      <div class="row"><span class="lbl">θ (U around hole)</span><input id="theta" type="range" min="0" max="1"
+          step="0.001" value="0.18"><span id="thetav" style="margin-left:8px">0.18</span></div>
+      <div class="row"><span class="lbl">Size (multiplier of tube radius)</span><input id="size" type="range" min="0.01"
+          max="2.0" step="0.01" value="1.00"><span id="sizev" style="margin-left:8px">1.00</span></div>
+
+      <div class="row">
+        <label class="inline"><input id="showSpiralArc" type="checkbox" checked> Show spiral arc (follows blue)</label>
+        <label class="inline"><input id="arcCloseSingle" type="checkbox"> Close arc after 1 lap</label>
+      </div>
+      <div class="row"><label class="inline"><input id="showCrossSquare" type="checkbox" checked> Show cross-section
+          square</label></div>
+
+      <hr>
+
+      <!-- texture / noise controls -->
+      <div class="row"><label class="inline"><input id="usePerlin" type="checkbox" checked> Use noise texture</label></div>
+      <div class="row small">
+        <span class="lbl">Noise sampling</span>
+        <select id="noiseType" title="Choose the noise generator">
+          <option value="perlin4d" >Perlin (4D)</option>
+          <option value="worley4d" selected>Worley (4D)</option>
+        </select>
+        <select id="perlinMode" title="How the sampler maps UV to sample coords">
+          <option value="uv_periodic" selected>uv_periodic (tileable)</option>
+          <option value="uv_local">uv_local (tileable + local U scale)</option>
+          <option value="world">world (3D)</option>
+        </select>
+        <button id="randSeed" style="margin-left:8px">Randomize seed</button>
+        <span id="seedLabel" class="small" style="margin-left:8px;opacity:.8"></span>
+      </div>
+
+      <div class="row small">
+        <span class="lbl">Texture resolution</span>
+        <select id="texRes">
+          <option value="512">512²</option>
+          <option value="1024">1024²</option>
+          <option value="2048" selected>2048²</option>
+        </select>
+        <label class="inline"><input id="texMatchNu" type="checkbox" checked> Match UV segs</label>
+        <label class="inline"><input id="texBilerp" type="checkbox"> Bilerp between rows</label>
+      </div>
+
+      <!-- legend & debug -->
+      <div class="legend"><span class="sw u"></span>iso-v (red, vary u) &nbsp;&nbsp;<span class="sw v"></span>iso-u
+        (blue, vary v)</div>
+      <div style="margin-top:8px;opacity:.85">Click either surface to place a marker and see the equivalent point on the
+        other.</div>
+
+      <!-- Debug tiled preview of generated texture -->
+      <div id="debugWrap">
+        <div id="debugLabel">Flat map (2×2 tile):</div>
+        <canvas id="debugCanvas" width="256" height="256"></canvas>
+      </div>
+    </div><!-- uiContent -->
+  </div>
+
+  <!-- main render target -->
+  <canvas id="c"></canvas>
+
+  <script type="module">
+    /* import Three.js + OrbitControls from esm.sh CDN */
+    import * as THREE from 'https://esm.sh/three@0.160.0';
+    import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+    /* ------------------------------
+       Base noise helpers (seed & perm)
+       ------------------------------ */
+    class BaseNoise {
+      constructor(seed = Date.now()) {
+        // normalize tiny seeds
+        if (seed < 1000) seed *= 10000;
+        this.seedN = seed;       // public-facing seed
+        this.seedK = seed;       // working seed (unused here but kept for parity)
+        this.perm = new Uint8Array(512); // 255-wrapped permutation
+        this.seed(seed);
+      }
+      seed(seed) {
+        // shuffle permutation deterministically via xorshift PRNG
+        const random = this.xorshift(seed);
+        for (let i = 0; i < 256; i++) this.perm[i] = i;
+        for (let i = 255; i > 0; i--) {
+          const j = Math.floor(random() * (i + 1));
+          [this.perm[i], this.perm[j]] = [this.perm[j], this.perm[i]];
+        }
+        for (let i = 0; i < 256; i++) this.perm[i + 256] = this.perm[i];
+        this.seedN = seed;
+        this.resetSeed();
+      }
+      setSeed(seed) { this.seed(seed); }
+      resetSeed() { this.seedK = this.seedN; }
+      xorshift(seed) {
+        let x = seed;
+        return function () {
+          x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+          return (x < 0 ? 1 + ~x : x) / 0xFFFFFFFF;
+        };
+      }
+      // 4D dot helper for gradient noise
+      dot4(g, x = 0, y = 0, z = 0, w = 0) { return g[0] * x + g[1] * y + g[2] * z + g[3] * w; }
+    }
+
+    /* ------------------------------
+       Perlin 4D implementation
+       ------------------------------ */
+    class Noise4D extends BaseNoise {
+      constructor(seed = Date.now()) {
+        super(seed);
+        // 32 canonical 4D gradient directions
+        this.grad4 = [
+          [0, 1, 1, 1], [0, 1, 1, -1], [0, 1, -1, 1], [0, 1, -1, -1],
+          [0, -1, 1, 1], [0, -1, 1, -1], [0, -1, -1, 1], [0, -1, -1, -1],
+          [1, 0, 1, 1], [1, 0, 1, -1], [1, 0, -1, 1], [1, 0, -1, -1],
+          [-1, 0, 1, 1], [-1, 0, 1, -1], [-1, 0, -1, 1], [-1, 0, -1, -1],
+          [1, 1, 0, 1], [1, 1, 0, -1], [1, -1, 0, 1], [1, -1, 0, -1],
+          [-1, 1, 0, 1], [-1, 1, 0, -1], [-1, -1, 0, 1], [-1, -1, 0, -1],
+          [1, 1, 1, 0], [1, 1, -1, 0], [1, -1, 1, 0], [1, -1, -1, 0],
+          [-1, 1, 1, 0], [-1, 1, -1, 0], [-1, -1, 1, 0], [-1, -1, -1, 0]
+        ];
+      }
+      // quintic/quartic fade for 4D simplex-ish interpolation
+      fade(t) { return t * t * t * t * (t * (t * (70 - 20 * t) - 84) + 35); }
+      mix(a, b, t) { return (1 - t) * a + t * b; }
+
+      // classic 4D Perlin lattice evaluation
+      noise4(x, y, z, w) {
+        let X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255, W = Math.floor(w) & 255;
+        x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z); w -= Math.floor(w);
+        const u = this.fade(x), v = this.fade(y), t = this.fade(z), s = this.fade(w);
+
+        // hash through permutation table
+        const A = this.perm[X] + Y, B = this.perm[X + 1] + Y;
+        const AA = this.perm[A] + Z, AB = this.perm[A + 1] + Z;
+        const BA = this.perm[B] + Z, BB = this.perm[B + 1] + Z;
+
+        const AAA = this.perm[AA] + W, AAB = this.perm[AA + 1] + W;
+        const ABA = this.perm[AB] + W, ABB = this.perm[AB + 1] + W;
+        const BAA = this.perm[BA] + W, BAB = this.perm[BA + 1] + W;
+        const BBA = this.perm[BB] + W, BBB = this.perm[BB + 1] + W;
+
+        // gradient dot helper
+        const DOT = (idx, X_, Y_, Z_, W_) => this.dot4(this.grad4[idx % 32], X_, Y_, Z_, W_);
+
+        // 16-corner hypercube interpolation split into w-layers
+        const L0 = this.mix(
+          this.mix(
+            this.mix(DOT(this.perm[AAA], x, y, z, w),
+              DOT(this.perm[BAA], x - 1, y, z, w), u),
+            this.mix(DOT(this.perm[ABA], x, y - 1, z, w),
+              DOT(this.perm[BBA], x - 1, y - 1, z, w), u), v),
+          this.mix(
+            this.mix(DOT(this.perm[AAB], x, y, z - 1, w),
+              DOT(this.perm[BAB], x - 1, y, z - 1, w), u),
+            this.mix(DOT(this.perm[ABB], x, y - 1, z - 1, w),
+              DOT(this.perm[BBB], x - 1, y - 1, z - 1, w), u), v),
+          t
+        );
+
+        const L1 = this.mix(
+          this.mix(
+            this.mix(DOT(this.perm[AAA + 1], x, y, z, w - 1),
+              DOT(this.perm[BAA + 1], x - 1, y, z, w - 1), u),
+            this.mix(DOT(this.perm[ABA + 1], x, y - 1, z, w - 1),
+              DOT(this.perm[BBA + 1], x - 1, y - 1, z, w - 1), u), v),
+          this.mix(
+            this.mix(DOT(this.perm[AAB + 1], x, y, z - 1, w - 1),
+              DOT(this.perm[BAB + 1], x - 1, y, z - 1, w - 1), u),
+            this.mix(DOT(this.perm[ABB + 1], x, y - 1, z - 1, w - 1),
+              DOT(this.perm[BBB + 1], x - 1, y - 1, z - 1, w - 1), u), v),
+          t
+        );
+
+        return this.mix(L0, L1, s);
+      }
+    }
+
+    class PerlinNoise4D extends Noise4D {
+      constructor(seed = Date.now()) { super(seed); }
+      // fractal brownian motion (fBM) wrapper
+      generateNoise4D(x, y, z, w = 0, zoom = 1.0, baseFreq = 1.0, octaves = 4, lacunarity = 2.0, gain = 0.5, turbulence = false) {
+        x /= zoom; y /= zoom; z /= zoom; w /= zoom;
+        let sum = 0, amp = 1, freq = baseFreq;
+        for (let i = 0; i < octaves; i++) {
+          let v = this.noise4(x * freq, y * freq, z * freq, w * freq) * amp;
+          if (turbulence) v = Math.abs(v);
+          sum += v;
+          freq *= lacunarity; amp *= gain;
+        }
+        if (turbulence) sum -= 1;
+        return sum;
+      }
+    }
+
+    /* Worley 4D (cellular) */
+    class WorleyNoise4D extends BaseNoise {
+      constructor(seed = Date.now()) { super(seed); }
+      // hashed pseudo-random per integer grid cell in 4D
+      random4(x, y, z, w) {
+        const A = this.perm[(x & 255) + this.perm[(y & 255)] & 255];
+        const B = this.perm[(z & 255) + this.perm[(w & 255)] & 255];
+        const idx = (A + B) & 255;
+        return this.perm[idx] / 255;
+      }
+      // F1-like distance to nearest feature point in 4D
+      noise4(x, y, z, w) {
+        let minDist = Infinity;
+        const fx = Math.floor(x), fy = Math.floor(y), fz = Math.floor(z), fw = Math.floor(w);
+        for (let i = -1; i <= 1; i++) {
+          for (let j = -1; j <= 1; j++) {
+            for (let k = -1; k <= 1; k++) {
+              for (let l = -1; l <= 1; l++) {
+                const xi = fx + i, yi = fy + j, zi = fz + k, wi = fw + l;
+                // random offset inside each cell (4D jitter)
+                const rx = this.random4(xi, yi, zi, wi);
+                const ry = this.random4(yi, zi, wi, xi);
+                const rz = this.random4(zi, wi, xi, yi);
+                const rw = this.random4(wi, xi, yi, zi);
+                // feature point
+                const px = xi + rx, py = yi + ry, pz = zi + rz, pw = wi + rw;
+                // squared distance in 4D
+                const dx = px - x, dy = py - y, dz = pz - z, dw = pw - w;
+                const distSq = dx * dx + dy * dy + dz * dz + dw * dw;
+                if (distSq < minDist) minDist = distSq;
+              }
+            }
+          }
+        }
+        return Math.sqrt(minDist);
+      }
+    }
+    class Worley4D extends WorleyNoise4D {
+      constructor(seed = Date.now()) { super(seed); }
+      // simple octave accumulation
+      generateNoise4D(x, y, z, w = 0, zoom = 1.0, baseFreq = 1.0, octaves = 3, lacunarity = 2.0, gain = 0.5, turbulence = false) {
+        x /= zoom; y /= zoom; z /= zoom; w /= zoom;
+        let sum = 0, amp = 1, freq = baseFreq;
+        for (let i = 0; i < octaves; i++) {
+          let v = this.noise4(x * freq, y * freq, z * freq, w * freq) * amp;
+          if (turbulence) v = Math.abs(v);
+          sum += v;
+          freq *= lacunarity; amp *= gain;
+        }
+        if (turbulence) sum -= 1;
+        return 1-sum;
+      }
+    }
+
+    /* =========================================================================
+       Three.js scene scaffolding
+       ========================================================================= */
+    const canvas = document.getElementById('c');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setClearColor(0x0b0f14, 1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+    camera.position.set(0, 1.4, 6);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1.5, 2.0, 1.0); scene.add(dir);
+
+    // separate groups so we can offset torus and plane side-by-side
+    const torusGroup = new THREE.Group();
+    const planeGroup = new THREE.Group();
+    scene.add(torusGroup, planeGroup);
+
+    /* =========================================================================
+       Materials + UI refs
+       ========================================================================= */
+    const matU = new THREE.LineBasicMaterial({ color: 0xff6060, transparent: true, opacity: 0.95 });
+    const matV = new THREE.LineBasicMaterial({ color: 0x60a0ff, transparent: true, opacity: 0.95 });
+    const planeFillMat = new THREE.MeshBasicMaterial({ color: 0x2a8f66, side: THREE.DoubleSide, transparent: true, opacity: 0.25 });
+
+    const mapRectMat = new THREE.LineBasicMaterial({ color: 0x00ddff });
+    const mappedTorMat = new THREE.LineBasicMaterial({ color: 0x00ff88 });
+    const arcMat = new THREE.LineBasicMaterial({ color: 0x33ff66 });
+    const planeArcMat = new THREE.LineBasicMaterial({ color: 0x33ff66 });
+    const squareMat = new THREE.LineBasicMaterial({ color: 0x33ff66 });
+
+    /* UI elements */
+    const modeSel = document.getElementById('mode');
+    const eqArc = document.getElementById('eqArc');
+    const spiral = document.getElementById('spiral');
+    const twistEl = document.getElementById('twist');
+    const twistV = document.getElementById('twistv');
+
+    const Rslider = document.getElementById('R');
+    const rslider = document.getElementById('r');
+    const suslider = document.getElementById('su');
+    const svslider = document.getElementById('sv');
+    const Rval = document.getElementById('Rval'), rval = document.getElementById('rval');
+    const suval = document.getElementById('suval'), svval = document.getElementById('svval');
+
+    const adaptiveNu = document.getElementById('adaptiveNu');
+    const nuRangeEl = document.getElementById('nuRange');
+
+    const showOverlay = document.getElementById('showOverlay');
+    const showPlaneOverlay = document.getElementById('showPlaneOverlay');
+    const symAxis = document.getElementById('symAxis');
+    const symCount = document.getElementById('symCount');
+    const symCountV = document.getElementById('symCountV');
+    const symStrength = document.getElementById('symStrength');
+    const symStrengthV = document.getElementById('symStrengthV');
+
+    const rectU = document.getElementById('rectU'), rectUv = document.getElementById('rectUv');
+    const rectV = document.getElementById('rectV'), rectVv = document.getElementById('rectVv');
+    const rectUsz = document.getElementById('rectUsz'), rectUszv = document.getElementById('rectUszv');
+    const rectVsz = document.getElementById('rectVsz'), rectVszv = document.getElementById('rectVszv');
+    const drawMappedRect = document.getElementById('drawMappedRect');
+
+    const thetaEl = document.getElementById('theta'), thetav = document.getElementById('thetav');
+    const sizeEl = document.getElementById('size'), sizev = document.getElementById('sizev');
+
+    const showSpiralArc = document.getElementById('showSpiralArc');
+    const arcCloseSingle = document.getElementById('arcCloseSingle');
+    const showCrossSquare = document.getElementById('showCrossSquare');
+
+    const usePerlin = document.getElementById('usePerlin');
+    const noiseType = document.getElementById('noiseType');
+    const perlinMode = document.getElementById('perlinMode');
+    const randSeedBtn = document.getElementById('randSeed');
+    const seedLabel = document.getElementById('seedLabel');
+
+    const texResSel = document.getElementById('texRes');
+    const texMatchNu = document.getElementById('texMatchNu');
+    const texBilerp = document.getElementById('texBilerp');
+
+    const debugCanvas = document.getElementById('debugCanvas');
+    const debugCtx = debugCanvas.getContext('2d');
+
+    const collapseBtn = document.getElementById('collapseBtn');
+    const ui = document.getElementById('ui');
+    const uiContent = document.getElementById('uiContent');
+
+    const TWO_PI = Math.PI * 2;
+
+    /* =========================================================================
+       Parametric surfaces (std/clifford)
+       ========================================================================= */
+    // standard torus embedding in R³ (note: swap y/z to match desired axes)
+    function stdPos(u, v, Rv, rv) {
+      const cu = Math.cos(u), su = Math.sin(u), cv = Math.cos(v), sv = Math.sin(v);
+      const x = (Rv + rv * cv) * cu;
+      const y = (Rv + rv * cv) * su;
+      const z = rv * sv;
+      return new THREE.Vector3(x, z, y);
+    }
+    // Clifford torus via stereographic projection from S³ → R³ (scaled)
+    function cliffordPos(u, v, scale = 1.8) {
+      const s = Math.SQRT1_2;
+      const x1 = s * Math.cos(u);
+      const y1 = s * Math.sin(u);
+      const z1 = s * Math.cos(v);
+      const w1 = s * Math.sin(v);
+      const d = 1 - w1;
+      return new THREE.Vector3((x1 / d) * scale, (z1 / d) * scale, (y1 / d) * scale);
+    }
+
+    /* small linear algebra helper: solve 3×3 via Gauss-Jordan */
+    function solve3x3(A, b) {
+      const M = [
+        [A[0][0], A[0][1], A[0][2], b[0]],
+        [A[1][0], A[1][1], A[1][2], b[1]],
+        [A[2][0], A[2][1], A[2][2], b[2]]
+      ];
+      for (let i = 0; i < 3; i++) {
+        let piv = i;
+        for (let j = i + 1; j < 3; j++) if (Math.abs(M[j][i]) > Math.abs(M[piv][i])) piv = j;
+        if (Math.abs(M[piv][i]) < 1e-12) return null;
+        if (piv !== i) { const tmp = M[i]; M[i] = M[piv]; M[piv] = tmp; }
+        const d = M[i][i];
+        for (let k = i; k < 4; k++) M[i][k] /= d;
+        for (let j = 0; j < 3; j++) if (j !== i) {
+          const f = M[j][i];
+          if (Math.abs(f) < 1e-18) continue;
+          for (let k = i; k < 4; k++) M[j][k] -= f * M[i][k];
+        }
+      }
+      return [M[0][3], M[1][3], M[2][3]];
+    }
+
+    /* =========================================================================
+       symmetricMod - simple cosine mirror mask for overlay coloring
+       ========================================================================= */
+    function symmetricMod(u, v, axis, count, strength) {
+      if (axis === 'none' || count <= 1 || strength <= 0) return 1.0;
+      const t = (axis === 'u') ? u : v;
+      const a = t * TWO_PI * count;
+      const base = Math.abs(Math.cos(a * 0.5));
+      return (1 - strength) + base * strength;
+    }
+
+    /* =========================================================================
+       TorusMapper (mapping and helpers)
+       ========================================================================= */
+    class TorusMapper {
+      constructor(params = {}) {
+        this.params = Object.assign({ mode: 'std', R: 1.0, r: 0.5, shear: 0.0 }, params);
+        this.TWO_PI = Math.PI * 2;
+      }
+      updateParams(newParams = {}) { Object.assign(this.params, newParams); return this; }
+      setParam(k, v) { this.params[k] = v; return this; }
+      _wrap01(x) { x %= 1; return x < 0 ? x + 1 : x; }
+      _getPosFunc() { if (this.params.mode === 'clifford') return (u, v) => cliffordPos(u, v, 1.8); return (u, v) => stdPos(u, v, this.params.R, this.params.r); }
+      // UV → R³ mapping with optional shear (spiral) along v
+      posFromUV(U, V) { const shear = this.params.shear || 0.0; const u = this._wrap01(U) * this.TWO_PI; const v = this._wrap01(V) * this.TWO_PI; const getPos = this._getPosFunc(); return getPos(u + shear * v, v); }
+      // differential frame approximation via finite differences
+      frameAt(U, V, eps = 1e-4) { const P = this.posFromUV(U, V); const Pu = this.posFromUV(U + eps, V); const Pv = this.posFromUV(U, V + eps); const tu = Pu.clone().sub(P).normalize(); const tv = Pv.clone().sub(P).normalize(); const n = tu.clone().cross(tv).normalize(); return { p: P, tu, tv, n }; }
+
+      /** Per-row U counts (equal arclength around u for std torus). */
+      rowCounts(segUBase, segV, opts = {}) {
+        const opt = Object.assign({ equalQuads: false, clampMin: 8, clampMax: segUBase * 3, sampleV: segV }, opts);
+        const Nu = new Uint16Array(segV);
+        for (let j = 0; j < segV; j++) {
+          const v = (j / segV) * this.TWO_PI;
+          let coef = 1.0;
+          if (this.params.mode === 'std') {
+            const R = this.params.R, r = this.params.r;
+            coef = (R + r * Math.cos(v)) / Math.max(1e-9, R);
+          } else { coef = 1.0; }
+          let n = Math.round(segUBase * coef);
+          n = Math.max(opt.clampMin, Math.min(opt.clampMax, n));
+          Nu[j] = n;
+        }
+        return Nu;
+      }
+
+      // build rectangle perimeter in UV, slice into wrap-safe loops in plane and torus spaces
+      rectPerimeterData(Uc, Vc, Usz, Vsz, edge = 128) {
+        const Umin = Uc - Usz / 2, Umax = Uc + Usz / 2, Vmin = Vc - Vsz / 2, Vmax = Vc + Vsz / 2;
+        const uv_cont = [];
+        // traverse rectangle CCW
+        for (let i = 0; i <= edge; i++) { const t = i / edge; uv_cont.push([Umin + t * (Umax - Umin), Vmax]); }
+        for (let i = 1; i <= edge; i++) { const t = i / edge; uv_cont.push([Umax, Vmax + t * (Vmin - Vmax)]); }
+        for (let i = 1; i <= edge; i++) { const t = i / edge; uv_cont.push([Umax + t * (Umin - Umax), Vmin]); }
+        for (let i = 1; i < edge; i++) { const t = i / edge; uv_cont.push([Umin, Vmin + t * (Vmax - Vmin)]); }
+        // map to plane and torus
+        const planePts = uv_cont.map(([U, V]) => [(this._wrap01(U) - 0.5) * this.TWO_PI, 0, (this._wrap01(V) - 0.5) * this.TWO_PI]);
+        const torusPts = uv_cont.map(([U, V]) => { const P = this.posFromUV(U, V); return [P.x, P.y, P.z]; });
+        // split where wrap-jumps exceed π
+        const planeLoops = [], torusLoops = [];
+        let curPlane = [], curTorus = [];
+        function pushCurrent() {
+          if (curPlane.length > 0) { planeLoops.push(curPlane.slice()); torusLoops.push(curTorus.slice()); }
+          curPlane = []; curTorus = [];
+        }
+        if (planePts.length > 0) { curPlane.push(planePts[0]); curTorus.push(torusPts[0]); }
+        for (let i = 1; i < planePts.length; i++) {
+          const a = planePts[i - 1], b = planePts[i];
+          const dx = Math.abs(b[0] - a[0]), dz = Math.abs(b[2] - a[2]);
+          if (dx > Math.PI || dz > Math.PI) { pushCurrent(); }
+          curPlane.push(b); curTorus.push(torusPts[i]);
+        }
+        if (curPlane.length > 0) pushCurrent();
+        return { uv: uv_cont, planePts, torusPts, planeLoops, torusLoops };
+      }
+
+      /**
+       * Spiral arc following v (blue grid), optionally closing after one lap (integer-shear alignment).
+       */
+      spiralArcData(thetaRad, offset = 0, opts = { mode: 'blue', samples: 320 }) {
+        const mode = opts.mode || 'blue';
+        const S = opts.samples || 320;
+        const U0 = this._wrap01(thetaRad / this.TWO_PI);
+        const torusPts = [], planePts = [], uv = [];
+        const shear = this.params.shear || 0.0;
+        const k = (mode === 'close1') ? (Math.round(shear) - shear) : 0.0;
+        for (let i = 0; i <= S; i++) {
+          const t = i / S;
+          const U = this._wrap01(U0 + k * t);
+          const V = this._wrap01(t);
+          const P = this.posFromUV(U, V);
+          const out = P.clone().normalize().multiplyScalar(offset);
+          torusPts.push([P.x + out.x, P.y + out.y, P.z + out.z]);
+          planePts.push([(this._wrap01(U) - 0.5) * this.TWO_PI, 0, (this._wrap01(V) - 0.5) * this.TWO_PI]);
+          uv.push([U, V]);
+        }
+        if (mode === 'close1') {
+          torusPts[torusPts.length - 1] = [...torusPts[0]];
+          planePts[planePts.length - 1] = [...planePts[0]];
+          uv[uv.length - 1] = [...uv[0]];
+        }
+        return { mode, U0, k, torusPts, planePts, uv };
+      }
+
+      /**
+       * crossSquareData: approximate cross-section square around a chosen U=θ on the torus.
+       * Fits a circle to the ring to estimate radius and axes, then constructs square corners.
+       */
+      crossSquareData(thetaRad, sizeMultiplier = 1.0) {
+        const U = this._wrap01(thetaRad / this.TWO_PI);
+        const S = 256, eps = 1e-3;
+        const Ps = new Array(S);
+        let C0 = new THREE.Vector3(0, 0, 0);
+        // sample full v-ring
+        for (let i = 0; i < S; i++) { const V = i / S; const P = this.posFromUV(U, V); Ps[i] = P; C0.add(P); }
+        C0.multiplyScalar(1 / S);
+        // polygon normal (area-weighted)
+        let n = new THREE.Vector3(0, 0, 0);
+        for (let i = 0; i < S; i++) {
+          const a = Ps[i].clone().sub(C0);
+          const b = Ps[(i + 1) % S].clone().sub(C0);
+          n.add(a.clone().cross(b));
+        }
+        if (n.lengthSq() < 1e-12) {
+          // fallback via finite difference
+          const P0 = this.posFromUV(U, 0.0);
+          const Pv = this.posFromUV(U, eps);
+          n = Pv.clone().sub(P0).cross(P0.clone().sub(this.posFromUV(U + eps, 0))).normalize();
+          if (n.lengthSq() < 1e-12) n = new THREE.Vector3(0, 1, 0);
+        }
+        n.normalize();
+        // tangent x-axis as mean of projected ring vectors
+        let ex = new THREE.Vector3(0, 0, 0);
+        for (let i = 0; i < S; i++) {
+          const v = Ps[i].clone().sub(C0);
+          const proj = n.clone().multiplyScalar(v.dot(n));
+          ex.add(v.clone().sub(proj));
+        }
+        if (ex.lengthSq() < 1e-12) {
+          // fallback orthonormal
+          if (Math.abs(n.x) < 0.9) ex = new THREE.Vector3(1, 0, 0).cross(n).normalize();
+          else ex = new THREE.Vector3(0, 1, 0).cross(n).normalize();
+        } else ex.normalize();
+        const ey = n.clone().cross(ex).normalize();
+
+        // 2D fit in (ex,ey) plane to estimate center and radius
+        const xs = new Float64Array(S), ys = new Float64Array(S);
+        for (let i = 0; i < S; i++) {
+          const v = Ps[i].clone().sub(C0);
+          xs[i] = v.dot(ex);
+          ys[i] = v.dot(ey);
+        }
+        let M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        let rhs = [0, 0, 0];
+        for (let i = 0; i < S; i++) {
+          const xi = xs[i], yi = ys[i];
+          const q = -(xi * xi + yi * yi);
+          M[0][0] += xi * xi; M[0][1] += xi * yi; M[0][2] += xi;
+          M[1][0] += xi * yi; M[1][1] += yi * yi; M[1][2] += yi;
+          M[2][0] += xi; M[2][1] += yi; M[2][2] += 1;
+          rhs[0] += xi * q; rhs[1] += yi * q; rhs[2] += q;
+        }
+        let sol = solve3x3(M, rhs);
+        let center2 = { x: 0, y: 0 }, radius = 0;
+        if (sol) {
+          const A = sol[0], B = sol[1], Cc = sol[2];
+          center2.x = -A / 2; center2.y = -B / 2;
+          const rad2 = center2.x * center2.x + center2.y * center2.y - Cc;
+          radius = (rad2 > 0) ? Math.sqrt(rad2) : Math.sqrt(Math.max(0, (xs.reduce((s, v) => s + v * v, 0) + ys.reduce((s, v) => s + v * v, 0)) / S));
+        } else {
+          // fallback: mean radius
+          let meanR = 0;
+          for (let i = 0; i < S; i++) meanR += Math.hypot(xs[i], ys[i]);
+          meanR /= S;
+          center2.x = 0; center2.y = 0;
+          radius = meanR;
+        }
+        // world-space center of ring
+        const C = C0.clone().add(ex.clone().multiplyScalar(center2.x)).add(ey.clone().multiplyScalar(center2.y));
+        // choose x-axis by averaging vectors from center; re-orthogonalize against normal
+        let xAxis = new THREE.Vector3(0, 0, 0);
+        for (let i = 0; i < S; i++) { const v = Ps[i].clone().sub(C); xAxis.add(v); }
+        if (xAxis.lengthSq() < 1e-12) xAxis = ex.clone(); else xAxis.normalize();
+        const proj = n.clone().multiplyScalar(xAxis.dot(n));
+        xAxis.sub(proj);
+        if (xAxis.lengthSq() < 1e-12) {
+          if (Math.abs(n.x) < 0.9) xAxis = new THREE.Vector3(1, 0, 0).cross(n).normalize();
+          else xAxis = new THREE.Vector3(0, 1, 0).cross(n).normalize();
+        } else xAxis.normalize();
+        const yAxis = n.clone().cross(xAxis).normalize();
+
+        // construct square corners at scale h
+        const h = Math.max(1e-9, sizeMultiplier) * radius;
+        const A3 = C.clone().add(xAxis.clone().multiplyScalar(h)).add(yAxis.clone().multiplyScalar(h));
+        const B3 = C.clone().add(xAxis.clone().multiplyScalar(h)).add(yAxis.clone().multiplyScalar(-h));
+        const D3 = C.clone().add(xAxis.clone().multiplyScalar(-h)).add(yAxis.clone().multiplyScalar(h));
+        const E3 = C.clone().add(xAxis.clone().multiplyScalar(-h)).add(yAxis.clone().multiplyScalar(-h));
+        const torusPts = [A3, B3, E3, D3].map(v => [v.x, v.y, v.z]);
+
+        // plane vertical line at fixed U
+        const planePts = [];
+        for (let i = 0; i <= S; i++) { const V = i / S; planePts.push([(U - 0.5) * this.TWO_PI, 0, (V - 0.5) * this.TWO_PI]); }
+        return { U, center: [C.x, C.y, C.z], axes: { x: [xAxis.x, xAxis.y, xAxis.z], y: [yAxis.x, yAxis.y, yAxis.z], n: [n.x, n.y, n.z] }, torusPts, planePts };
+      }
+    }
+
+    /* =========================================================================
+       Geometry builders
+       ========================================================================= */
+    // builds a triangle mesh with possibly varying U segments per V-row (Nu[j])
+    function buildVariableRingMesh(getPos, segU, segV, options) {
+      options ||= {};
+      const useEq = !!options.equalArc, shear = Number(options.shear) || 0.0, forceUniformU = !!options.forceUniformU;
+      const providedNu = options.Nu && options.Nu.length === segV ? Array.from(options.Nu) : null;
+
+      // compute per-row U counts
+      const Nu = new Array(segV);
+      if (providedNu) {
+        for (let j = 0; j < segV; ++j) Nu[j] = Math.max(3, Math.floor(providedNu[j]));
+      } else {
+        for (let j = 0; j < segV; ++j) {
+          if (forceUniformU) { Nu[j] = segU; continue; }
+          const v = j / segV * TWO_PI;
+          if (useEq && typeof options.R === 'number') {
+            const coef = Math.abs(options.R + options.r * Math.cos(v));
+            let n = Math.round(segU * (coef / Math.max(1e-6, Math.abs(options.R))));
+            Nu[j] = Math.max(8, Math.min(n, segU * 3));
+          } else Nu[j] = segU;
+        }
+      }
+
+      // prefix-sum like starts for rows (with wrap row)
+      const rowVertexStart = new Array(segV + 1);
+      let totalVerts = 0;
+      for (let j = 0; j <= segV; j++) {
+        const jj = (j < segV) ? j : 0;
+        const Nj = Nu[jj];
+        rowVertexStart[j] = totalVerts;
+        totalVerts += (Nj + 1);
+      }
+
+      // allocate position/uv buffers for a stitched strip mesh
+      const pos = new Float32Array(totalVerts * 3);
+      const uv = new Float32Array(totalVerts * 2);
+
+      let vi = 0;
+      for (let j = 0; j <= segV; j++) {
+        const isDupRow = (j === segV);
+        const jj = isDupRow ? 0 : j;
+        const Nj = Nu[jj];
+        const vFrac = isDupRow ? 1.0 : (j / segV);
+
+        for (let i = 0; i <= Nj; i++) {
+          const isDupCol = (i === Nj);
+          const iSrc = isDupCol ? 0 : i;
+          const uFrac = isDupCol ? 1.0 : (iSrc / Nj);
+
+          const uRad = uFrac * TWO_PI;
+          const vRad = vFrac * TWO_PI;
+
+          const P = getPos(uRad + shear * vRad, vRad);
+
+          pos[vi * 3] = P.x;
+          pos[vi * 3 + 1] = P.y;
+          pos[vi * 3 + 2] = P.z;
+
+          uv[vi * 2] = uFrac;
+          uv[vi * 2 + 1] = vFrac;
+
+          vi++;
+        }
+      }
+
+      // adaptive triangle stitching between rows of size Nj and Nb
+      const idx = [];
+      for (let j = 0; j < segV; j++) {
+        const Nj = Nu[j];
+        const Nb = Nu[(j + 1) % segV];
+        const a0 = rowVertexStart[j];
+        const b0 = rowVertexStart[j + 1];
+        let ia = 0, ib = 0;
+        while (ia < Nj || ib < Nb) {
+          const an = (ia + 1) / Nj;
+          const bn = (ib + 1) / Nb;
+          const aIdx = (a0 + ia);
+          const anp = (ia + 1 <= Nj) ? (a0 + (ia + 1)) : (a0 + Nj);
+          const bIdx = (b0 + ib);
+          const bnp = (ib + 1 <= Nb) ? (b0 + (ib + 1)) : (b0 + Nb);
+          if (ia < Nj && (ib >= Nb || an <= bn)) {
+            idx.push(anp, bIdx, aIdx);
+            ia++;
+          } else {
+            idx.push(bnp, bIdx, aIdx);
+            ib++;
+          }
+        }
+      }
+
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+
+      // invisible picking mesh (renders with 0 opacity)
+      const pickMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, depthWrite: false, depthTest: true, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(g, pickMat); mesh.frustumCulled = false;
+      return { mesh, Nu, rowVertexStart };
+    }
+
+    // build wireframes for iso-v (red) and iso-u (blue)
+    function buildWireUniform(getPos, segU, segV, shear = 0.0) {
+      const TWO_PI = Math.PI * 2;
+      const geoU = new THREE.BufferGeometry(), geoV = new THREE.BufferGeometry();
+      { // iso-v: vary u, fix v
+        const pos = new Float32Array(segV * segU * 2 * 3); let k = 0;
+        for (let j = 0; j < segV; ++j) {
+          const v = j / segV * TWO_PI; for (let i = 0; i < segU; ++i) {
+            const u0 = i / segU * TWO_PI, u1 = (i + 1) / segU * TWO_PI;
+            const a = getPos(u0 + shear * v, v), b = getPos(u1 + shear * v, v);
+            pos[k++] = a.x; pos[k++] = a.y; pos[k++] = a.z; pos[k++] = b.x; pos[k++] = b.y; pos[k++] = b.z;
+          }
+        }
+        geoU.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      }
+      { // iso-u: vary v, fix u
+        const pos = new Float32Array(segU * segV * 2 * 3); let k = 0;
+        for (let i = 0; i < segU; ++i) {
+          const u = i / segU * TWO_PI; for (let j = 0; j < segV; ++j) {
+            const v0 = j / segV * TWO_PI, v1 = (j + 1) / segV * TWO_PI;
+            const a = getPos(u + shear * v0, v0), b = getPos(u + shear * v1, v1);
+            pos[k++] = a.x; pos[k++] = a.y; pos[k++] = a.z; pos[k++] = b.x; pos[k++] = b.y; pos[k++] = b.z;
+          }
+        }
+        geoV.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      }
+      return [new THREE.LineSegments(geoU, matU), new THREE.LineSegments(geoV, matV)];
+    }
+
+    // build rectangular plane mesh (u,v in [0,1]) spanning [-π,π] × [-π,π] in XZ
+    function buildPlane(segU, segV, w = TWO_PI, h = TWO_PI) {
+      const nx = segU + 1, ny = segV + 1;
+      const pos = new Float32Array(nx * ny * 3), uv = new Float32Array(nx * ny * 2), idx = new Uint32Array(segU * segV * 6);
+      let p = 0, t = 0;
+      for (let j = 0; j < ny; ++j) {
+        const V = Math.min(j, segV) / segV, z = (V - 0.5) * h;
+        for (let i = 0; i < nx; ++i) { const U = Math.min(i, segU) / segU, x = (U - 0.5) * w; pos[p++] = x; pos[p++] = 0; pos[p++] = z; uv[t++] = U; uv[t++] = V; }
+      }
+      let k = 0, row = nx;
+      for (let j = 0; j < segV; ++j) for (let i = 0; i < segU; ++i) { const a = j * row + i, b = a + 1, c = a + row, d = c + 1; idx[k++] = a; idx[k++] = c; idx[k++] = b; idx[k++] = b; idx[k++] = c; idx[k++] = d; }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); g.setIndex(new THREE.BufferAttribute(idx, 1));
+      const mesh = new THREE.Mesh(g, planeFillMat.clone());
+      const lines = buildWireUniform((u, v) => new THREE.Vector3((u / TWO_PI - 0.5) * w, 0, (v / TWO_PI - 0.5) * h), segU, segV);
+      return { mesh, lines, posFromUV: (U, V) => new THREE.Vector3((U - 0.5) * w, 0, (V - 0.5) * h) };
+    }
+
+    /* =========================================================================
+       Noise instances (seeded)
+       ========================================================================= */
+    const perlin = new PerlinNoise4D(Math.floor(Math.random() * 1e9));
+    const worley = new Worley4D(Math.floor(Math.random() * 1e9));
+
+    /* =========================================================================
+       Map UV -> sample coords wrapper (calls selected noise generator)
+       ========================================================================= */
+    const TORUS_U_SCALE = 3.0;
+    const TORUS_V_SCALE = 3.0;
+    const TORUS_T_SCALE = 2.0;
+    const TORUS_PACK_BIAS = Object.freeze([0.37, 0.21, 0.29, 0.31]);
+
+    function fract01(x) {
+      return x - Math.floor(x);
+    }
+
+    function packPeriodicUV(U, V, theta, uScale = TORUS_U_SCALE, vScale = TORUS_V_SCALE, tScale = TORUS_T_SCALE) {
+      const aU = fract01(U) * TWO_PI;
+      const aV = fract01(V) * TWO_PI;
+      const aT = fract01(theta) * TWO_PI;
+
+      return {
+        x: Math.cos(aU) * uScale + TORUS_PACK_BIAS[0],
+        y: Math.sin(aU) * uScale + TORUS_PACK_BIAS[1],
+        z: Math.cos(aV) * vScale + Math.cos(aT) * tScale + TORUS_PACK_BIAS[2],
+        w: Math.sin(aV) * vScale + Math.sin(aT) * tScale + TORUS_PACK_BIAS[3]
+      };
+    }
+
+    /**
+     * sampleNoiseAtUV(tmapper, U, V, samplingMode, noiseKind, params, theta)
+     * - theta: [0..1) fraction of θ; mapped into the fourth dimension (periodic)
+     * - params.tScale : magnitude of theta encoding into the periodic pack
+     */
+    function sampleNoiseAtUV(tmapper, U, V, samplingMode, noiseKind, params = {}, theta = 0.0) {
+      const zoom = Math.max(params.zoom ?? 1.0, 1e-6);
+      const baseFreq = Math.max(params.baseFreq ?? 1.0, 1e-6);
+      const octaves = params.octaves ?? 4;
+      const lacunarity = params.lacunarity ?? 2.0;
+      const gain = params.gain ?? 0.5;
+      const tScale = params.tScale ?? TORUS_T_SCALE;
+
+      let x, y, z, w;
+      if (samplingMode === 'world') {
+        const P = tmapper.posFromUV(U, V);
+        const worldScale = (tmapper?.params?.mode === 'std')
+          ? 1.0 / Math.max(tmapper.params.R + tmapper.params.r, 1e-6)
+          : 1.0 / 1.8;
+        const o = 1.0;
+        x = (P.x + o) * worldScale;
+        y = (P.y + o) * worldScale;
+        z = (P.z + o) * worldScale;
+        w = fract01(theta) + TORUS_PACK_BIAS[3];
+      } else {
+        let uScale = TORUS_U_SCALE;
+        let vScale = TORUS_V_SCALE;
+
+        if (samplingMode === 'uv_local' && tmapper?.params?.mode === 'std') {
+          const angleV = fract01(V) * TWO_PI;
+          const R = Math.max(1e-6, Math.abs(tmapper.params.R || 1.0));
+          const r = Math.abs(tmapper.params.r || 0.0);
+          const coefV = Math.max(0.25, (R + r * Math.cos(angleV)) / R);
+          uScale *= coefV;
+        }
+
+        const packed = packPeriodicUV(U, V, theta, uScale, vScale, tScale);
+        x = packed.x;
+        y = packed.y;
+        z = packed.z;
+        w = packed.w;
+      }
+
+      let raw;
+      if (noiseKind === 'worley4d') {
+        raw = worley.generateNoise4D(x, y, z, w, zoom, baseFreq, octaves, lacunarity, gain, false);
+      } else {
+        raw = perlin.generateNoise4D(x, y, z, w, zoom, baseFreq, octaves, lacunarity, gain, false);
+      }
+
+      return Math.max(0, Math.min(1, 0.5 + 0.5 * raw));
+    }
+
+    /* =========================================================================
+       Texture builders
+       ========================================================================= */
+    // builds a texture aligned to manifold vertices (optional bilerp across rows)
+    function buildVertexAlignedTexture(tmapper, Nu, sv, opts = {}) {
+      const noiseMode = opts.noiseMode || 'uv_periodic';
+      const noiseKind = opts.noiseKind || 'perlin4d';
+      const W = opts.width || Math.max(...Nu, 1);
+      const H = opts.height || sv;
+      const mode2D = opts.mode2D || 'vertex_snap';
+      const params = {
+        zoom: opts.zoom ?? 1.0,
+        baseFreq: opts.baseFreq ?? 1.0,
+        octaves: opts.octaves ?? 4,
+        lacunarity: opts.lacunarity ?? 2.0,
+        gain: opts.gain ?? 0.5,
+        tScale: opts.tScale ?? 2.0
+      };
+
+      // θ slider picks the 4D slice (loops seamlessly)
+      const theta = parseFloat(thetaEl.value) || 0.0;
+
+      const data = new Uint8Array(W * H * 4); let p = 0;
+      for (let j = 0; j < H; j++) {
+        const V0 = (j % sv) / sv;
+        const V1 = ((j + 1) % sv) / sv;
+        const Nj = Nu[j % sv];
+        const Nj1 = Nu[(j + 1) % sv];
+        for (let i = 0; i < W; i++) {
+          if (mode2D === 'vertex_snap') {
+            // sample exactly at manifold vertex along row j
+            const frac = (i + 0.5) / W;
+            const k = Math.round(frac * Nj);
+            const U = (k % Nj) / Nj;
+            const g = sampleNoiseAtUV(tmapper, U, V0, noiseMode, noiseKind, params, theta);
+            const c = (g * 255) | 0; data[p++] = c; data[p++] = c; data[p++] = c; data[p++] = 255;
+          } else {
+            // manifold-aware bilerp between current and next row midpoints
+            const Ufrac = (i + 0.5) / W;
+            const u0f = Ufrac * Nj; const i0 = Math.floor(u0f); const fu0 = u0f - i0;
+            const u1f = Ufrac * Nj1; const i1 = Math.floor(u1f); const fu1 = u1f - i1;
+            const u0a = (i0 % Nj) / Nj, u0b = ((i0 + 1) % Nj) / Nj;
+            const u1a = (i1 % Nj1) / Nj1, u1b = ((i1 + 1) % Nj1) / Nj1;
+
+            const P00 = tmapper.posFromUV(u0a, V0), P10 = tmapper.posFromUV(u0b, V0);
+            const P01 = tmapper.posFromUV(u1a, V1), P11 = tmapper.posFromUV(u1b, V1);
+
+            const Ax = P00.x + (P10.x - P00.x) * fu0;
+            const Ay = P00.y + (P10.y - P00.y) * fu0;
+            const Az = P00.z + (P10.z - P00.z) * fu0;
+            const Bx = P01.x + (P11.x - P01.x) * fu1;
+            const By = P01.y + (P11.y - P01.y) * fu1;
+            const Bz = P01.z + (P11.z - P01.z) * fu1;
+
+            const Px = Ax + (Bx - Ax) * 0.5;
+            const Py = Ay + (By - Ay) * 0.5;
+            const Pz = Az + (Bz - Az) * 0.5;
+
+            // inverse-map midpoint to UV, then reuse the same toroidal/world sampler path
+            if (tmapper.params.mode === 'std') {
+              const x = Px, z = Py, y = Pz;
+              const u = Math.atan2(y, x);
+              const Rxy = Math.hypot(x, y);
+              const cv = (Rxy - tmapper.params.R) / Math.max(1e-9, tmapper.params.r);
+              const v = Math.atan2(z / Math.max(1e-9, tmapper.params.r), cv);
+              const U = ((u / TWO_PI) % 1 + 1) % 1;
+              const V = ((v / TWO_PI) % 1 + 1) % 1;
+              const g = sampleNoiseAtUV(tmapper, U, V, noiseMode, noiseKind, params, theta);
+              const c = (g * 255) | 0; data[p++] = c; data[p++] = c; data[p++] = c; data[p++] = 255;
+            } else {
+              const U = Ufrac;
+              const V = V0;
+              const g = sampleNoiseAtUV(tmapper, U, V, noiseMode, noiseKind, params, theta);
+              const c = (g * 255) | 0; data[p++] = c; data[p++] = c; data[p++] = c; data[p++] = 255;
+            }
+          }
+        }
+      }
+
+      // create a DataTexture; enable mipmaps and repeat wrapping
+      const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+      tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+      tex.minFilter = THREE.LinearMipMapLinearFilter; tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = true; tex.needsUpdate = true; tex.flipY = false;
+      tex._debug = { data, w: W, h: H };
+      return tex;
+    }
+
+    // fixed-resolution UV texture builder (ignores manifold segmentation)
+    function buildUniformUVTexture(tmapper, W, H, opts = {}) {
+      const noiseMode = opts.noiseMode || 'uv_periodic';
+      const noiseKind = opts.noiseKind || 'perlin4d';
+      const params = { zoom: opts.zoom ?? 1.0, baseFreq: opts.baseFreq ?? 1.0, octaves: opts.octaves ?? 4, lacunarity: opts.lacunarity ?? 2.0, gain: opts.gain ?? 0.5, tScale: opts.tScale ?? 2.0 };
+
+      // same θ slice used for entire texture
+      const theta = parseFloat(thetaEl.value) || 0.0;
+
+      const data = new Uint8Array(W * H * 4); let p = 0;
+      for (let j = 0; j < H; j++) {
+        const V = (j + 0.5) / H;
+        for (let i = 0; i < W; i++) {
+          const U = (i + 0.5) / W;
+          const g = sampleNoiseAtUV(tmapper, U, V, noiseMode, noiseKind, params, theta);
+          const c = (g * 255) | 0; data[p++] = c; data[p++] = c; data[p++] = c; data[p++] = 255;
+        }
+      }
+      const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+      tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+      tex.minFilter = THREE.LinearMipMapLinearFilter; tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = true; tex.needsUpdate = true; tex.flipY = false;
+      tex._debug = { data, w: W, h: H };
+      return tex;
+    }
+
+    /* dispose helpers */
+    function dispose(o) {
+      if (!o) return;
+      if (Array.isArray(o)) { o.forEach(x => dispose(x)); return; }
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { Array.isArray(o.material) ? o.material.forEach(m => m.dispose()) : o.material.dispose(); }
+      if (o.parent) o.parent.remove(o);
+    }
+    function clearAll() {
+      // remove lines, meshes, textures, overlays
+      currentWires.forEach(dispose); currentWires = [];
+      [currentPick, torusOverlay, planeOverlay, planeRectLines, mappedTorLines, arcLine, planeArcLine, squareLine, planeSquareLine, torusTexMesh].forEach(dispose);
+      currentPick = torusOverlay = planeOverlay = planeRectLines = mappedTorLines = arcLine = planeArcLine = squareLine = planeSquareLine = torusTexMesh = null;
+      if (planeObj) {
+        if (planeObj.mesh && planeObj.mesh.material && planeObj.mesh.material.map) {
+          planeObj.mesh.material.map.dispose?.();
+          planeObj.mesh.material.dispose?.();
+          planeObj.mesh.material = planeFillMat.clone();
+        }
+        planeObj.lines?.forEach(dispose);
+        dispose(planeObj.mesh);
+        planeObj = null;
+      }
+      if (perlin._debug) perlin._debug = null;
+      if (worley._debug) worley._debug = null;
+      if (perlinTex) { perlinTex.dispose(); perlinTex = null; }
+      torusMarker.visible = false; planeMarker.visible = false;
+      debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+    }
+
+    /* persistent collision markers (single each) */
+    const torusMarker = new THREE.Mesh(new THREE.SphereGeometry(0.035, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffff66 }));
+    const planeMarker = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffff66 }));
+    torusMarker.visible = false; planeMarker.visible = false; torusGroup.add(torusMarker); planeGroup.add(planeMarker);
+
+    // scene members to dispose/replace on rebuild
+    let currentPick = null, currentWires = [], planeObj = null;
+    let torusOverlay = null, planeOverlay = null;
+    let planeRectLines = null, mappedTorLines = null;
+    let arcLine = null, planeArcLine = null;
+    let squareLine = null, planeSquareLine = null;
+    let perlinTex = null;
+    let torusTexMesh = null;
+
+    /* Debug drawing: draw 2x2 tiled copy of last texture buffer */
+    function drawDebugTexture(tex) {
+      debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+      if (!tex || !tex._debug) { debugCtx.fillStyle = '#111'; debugCtx.fillRect(0, 0, debugCanvas.width, debugCanvas.height); return; }
+      const { data, w, h } = tex._debug;
+      const img = new ImageData(w, h);
+      img.data.set(data);
+      const off = document.createElement('canvas'); off.width = w; off.height = h;
+      const offCtx = off.getContext('2d'); offCtx.putImageData(img, 0, 0);
+      debugCtx.fillStyle = '#0b0f14'; debugCtx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+      const tileW = debugCanvas.width / 2, tileH = debugCanvas.height / 2;
+      for (let ty = 0; ty < 2; ty++) {
+        for (let tx = 0; tx < 2; tx++) {
+          debugCtx.drawImage(off, tx * tileW, ty * tileH, tileW, tileH);
+        }
+      }
+    }
+
+    // array-of-vec3 → THREE.Line helper
+    function toLine(pts, mat) {
+      const arr = new Float32Array(pts.length * 3);
+      for (let i = 0; i < pts.length; i++) { arr[i * 3] = pts[i][0]; arr[i * 3 + 1] = pts[i][1]; arr[i * 3 + 2] = pts[i][2]; }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+      const L = new THREE.Line(g, mat); L.frustumCulled = false; return L;
+    }
+    // HSV utility for overlay colors
+    function hsvToRgb(h, s, v) { const i = Math.floor(h * 6), f = h * 6 - i, p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s); let r = 0, g = 0, b = 0; switch (i % 6) { case 0: r = v; g = t; b = p; break; case 1: r = q; g = v; b = p; break; case 2: r = p; g = v; b = t; break; case 3: r = p; g = q; b = v; break; case 4: r = t; g = p; b = v; break; case 5: r = v; g = p; b = q; break; } return { r, g, b }; }
+
+    /* =========================================================================
+       Rebuild (recreate all geometry/materials from current UI state)
+       ========================================================================= */
+    function rebuild() {
+      clearAll();
+
+      const modeStd = (modeSel.value === 'std');
+      const shear = spiral.checked ? (+twistEl.value || 0) : 0;
+
+      const tmapper = new TorusMapper({ mode: (modeStd ? 'std' : 'clifford'), R: +Rslider.value, r: +rslider.value, shear });
+
+      const getPos = modeStd ? ((u, v) => stdPos(u, v, +Rslider.value, +rslider.value)) : ((u, v) => cliffordPos(u, v, 1.8));
+
+      // per-row U counts (adaptive or uniform)
+      let Nu;
+      if (adaptiveNu.checked || (modeStd && eqArc.checked)) {
+        const segUbase = +suslider.value, segV = +svslider.value;
+        Nu = tmapper.rowCounts(segUbase, segV, { clampMin: 8, clampMax: segUbase * 3 });
+        let minN = Infinity, maxN = -Infinity, sum = 0;
+        for (let i = 0; i < Nu.length; i++) { minN = Math.min(minN, Nu[i]); maxN = Math.max(maxN, Nu[i]); sum += Nu[i]; }
+        nuRangeEl.textContent = `${minN} → ${maxN} (avg ${Math.round(sum / Nu.length)})`;
+      } else { Nu = new Uint16Array(+svslider.value); Nu.fill(+suslider.value); nuRangeEl.textContent = '—'; }
+
+      // picking mesh
+      const built = buildVariableRingMesh(getPos, +suslider.value, +svslider.value, { equalArc: modeStd && eqArc.checked, shear, forceUniformU: !!spiral, R: +Rslider.value, r: +rslider.value, Nu });
+      currentPick = built.mesh; torusGroup.add(currentPick);
+
+      // wire grid (iso lines)
+      const [uLines, vLines] = buildWireUniform(getPos, +suslider.value, +svslider.value, shear);
+      currentWires.push(uLines, vLines); torusGroup.add(uLines, vLines);
+
+      // plane visualization
+      planeObj = buildPlane(+suslider.value, +svslider.value);
+      planeGroup.add(planeObj.mesh, ...planeObj.lines);
+
+      // layout: separate torus/plane in X so both are visible
+      currentPick.geometry.computeBoundingSphere();
+      const torusR = currentPick.geometry.boundingSphere?.radius ?? (+Rslider.value + +rslider.value + 0.5);
+      const planeHalf = Math.SQRT2 * Math.PI, gap = 0.28, span = torusR + planeHalf + gap;
+      torusGroup.position.set(-span * 0.6, 0, 0);
+      planeGroup.position.set(+span * 0.6, 0, 0);
+
+      // colorful overlays if noise is disabled
+      if (showOverlay.checked && !usePerlin.checked) {
+        const g = currentPick.geometry.clone(), uv = g.getAttribute('uv'), n = g.getAttribute('position').count, col = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          const u = uv.getX(i), v = uv.getY(i), a = v * TWO_PI, hue = ((v % 1) + 1) % 1, rn = (1 + Math.cos(a)) * 0.5, fn = (1 + Math.sin(a)) * 0.5;
+          let s = 0.25 + 0.75 * rn, val = 0.35 + 0.65 * fn;
+          const cnt = Math.max(1, parseInt(symCount.value, 10));
+          const str = parseFloat(symStrength.value);
+          const m = symmetricMod(u, v, symAxis.value, cnt, str);
+          s *= 0.6 + 0.4 * m; val *= 0.6 + 0.4 * m;
+          const c = hsvToRgb(hue, s, val);
+          col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        }
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        torusOverlay = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.98 }));
+        torusOverlay.frustumCulled = false; torusGroup.add(torusOverlay);
+      }
+
+      if (showPlaneOverlay.checked && !usePerlin.checked) {
+        const g = planeObj.mesh.geometry.clone(), uv = g.getAttribute('uv'), n = g.getAttribute('position').count, col = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          const U = uv.getX(i), V = uv.getY(i), a = V * TWO_PI, hue = ((V % 1) + 1) % 1, rn = (1 + Math.cos(a)) * 0.5, fn = (1 + Math.sin(a)) * 0.5;
+          let s = 0.25 + 0.75 * rn, val = 0.35 + 0.65 * fn;
+          const cnt = Math.max(1, parseInt(symCount.value, 10));
+          const str = parseFloat(symStrength.value);
+          const m = symmetricMod(U, V, symAxis.value, cnt, str);
+          s *= 0.6 + 0.4 * m; val *= 0.6 + 0.4 * m;
+          const c = hsvToRgb(hue, s, val);
+          col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        }
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        planeOverlay = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.98 }));
+        planeOverlay.frustumCulled = false; planeGroup.add(planeOverlay);
+      }
+
+      // draw mapped rectangle perimeters (wrap-safe)
+      if (drawMappedRect.checked) {
+        const rp = tmapper.rectPerimeterData(+rectU.value, +rectV.value, +rectUsz.value, +rectVsz.value, 256);
+        planeRectLines = rp.planeLoops.map(loop => { if (loop.length > 1 && (loop[0][0] !== loop[loop.length - 1][0] || loop[0][2] !== loop[loop.length - 1][2])) loop.push(loop[0]); return toLine(loop, mapRectMat); });
+        mappedTorLines = rp.torusLoops.map(loop => { if (loop.length > 1 && (loop[0][0] !== loop[loop.length - 1][0] || loop[0][1] !== loop[loop.length - 1][1] || loop[0][2] !== loop[loop.length - 1][2])) loop.push(loop[0]); return toLine(loop, mappedTorMat); });
+        planeRectLines.forEach(L => planeGroup.add(L));
+        mappedTorLines.forEach(L => torusGroup.add(L));
+      }
+
+      // spiral arc and cross-section guides
+      if (showSpiralArc.checked) {
+        const mode = arcCloseSingle.checked ? 'close1' : 'blue';
+        const ad = tmapper.spiralArcData(+thetaEl.value * TWO_PI, 0.0, { mode, samples: 400 });
+        arcLine = toLine(ad.torusPts, arcMat); torusGroup.add(arcLine);
+        planeArcLine = toLine(ad.planePts, planeArcMat); planeGroup.add(planeArcLine);
+      }
+
+      if (showCrossSquare.checked) {
+        const sd = tmapper.crossSquareData(+thetaEl.value * TWO_PI, +sizeEl.value);
+        const corners = sd.torusPts.slice(); if (corners.length === 4) corners.push(corners[0]);
+        squareLine = toLine(corners, squareMat); torusGroup.add(squareLine);
+        planeSquareLine = toLine(sd.planePts, planeArcMat); planeGroup.add(planeSquareLine);
+      }
+
+      // when enabled, generate noise texture (Perlin/Worley) sampled in 4D,
+      // but displayed as a single 2D slice controlled by θ slider
+      if (usePerlin.checked) {
+        const noiseKind = noiseType.value;
+        const samplingMode = perlinMode.value;
+        const res = parseInt(texResSel.value, 10);
+
+        if (texMatchNu.checked) {
+          const width = Math.max(...Nu);
+          perlinTex = buildVertexAlignedTexture(tmapper, Nu, +svslider.value, {
+            noiseMode: samplingMode,
+            noiseKind: noiseKind,
+            mode2D: texBilerp.checked ? 'manifold_bilerp' : 'vertex_snap',
+            width: width,
+            height: +svslider.value,
+            tScale: 2.0
+          });
+        } else {
+          perlinTex = buildUniformUVTexture(tmapper, res, res, { noiseMode: samplingMode, noiseKind: noiseKind, tScale: 2.0 });
+        }
+
+        // apply texture to torus (clone geom for material)
+        const g = currentPick.geometry.clone();
+        const torMat = new THREE.MeshBasicMaterial({ map: perlinTex, side: THREE.DoubleSide });
+        torusTexMesh = new THREE.Mesh(g, torMat);
+        torusTexMesh.frustumCulled = false;
+        torusGroup.add(torusTexMesh);
+
+        // share same texture on plane preview
+        planeObj.mesh.material.dispose();
+        planeObj.mesh.material = new THREE.MeshBasicMaterial({ map: perlinTex, side: THREE.DoubleSide });
+
+        // 2×2 tiled preview
+        drawDebugTexture(perlinTex);
+      } else {
+        drawDebugTexture(null);
+      }
+    }
+
+    /* picking and UI wiring - single persistent markers (move + reuse) */
+    const raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
+    function onPointer(ev) {
+      scene.updateMatrixWorld(); camera.updateMatrixWorld();
+      const r = renderer.domElement.getBoundingClientRect();
+      mouse.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+      raycaster.setFromCamera(mouse, camera);
+      let hits = [], target = null;
+      if (currentPick) { hits = raycaster.intersectObject(currentPick, false); if (hits.length) target = 'torus'; }
+      if (!hits.length && planeObj) { hits = raycaster.intersectObject(planeObj.mesh, false); if (hits.length) target = 'plane'; }
+      if (!hits.length) return;
+      hits.sort((a, b) => a.distance - b.distance);
+      const h = hits[0];
+      if (target === 'torus') {
+        // torus → plane mapping via picked UV
+        torusMarker.position.copy(torusGroup.worldToLocal(h.point.clone()));
+        torusMarker.visible = true;
+        const uv = h.uv || new THREE.Vector2(0, 0);
+        planeMarker.position.set((uv.x - 0.5) * TWO_PI, 0, (uv.y - 0.5) * TWO_PI);
+        planeMarker.visible = true;
+      } else {
+        // plane → torus mapping by constructing position from UV
+        const uv = h.uv || new THREE.Vector2(0, 0);
+        const mapper = new TorusMapper({ mode: (modeSel.value === 'std' ? 'std' : 'clifford'), R: +Rslider.value, r: +rslider.value, shear: (spiral.checked ? +twistEl.value : 0) });
+        const P = mapper.posFromUV(uv.x, uv.y);
+        torusMarker.position.copy(P);
+        torusMarker.visible = true;
+        planeMarker.position.copy(planeGroup.worldToLocal(h.point.clone()));
+        planeMarker.visible = true;
+      }
+    }
+    renderer.domElement.addEventListener('pointerdown', onPointer);
+    window.TorusMapper = TorusMapper;
+
+    /* UI syncing etc. */
+    function syncLabels() {
+      Rval.textContent = (+Rslider.value).toFixed(2); rval.textContent = (+rslider.value).toFixed(2);
+      suval.textContent = String(+suslider.value); svval.textContent = String(+svslider.value);
+      twistV.textContent = (+twistEl.value).toFixed(2);
+      symCountV.textContent = symCount.value; symStrengthV.textContent = (+symStrength.value).toFixed(2);
+      rectUv.textContent = (+rectU.value).toFixed(2); rectVv.textContent = (+rectV.value).toFixed(2);
+      rectUszv.textContent = (+rectUsz.value).toFixed(2); rectVszv.textContent = (+rectVsz.value).toFixed(2);
+      thetav.textContent = (+thetaEl.value).toFixed(3); sizev.textContent = (+sizeEl.value).toFixed(2);
+      seedLabel.textContent = `seedP:${perlin.seedN} worleyS:${worley.seedN}`;
+      texResSel.disabled = texMatchNu.checked;
+      texBilerp.disabled = !texMatchNu.checked;
+    }
+
+    /* prefer uv_periodic when enabling noise */
+    usePerlin.addEventListener('change', (e) => {
+      if (usePerlin.checked) {
+        perlinMode.value = 'uv_periodic';
+      }
+    });
+
+    /* collapse ui */
+    collapseBtn.addEventListener('click', () => {
+      ui.classList.toggle('collapsed');
+      if (ui.classList.contains('collapsed')) { collapseBtn.textContent = '▶'; uiContent.style.display = 'none'; }
+      else { collapseBtn.textContent = '◀'; uiContent.style.display = 'block'; }
+    });
+
+    /* wire controls: on any change, sync labels and rebuild scene */
+    [
+      [modeSel, 'change'], [eqArc, 'change'], [spiral, 'change'],
+      [twistEl, 'input'], [twistEl, 'change'],
+      [Rslider, 'input'], [rslider, 'input'], [suslider, 'input'], [svslider, 'input'],
+      [adaptiveNu, 'change'],
+      [showOverlay, 'change'], [showPlaneOverlay, 'change'],
+      [symAxis, 'change'], [symCount, 'input'], [symCount, 'change'],
+      [symStrength, 'input'], [symStrength, 'change'],
+      [rectU, 'input'], [rectV, 'input'], [rectUsz, 'input'], [rectVsz, 'input'], [drawMappedRect, 'change'],
+      [thetaEl, 'input'], [thetaEl, 'change'], [sizeEl, 'input'], [sizeEl, 'change'],
+      [showSpiralArc, 'change'], [arcCloseSingle, 'change'], [showCrossSquare, 'change'],
+      [usePerlin, 'change'], [perlinMode, 'change'], [noiseType, 'change'],
+      [texResSel, 'change'], [texMatchNu, 'change'], [texBilerp, 'change']
+    ].forEach(([el, ev]) => {
+      el.addEventListener(ev, () => {
+        syncLabels();
+        rebuild();
+      });
+    });
+
+    // randomize both noise seeds (Perlin + Worley)
+    randSeedBtn.addEventListener('click', () => {
+      const newSeed = Math.floor(Math.random() * 0x7fffffff) | 0;
+      perlin.setSeed(newSeed);
+      worley.setSeed(newSeed ^ 0x123456);
+      syncLabels();
+      rebuild();
+    });
+
+    /* resize / loop */
+    function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); rebuild(); }
+    addEventListener('resize', resize);
+
+    // init once, then render loop
+    (function init() {
+      if (usePerlin) usePerlin.checked = true;
+      if (perlinMode) perlinMode.value = 'uv_periodic';
+      syncLabels(); rebuild(); resize();
+    })();
+    (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+
+  </script>
+</body>
+
+</html>
