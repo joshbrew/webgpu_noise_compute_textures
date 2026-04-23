@@ -46,6 +46,9 @@ Erosion filter (based on ["Fast and Gorgeous Erosion Filter"](https://blog.runev
 |---|---|---|
 | <img width="500" alt="image" src="https://github.com/user-attachments/assets/333fc0ef-0b6d-4d9a-8410-e996803dec15" /> |<img width="500" alt="image" src="https://github.com/user-attachments/assets/7768d79e-a3a7-4581-af98-c19595c60ff7" /> | <img width="500" alt="L1_download - 2026-04-23T144622 577 png _ L2_download - 2026-04-23T144622 577_dem_export (2)" src="https://github.com/user-attachments/assets/6812b12d-4613-4698-953d-606f727d0e3e" /> |
 
+A weird result
+<img width="300" height="300" alt="download (95)" src="https://github.com/user-attachments/assets/f2f333ed-4699-4550-8df2-66df2ca76e48" />
+
 
 ---
 
