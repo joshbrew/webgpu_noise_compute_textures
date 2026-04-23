@@ -44,7 +44,7 @@ Erosion filter (based on ["Fast and Gorgeous Erosion Filter"](https://blog.runev
 
 | 3D Composite View | Settings Variant | Hydraulic Erosion Sim Pass [Example](https://github.com/joshbrew/webgpu_hydraulic_thermal_erosion_Jako2011) | 
 |---|---|---|
-| <img width="500" alt="image" src="https://github.com/user-attachments/assets/333fc0ef-0b6d-4d9a-8410-e996803dec15" /> |<img width="500" alt="image" src="https://github.com/user-attachments/assets/7768d79e-a3a7-4581-af98-c19595c60ff7" /> | <img width="500" height="500" alt="L1_download - 2026-04-23T144622 577 png _ L2_download - 2026-04-23T144622 577_dem_export" src="https://github.com/user-attachments/assets/da4131d5-7c52-458e-948b-4792243f936d" /> |
+| <img width="500" alt="image" src="https://github.com/user-attachments/assets/333fc0ef-0b6d-4d9a-8410-e996803dec15" /> |<img width="500" alt="image" src="https://github.com/user-attachments/assets/7768d79e-a3a7-4581-af98-c19595c60ff7" /> | <img width="500" alt="L1_download - 2026-04-23T144622 577 png _ L2_download - 2026-04-23T144622 577_dem_export (3)" src="https://github.com/user-attachments/assets/15fcaa9f-8de4-4646-a796-20708cfa6fb2" /> |
 
 
 ---
