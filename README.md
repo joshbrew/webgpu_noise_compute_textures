@@ -151,8 +151,8 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 | `computeSmokeNoise`              | Looks like Perlin Worms and warped FBM           |
 | `computeTerrainNoise`            | Complex use of different noise shaders for a terrain-ish base look |
 | `computeHydrologyErosionHeightfield` | Phacelle noise 2nd pass for base textures, creates terrain-like riffles. See noiseErosionTest.js for different channel visualizations |
-| `computeHydrologyGuideField`     | May help improve erosion heightfield drainage look, special use, see noiseErosionTest.js |
-| `computeHydrologyDrainageMask`   | Masks drainage features e.g. for river or mountain snowpack texturing (see noiseErosionTest.js for usage |
+| `computeHydrologyGuideField`     | May help improve erosion heightfield drainage look, special use (see tools/noise/noiseErosionTest.js) |
+| `computeHydrologyDrainageMask`   | Masks drainage features e.g. for river or mountain snowpack texturing (see tools/noise/noiseErosionTest.js) |
 | `computeGauss5x5`                | Five by five Gaussian blur filter.               |
 | `computeNormal`                  | Scalar normal map from height channel.           |
 | `computeNormal8`                 | Eight tap normal map estimator.                  |
