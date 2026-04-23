@@ -154,6 +154,10 @@ export class NoiseComputeBuilder {
       "computeFoamNoise4D",
       "computeTurbulence4D",
 
+      "computeSmokeNoise",
+      "computeTerrainNoise",
+
+      //erosion shader
       "computeHydrologyErosionHeightfield",
       "computeHydrologyGuideField",
       "computeHydrologyDrainageMask",

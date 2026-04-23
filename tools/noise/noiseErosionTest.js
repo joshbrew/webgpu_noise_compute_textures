@@ -374,30 +374,40 @@ const APP_HTML = `
 
         <div class="field">
           <label for="base-threshold">Threshold</label>
-          <input id="base-threshold" type="number" step="0.01" value="0.10" />
+          <input id="base-threshold" type="number" step="0.01" value="0.18" />
         </div>
 
         <div class="field">
           <label for="base-edgeK">EdgeK</label>
-          <input id="base-edgeK" type="number" step="0.01" value="0.0" />
+          <input id="base-edgeK" type="number" step="0.01" value="0.32" />
         </div>
 
         <div class="field">
           <label for="base-voroMode">Voronoi mode</label>
           <select id="base-voroMode">
-            <option value="0" selected>Cell</option>
-            <option value="1">F1</option>
-            <option value="2">Interior</option>
-            <option value="3">Edges</option>
-            <option value="4">Edge threshold</option>
-            <option value="5">Flat cells</option>
-            <option value="6">Flat edges</option>
+            <option value="0">VORO_CELL</option>
+            <option value="1">VORO_F1</option>
+            <option value="2">VORO_INTERIOR</option>
+            <option value="3">VORO_EDGES</option>
+            <option value="4">VORO_EDGE_THRESH</option>
+            <option value="5">VORO_FLAT_SHADE</option>
+            <option value="6">VORO_FLAT_SHADE_INV</option>
+            <option value="7">VORO_INTERIOR_SQ</option>
+            <option value="8">VORO_EDGES_SQ</option>
+            <option value="9">VORO_EDGE_THRESH_SQ</option>
+            <option value="10">VORO_FLAT_SHADE_SQ</option>
+            <option value="11">VORO_FLAT_SHADE_INV_SQ</option>
+            <option value="12">VORO_F1_THRESH</option>
+            <option value="13">VORO_F1_MASK</option>
+            <option value="14" selected>VORO_F1_MASK_INV</option>
+            <option value="15">VORO_EDGE_RCP</option>
+            <option value="16">VORO_EDGE_RCP_SQ</option>
           </select>
         </div>
 
         <div class="field">
           <label for="base-warpAmp">Warp amp</label>
-          <input id="base-warpAmp" type="number" step="0.01" value="0.5" />
+          <input id="base-warpAmp" type="number" step="0.01" value="0.0" />
         </div>
 
         <div class="field">
@@ -477,7 +487,7 @@ const APP_HTML = `
 
     <div class="field">
       <label for="erosion-lacunarity">Lacunarity</label>
-      <input id="erosion-lacunarity" type="number" step="0.01" value="1.90" />
+      <input id="erosion-lacunarity" type="number" step="0.01" value="3.00" />
     </div>
 
     <div class="field">
@@ -526,8 +536,8 @@ const APP_HTML = `
     </div>
 
     <div class="field">
-      <label for="erosion-followFadeOffset">Follow fade offset</label>
-      <input id="erosion-followFadeOffset" type="number" step="0.01" value="0.0" />
+      <label for="erosion-followFadeOffset">Carrier height weight</label>
+      <input id="erosion-followFadeOffset" type="number" step="0.01" value="0.24" />
     </div>
 
     <div class="two-col">
@@ -542,8 +552,8 @@ const APP_HTML = `
     </div>
 
     <div class="field">
-      <label for="erosion-time">Time</label>
-      <input id="erosion-time" type="number" step="0.01" value="0.0" />
+      <label for="erosion-time">Steering weight</label>
+      <input id="erosion-time" type="number" step="0.01" value="1.10" />
     </div>
   </div>
 </details>
@@ -575,12 +585,19 @@ const APP_HTML = `
       <label for="drainage-gain">Gain</label>
       <input id="drainage-gain" type="number" step="0.01" value="0.90" />
     </div>
+
+    <div class="field">
+      <label for="drainage-carveDepth">Carve depth</label>
+      <input id="drainage-carveDepth" type="number" step="0.01" value="0.01" />
+    </div>
   </div>
 </details>
 
     <div class="actions">
       <button id="render-btn" type="button">Render stages</button>
       <button id="save-btn" type="button" class="secondary">Save final composite</button>
+      <button id="save-eroded-btn" type="button" class="secondary">Save eroded height</button>
+      <button id="save-drainage-btn" type="button" class="secondary">Save drainage mask</button>
     </div>
 
     <div class="hint">
@@ -639,8 +656,8 @@ const APP_HTML = `
       </div>
 
       <div class="stage-card">
-        <div class="stage-title">6. Final composite</div>
-        <div class="stage-subtitle">CPU composite of height, ridge structure, and drainage.</div>
+        <div class="stage-title">6. Final grayscale</div>
+        <div class="stage-subtitle">Grayscale shaded height composite with drainage carving and darkening.</div>
         <div class="canvas-wrap">
           <canvas id="stage-final" class="stage-canvas" width="1024" height="1024"></canvas>
         </div>
@@ -648,7 +665,7 @@ const APP_HTML = `
 
       <div class="stage-card">
         <div class="stage-title">7. 3D terrain preview</div>
-        <div class="stage-subtitle">Oblique terrain render from the final eroded heightfield.</div>
+        <div class="stage-subtitle">Oblique terrain render from the drainage-composited final heightfield.</div>
         <div class="canvas-wrap">
           <canvas id="stage-3d" class="stage-canvas" width="1024" height="1024"></canvas>
         </div>
@@ -659,6 +676,8 @@ const APP_HTML = `
 `;
 
 const BASE_MODE_ORDER = [
+  "computeTerrainNoise",
+  "computeSmokeNoise",
   "computeRidgedMultifractal",
   "computeRidgedMultifractal2",
   "computeRidgedMultifractal3",
@@ -679,6 +698,8 @@ const DEFAULT_BASE_SELECTION = new Set(["computeRidgedMultifractal"]);
 
 const LABEL_OVERRIDES = {
   computeRidgedMultifractal: "Ridged MF",
+  computeTerrainNoise: "Terrain Complex",
+  computeSmokeNoise: "Smoke",
   computeRidgedMultifractal2: "Ridged MF 2",
   computeRidgedMultifractal3: "Ridged MF 3",
   computeRidgedMultifractal4: "Ridged MF 4",
@@ -782,15 +803,15 @@ function readBaseParams() {
     seedAngle: 0.0,
     exp1: 1.0,
     exp2: 0.0,
-    threshold: num("base-threshold", 0.1),
+    threshold: num("base-threshold", 0.18),
     rippleFreq: 10.0,
     time: 0.0,
-    warpAmp: num("base-warpAmp", 0.5),
+    warpAmp: num("base-warpAmp", 0.0),
     gaborRadius: num("base-gaborRadius", 4.0),
     terraceStep: 8.0,
     toroidal: 0,
-    voroMode: Math.max(0, intNum("base-voroMode", 0)),
-    edgeK: num("base-edgeK", 0.0),
+    voroMode: Math.min(16, Math.max(0, intNum("base-voroMode", 14))),
+    edgeK: num("base-edgeK", 0.32),
   };
 }
 
@@ -831,7 +852,7 @@ function readErosionParams() {
     gullyWeight: num("erosion-gullyWeight", 0.5),
     detail: num("erosion-detail", 1.35),
     octaves: Math.max(1, intNum("erosion-octaves", 4)),
-    lacunarity: num("erosion-lacunarity", 1.9),
+    lacunarity: num("erosion-lacunarity", 3.0),
     gain: num("erosion-gain", 0.55),
     fadeScale: num("erosion-fadeScale", 1.6666667),
     heightBias: num("erosion-heightBias", 0.0),
@@ -841,10 +862,10 @@ function readErosionParams() {
     assumedSlopeMix: num("erosion-assumedSlopeMix", 1.0),
     onsetScale: num("erosion-onsetScale", 8.0),
     constOffset: num("erosion-constOffset", -0.65),
-    followFadeOffset: num("erosion-followFadeOffset", 0.0),
+    carrierHeightWeight: num("erosion-followFadeOffset", 0.24),
     xShift: num("erosion-xShift", 0.0),
     yShift: num("erosion-yShift", 0.0),
-    time: num("erosion-time", 0.0),
+    steeringWeight: num("erosion-time", 1.10),
   };
 }
 
@@ -855,6 +876,7 @@ function readDrainageParams() {
     slopeOnset: num("drainage-slopeOnset", 0.25),
     contrast: num("drainage-contrast", 0.25),
     gain: num("drainage-gain", 0.9),
+    carveDepth: num("drainage-carveDepth", 0.01),
   };
 }
 
@@ -934,40 +956,46 @@ function mix3(c1, c2, t) {
   return [mix(c1[0], c2[0], t), mix(c1[1], c2[1], t), mix(c1[2], c2[2], t)];
 }
 
-function terrainPalette(h) {
-  const t = clamp(h, 0, 1);
+function applyDrainageCarve(erodedData, drainageData, carveDepth) {
+  const width = erodedData.width;
+  const height = erodedData.height;
+  const out = new ImageData(width, height);
 
-  if (t < 0.25) {
-    return mix3([18, 16, 18], [60, 48, 38], t / 0.25);
+  const ed = erodedData.data;
+  const dd = drainageData.data;
+  const od = out.data;
+
+  const depth = Math.max(0, carveDepth);
+
+  for (let i = 0; i < ed.length; i += 4) {
+    const h = ed[i] / 255;
+    const drainage = dd[i] / 255;
+    const carveMask = Math.pow(clamp(drainage, 0, 1), 0.8);
+    const carved = clamp(h - carveMask * depth, 0, 1);
+    const value = Math.round(carved * 255);
+
+    od[i] = value;
+    od[i + 1] = value;
+    od[i + 2] = value;
+    od[i + 3] = 255;
   }
 
-  if (t < 0.55) {
-    return mix3([60, 48, 38], [138, 113, 86], (t - 0.25) / 0.3);
-  }
-
-  if (t < 0.82) {
-    return mix3([138, 113, 86], [128, 130, 136], (t - 0.55) / 0.27);
-  }
-
-  return mix3([128, 130, 136], [244, 244, 248], (t - 0.82) / 0.18);
+  return out;
 }
 
 function composeTerrain(
   baseData,
   guideData,
-  erodedData,
+  heightData,
   ridgeData,
   drainageData,
 ) {
-  const width = erodedData.width;
-  const height = erodedData.height;
+  const width = heightData.width;
+  const height = heightData.height;
 
   const out = new ImageData(width, height);
 
-  const bd = baseData.data;
-  const gd = guideData.data;
-  const ed = erodedData.data;
-  const rd = ridgeData.data;
+  const hd = heightData.data;
   const dd = drainageData.data;
   const od = out.data;
 
@@ -982,17 +1010,14 @@ function composeTerrain(
   const sampleH = (x, y) => {
     const cx = clamp(x, 0, width - 1);
     const cy = clamp(y, 0, height - 1);
-    return ed[(cy * width + cx) * 4] / 255;
+    return hd[(cy * width + cx) * 4] / 255;
   };
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
 
-      const baseH = bd[i] / 255;
-      const guideH = gd[i] / 255;
-      const h = ed[i] / 255;
-      const ridge = rd[i] / 255;
+      const h = hd[i] / 255;
       const drainage = dd[i] / 255;
 
       const hL = sampleH(x - 1, y);
@@ -1012,34 +1037,19 @@ function composeTerrain(
       nz /= nl;
 
       const shade =
-        0.35 +
-        0.65 * Math.max(0, nx * light[0] + ny * light[1] + nz * light[2]);
+        0.32 +
+        0.68 * Math.max(0, nx * light[0] + ny * light[1] + nz * light[2]);
 
-      let color = terrainPalette(h);
+      let gray = mix(22.0, 242.0, h);
+      gray *= shade;
 
-      const baseBreakup = (baseH - 0.5) * 36.0;
-      const guideBias = (guideH - 0.5) * 20.0;
-      color[0] += baseBreakup + guideBias;
-      color[1] += baseBreakup * 0.85 + guideBias * 0.8;
-      color[2] += baseBreakup * 0.65 + guideBias * 0.7;
+      const drainDarken = drainage * 36.0;
+      gray -= drainDarken;
 
-      const ridgeBoost = ridge * 42.0;
-      color[0] += ridgeBoost;
-      color[1] += ridgeBoost * 0.85;
-      color[2] += ridgeBoost * 0.75;
-
-      const drainTint = drainage * 0.85;
-      color[0] = mix(color[0], 175, drainTint * 0.35);
-      color[1] = mix(color[1], 220, drainTint * 0.65);
-      color[2] = mix(color[2], 255, drainTint * 0.95);
-
-      color[0] *= shade;
-      color[1] *= shade;
-      color[2] *= shade;
-
-      od[i] = clamp(Math.round(color[0]), 0, 255);
-      od[i + 1] = clamp(Math.round(color[1]), 0, 255);
-      od[i + 2] = clamp(Math.round(color[2]), 0, 255);
+      const value = clamp(Math.round(gray), 0, 255);
+      od[i] = value;
+      od[i + 1] = value;
+      od[i + 2] = value;
       od[i + 3] = 255;
     }
   }
@@ -1269,13 +1279,13 @@ async function renderStages(builder, stageCanvases) {
       exp2: erosion.fadeScale,
       threshold: erosion.cellScale,
       rippleFreq: erosion.normalization,
-      time: erosion.time,
+      time: erosion.steeringWeight,
       warpAmp: erosion.assumedSlopeValue,
       gaborRadius: erosion.assumedSlopeMix,
       terraceStep: erosion.onsetScale,
       toroidal: 0,
       voroMode: 0,
-      edgeK: erosion.followFadeOffset,
+      edgeK: erosion.carrierHeightWeight,
     };
 
     await builder.computeToTexture(size, size, erosionParams, {
@@ -1361,15 +1371,21 @@ async function renderStages(builder, stageCanvases) {
 
   const t1 = performance.now();
 
+  const compositedHeightImage = applyDrainageCarve(
+    erodedImage,
+    drainageImage,
+    drainage.carveDepth,
+  );
+
   const finalImage = composeTerrain(
     baseImage,
     guideImage,
-    erodedImage,
+    compositedHeightImage,
     ridgeImage,
     drainageImage,
   );
   drawImageData(stageCanvases.final, finalImage);
-  renderTerrain3D(erodedImage, finalImage, stageCanvases.render3d);
+  renderTerrain3D(compositedHeightImage, finalImage, stageCanvases.render3d);
 
   const t2 = performance.now();
 
@@ -1379,8 +1395,7 @@ async function renderStages(builder, stageCanvases) {
   );
 }
 
-async function saveFinalComposite(stageCanvas) {
-  const bg = selectedValue("export-bg", "transparent");
+async function saveCanvasAsPng(stageCanvas, filename, background = selectedValue("export-bg", "transparent")) {
   const src = stageCanvas;
   const out = document.createElement("canvas");
   out.width = src.width;
@@ -1388,10 +1403,10 @@ async function saveFinalComposite(stageCanvas) {
 
   const octx = out.getContext("2d", { willReadFrequently: true });
 
-  if (bg === "black") {
+  if (background === "black") {
     octx.fillStyle = "#000";
     octx.fillRect(0, 0, out.width, out.height);
-  } else if (bg === "white") {
+  } else if (background === "white") {
     octx.fillStyle = "#fff";
     octx.fillRect(0, 0, out.width, out.height);
   }
@@ -1401,18 +1416,22 @@ async function saveFinalComposite(stageCanvas) {
   const blob = await new Promise((resolve, reject) => {
     out.toBlob((b) => {
       if (b) resolve(b);
-      else reject(new Error("Failed to export final composite"));
+      else reject(new Error(`Failed to export ${filename}`));
     }, "image/png");
   });
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "erosion-final-composite.png";
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+async function saveFinalComposite(stageCanvas) {
+  await saveCanvasAsPng(stageCanvas, "erosion-final-composite.png");
 }
 
 async function init() {
@@ -1524,6 +1543,7 @@ async function init() {
     "drainage-slopeOnset",
     "drainage-contrast",
     "drainage-gain",
+    "drainage-carveDepth",
   ];
 
   for (const id of rerenderIds) {
@@ -1539,6 +1559,24 @@ async function init() {
   $("save-btn").addEventListener("click", async () => {
     try {
       await saveFinalComposite(stageCanvases.final);
+    } catch (err) {
+      console.error(err);
+      setStatus("Save failed", String(err));
+    }
+  });
+
+  $("save-eroded-btn").addEventListener("click", async () => {
+    try {
+      await saveCanvasAsPng(stageCanvases.eroded, "erosion-eroded-height.png", "black");
+    } catch (err) {
+      console.error(err);
+      setStatus("Save failed", String(err));
+    }
+  });
+
+  $("save-drainage-btn").addEventListener("click", async () => {
+    try {
+      await saveCanvasAsPng(stageCanvases.drainage, "erosion-drainage-mask.png", "black");
     } catch (err) {
       console.error(err);
       setStatus("Save failed", String(err));

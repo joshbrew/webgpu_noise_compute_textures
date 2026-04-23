@@ -4034,7 +4034,7 @@ fn generateBlueNoise(pos : vec3<f32>, params: NoiseParams) -> f32 {
 
 const HYDRO_TAU : f32 = 6.283185307179586;
 
-fn hydroClamp01(x: f32) -> f32 {
+fn clamp01(x: f32) -> f32 {
   return clamp(x, 0.0, 1.0);
 }
 
@@ -4044,7 +4044,7 @@ fn hydroHash2(p: vec2<f32>) -> vec2<f32> {
   return -1.0 + 2.0 * fract(16.0 * k * fract(q.x * q.y * (q.x + q.y)));
 }
 
-fn hydroSafeNormalize2(v: vec2<f32>) -> vec2<f32> {
+fn safeNormalize2(v: vec2<f32>) -> vec2<f32> {
   let l = length(v);
   if (l > 1e-10) {
     return v / l;
@@ -4052,16 +4052,16 @@ fn hydroSafeNormalize2(v: vec2<f32>) -> vec2<f32> {
   return vec2<f32>(0.0, 0.0);
 }
 
-fn hydroPowInv(t: f32, power: f32) -> f32 {
-  return 1.0 - pow(1.0 - hydroClamp01(t), power);
+fn powInv(t: f32, power: f32) -> f32 {
+  return 1.0 - pow(1.0 - clamp01(t), power);
 }
 
-fn hydroEaseOut(t: f32) -> f32 {
-  let v = 1.0 - hydroClamp01(t);
+fn easeOut(t: f32) -> f32 {
+  let v = 1.0 - clamp01(t);
   return 1.0 - v * v;
 }
 
-fn hydroSmoothStart(t: f32, smoothing: f32) -> f32 {
+fn smoothStart(t: f32, smoothing: f32) -> f32 {
   let s = max(smoothing, 1e-6);
   if (t >= s) {
     return t - 0.5 * s;
@@ -4069,34 +4069,34 @@ fn hydroSmoothStart(t: f32, smoothing: f32) -> f32 {
   return 0.5 * t * t / s;
 }
 
-fn hydroLoadPrevClamped2D(fx: i32, fy: i32, fz: i32) -> vec4<f32> {
+fn loadPrevClamped2D(fx: i32, fy: i32, fz: i32) -> vec4<f32> {
   let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);
   let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);
   return loadPrevRGBA(cx, cy, fz);
 }
 
-fn hydroFetchPosClamped2D(fx: i32, fy: i32, fz: i32) -> vec3<f32> {
+fn fetchPosClamped2D(fx: i32, fy: i32, fz: i32) -> vec3<f32> {
   let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);
   let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);
   return fetchPos(cx, cy, fz);
 }
 
-fn hydroResolutionScale() -> f32 {
+fn resolutionScale() -> f32 {
   let refRes = 1024.0;
   let curRes = max(min(f32(frame.fullWidth), f32(frame.fullHeight)), 1.0);
   return curRes / refRes;
 }
 
-fn hydroResolveFiniteSlope2D(fx: i32, fy: i32, fz: i32) -> vec2<f32> {
-  let hL = hydroLoadPrevClamped2D(fx - 1, fy, fz).x;
-  let hR = hydroLoadPrevClamped2D(fx + 1, fy, fz).x;
-  let hD = hydroLoadPrevClamped2D(fx, fy - 1, fz).x;
-  let hU = hydroLoadPrevClamped2D(fx, fy + 1, fz).x;
+fn resolveFiniteSlope2D(fx: i32, fy: i32, fz: i32) -> vec2<f32> {
+  let hL = loadPrevClamped2D(fx - 1, fy, fz).x;
+  let hR = loadPrevClamped2D(fx + 1, fy, fz).x;
+  let hD = loadPrevClamped2D(fx, fy - 1, fz).x;
+  let hU = loadPrevClamped2D(fx, fy + 1, fz).x;
 
-  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);
-  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);
-  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);
-  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);
+  let pL = fetchPosClamped2D(fx - 1, fy, fz);
+  let pR = fetchPosClamped2D(fx + 1, fy, fz);
+  let pD = fetchPosClamped2D(fx, fy - 1, fz);
+  let pU = fetchPosClamped2D(fx, fy + 1, fz);
 
   let dx = max(abs(pR.x - pL.x), 1e-6);
   let dy = max(abs(pU.y - pD.y), 1e-6);
@@ -4107,22 +4107,22 @@ fn hydroResolveFiniteSlope2D(fx: i32, fy: i32, fz: i32) -> vec2<f32> {
   return vec2<f32>(dHdX, dHdY);
 }
 
-fn hydroGuideGaussian(dx: i32, dy: i32, sigmaPx: f32) -> f32 {
+fn guideGaussian(dx: i32, dy: i32, sigmaPx: f32) -> f32 {
   let s = max(sigmaPx, 0.05);
   let d2 = f32(dx * dx + dy * dy);
   return exp(-0.5 * d2 / (s * s));
 }
 
-fn hydroGuideHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
-  let sigmaPx = sigmaWorld * hydroResolutionScale();
+fn guideHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
+  let sigmaPx = sigmaWorld * resolutionScale();
 
   var sumW = 0.0;
   var sumH = 0.0;
 
   for (var j: i32 = -4; j <= 4; j = j + 1) {
     for (var i: i32 = -4; i <= 4; i = i + 1) {
-      let h = hydroLoadPrevClamped2D(fx + i, fy + j, fz).x;
-      let w = hydroGuideGaussian(i, j, sigmaPx);
+      let h = loadPrevClamped2D(fx + i, fy + j, fz).x;
+      let w = guideGaussian(i, j, sigmaPx);
       sumW += w;
       sumH += h * w;
     }
@@ -4131,22 +4131,22 @@ fn hydroGuideHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
   return sumH / max(sumW, 1e-6);
 }
 
-fn hydroDrainBlurWeight(dx: i32, dy: i32, sigmaPx: f32) -> f32 {
+fn drainBlurWeight(dx: i32, dy: i32, sigmaPx: f32) -> f32 {
   let s = max(sigmaPx, 0.05);
   let d2 = f32(dx * dx + dy * dy);
   return exp(-0.5 * d2 / (s * s));
 }
 
-fn hydroBlurredHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
-  let sigmaPx = sigmaWorld * hydroResolutionScale();
+fn blurredHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
+  let sigmaPx = sigmaWorld * resolutionScale();
 
   var sumW = 0.0;
   var sumH = 0.0;
 
   for (var j: i32 = -4; j <= 4; j = j + 1) {
     for (var i: i32 = -4; i <= 4; i = i + 1) {
-      let s = hydroLoadPrevClamped2D(fx + i, fy + j, fz).x;
-      let w = hydroDrainBlurWeight(i, j, sigmaPx);
+      let s = loadPrevClamped2D(fx + i, fy + j, fz).x;
+      let w = drainBlurWeight(i, j, sigmaPx);
       sumW += w;
       sumH += s * w;
     }
@@ -4155,17 +4155,17 @@ fn hydroBlurredHeightAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
   return sumH / max(sumW, 1e-6);
 }
 
-fn hydroBlurredRidgeAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
-  let sigmaPx = sigmaWorld * hydroResolutionScale();
+fn blurredRidgeAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
+  let sigmaPx = sigmaWorld * resolutionScale();
 
   var sumW = 0.0;
   var sumR = 0.0;
 
   for (var j: i32 = -4; j <= 4; j = j + 1) {
     for (var i: i32 = -4; i <= 4; i = i + 1) {
-      let s = hydroLoadPrevClamped2D(fx + i, fy + j, fz);
+      let s = loadPrevClamped2D(fx + i, fy + j, fz);
       let ridge = s.w * 2.0 - 1.0;
-      let w = hydroDrainBlurWeight(i, j, sigmaPx);
+      let w = drainBlurWeight(i, j, sigmaPx);
       sumW += w;
       sumR += ridge * w;
     }
@@ -4174,7 +4174,7 @@ fn hydroBlurredRidgeAt(fx: i32, fy: i32, fz: i32, sigmaWorld: f32) -> f32 {
   return sumR / max(sumW, 1e-6);
 }
 
-fn hydroPhacelleNoise(
+fn phacelleNoise(
   p: vec2<f32>,
   normDir: vec2<f32>,
   freq: f32,
@@ -4214,11 +4214,11 @@ fn hydroPhacelleNoise(
   return vec4<f32>(interpolated / max(mag, 1e-6), sideDir);
 }
 
-fn hydroPixelSpan2D(fx: i32, fy: i32, fz: i32) -> f32 {
-  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);
-  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);
-  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);
-  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);
+fn pixelSpan2D(fx: i32, fy: i32, fz: i32) -> f32 {
+  let pL = fetchPosClamped2D(fx - 1, fy, fz);
+  let pR = fetchPosClamped2D(fx + 1, fy, fz);
+  let pD = fetchPosClamped2D(fx, fy - 1, fz);
+  let pU = fetchPosClamped2D(fx, fy + 1, fz);
 
   let dx = max(abs(pR.x - pL.x) * 0.5, 1e-6);
   let dy = max(abs(pU.y - pD.y) * 0.5, 1e-6);
@@ -4226,12 +4226,243 @@ fn hydroPixelSpan2D(fx: i32, fy: i32, fz: i32) -> f32 {
   return max(dx, dy);
 }
 
-fn hydroErosionFilter(
+
+fn rotate2(v: vec2<f32>, angle: f32) -> vec2<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  return vec2<f32>(v.x * c - v.y * s, v.x * s + v.y * c);
+}
+
+fn signed01(v: f32) -> f32 {
+  return v * 2.0 - 1.0;
+}
+
+fn terrainDetailMapScalar(uv: vec2<f32>, baseFreq: f32) -> f32 {
+  var value = 0.0;
+  var amp = 0.5;
+  var ampSum = 0.0;
+  var freqLoc = max(baseFreq, 1e-6);
+
+  for (var i: u32 = 0u; i < 8u; i = i + 1u) {
+    value += noise2D(uv * freqLoc) * amp;
+    ampSum += amp;
+    amp *= 0.95;
+    freqLoc *= 2.0;
+  }
+
+  return value / max(ampSum, 1e-6);
+}
+
+fn generateSmokeNoise(pos: vec3<f32>, paramsIn: NoiseParams) -> f32 {
+  let baseFreq = max(paramsIn.freq, 0.25);
+  let baseOctaves = max(paramsIn.octaves, 3u);
+  let lac = max(paramsIn.lacunarity, 2.0);
+
+  var warpParams = paramsIn;
+  warpParams.freq = baseFreq * 0.9;
+  warpParams.octaves = max(baseOctaves, 3u);
+  warpParams.gain = 0.55;
+  warpParams.lacunarity = lac;
+
+  let warpX = signed01(generateSimplex(pos + vec3<f32>(17.31, 9.73, 3.11), warpParams));
+  let warpY = signed01(generatePerlin(pos + vec3<f32>(-11.37, 14.51, 5.71), warpParams));
+  let warpZ = signed01(generateSimplex(pos + vec3<f32>(5.91, -7.13, 11.29), warpParams));
+  let warpAmp = 0.18 + max(paramsIn.warpAmp, 0.0) * 0.35;
+  let qWarp = pos + vec3<f32>(warpX, warpY, 0.35 * warpZ) * warpAmp;
+
+  var macroParams = paramsIn;
+  macroParams.freq = baseFreq * 0.5;
+  macroParams.octaves = max(baseOctaves + 1u, 4u);
+  macroParams.gain = 0.55;
+  macroParams.lacunarity = lac;
+  let macroRidge = signed01(generateRidgedMultifractal4(qWarp, macroParams));
+
+  var continentalParams = paramsIn;
+  continentalParams.freq = baseFreq * 0.28;
+  continentalParams.octaves = max(baseOctaves, 3u);
+  continentalParams.gain = 0.5;
+  continentalParams.lacunarity = lac;
+  let continental = signed01(generateBillow(qWarp + vec3<f32>(2.7, -4.1, 1.3), continentalParams));
+
+  var ridgeParams = paramsIn;
+  ridgeParams.freq = baseFreq * 1.45;
+  ridgeParams.octaves = max(baseOctaves, 4u);
+  ridgeParams.gain = 0.52;
+  ridgeParams.lacunarity = lac;
+  let detailRidge = signed01(generateRidgedMultifractal2(qWarp * 1.05 + vec3<f32>(4.2, 1.7, 0.0), ridgeParams));
+
+  var worleyParams = paramsIn;
+  worleyParams.freq = baseFreq * 1.75;
+  worleyParams.octaves = 1u;
+  worleyParams.gain = 1.0;
+  worleyParams.lacunarity = 2.0;
+  let cells = 1.0 - generateWorley(qWarp + vec3<f32>(7.5, -3.2, 0.0), worleyParams);
+  let cellular = signed01(generateCellular(qWarp * 1.1 + vec3<f32>(-5.3, 6.4, 0.0), worleyParams));
+
+  var rippleParams = paramsIn;
+  rippleParams.freq = baseFreq * 2.25;
+  rippleParams.octaves = 4u;
+  rippleParams.gain = 0.7;
+  rippleParams.lacunarity = max(lac, 2.0);
+  let rippleWarpX = signed01(generatePerlin(qWarp * 1.9 + vec3<f32>(8.7, 3.1, 0.0), rippleParams));
+  let rippleWarpY = signed01(generateSimplex(qWarp * 1.9 + vec3<f32>(-6.2, 5.4, 0.0), rippleParams));
+  let rippleCarrier = signed01(generateBillow(qWarp * 2.3 + vec3<f32>(3.6, -8.9, 0.0), rippleParams));
+  let rippleAngle = 0.6 + 0.35 * signed01(generatePerlin(qWarp + vec3<f32>(1.9, -2.7, 0.0), warpParams));
+  let ripplePos = rotate2(qWarp.xy + vec2<f32>(rippleWarpX, rippleWarpY) * 0.08, rippleAngle);
+  let rippleFreq = max(paramsIn.rippleFreq, 1.0);
+  let ripple = sin(ripplePos.x * rippleFreq + rippleCarrier * 2.8);
+  let rippleEnvelope = 0.5 + 0.5 * signed01(generatePerlin(qWarp * 1.35 + vec3<f32>(10.1, 4.8, 0.0), rippleParams));
+
+  let cellBlend = clamp01(0.3 + paramsIn.threshold * 0.9);
+  let rippleBlend = clamp01(0.02 + 0.008 * max(paramsIn.rippleFreq, 1.0));
+
+  var terrain = 0.0;
+  terrain += macroRidge * 0.46;
+  terrain += continental * 0.14;
+  terrain += detailRidge * 0.21;
+  terrain += signed01(cells) * (0.10 * cellBlend);
+  terrain += cellular * (0.06 * cellBlend);
+  terrain += ripple * rippleEnvelope * rippleBlend;
+
+  let lifted = terrain * 0.5 + 0.5 + paramsIn.zShift;
+  return clamp01(lifted);
+}
+
+fn terrainVoroModeSample(pos: vec3<f32>, freqLoc: f32, mode: u32, edgeK: f32, threshold: f32) -> f32 {
+  let s = voro_sample3D(pos * freqLoc);
+  return clamp01(voro_eval(s.f1Sq, s.f2Sq, s.cellVal, mode, edgeK, threshold, freqLoc));
+}
+
+fn terrainVoroModeSmooth(pos: vec3<f32>, freqLoc: f32, mode: u32, edgeK: f32, threshold: f32) -> f32 {
+  let step = 0.006;
+  let center = terrainVoroModeSample(pos, freqLoc, mode, edgeK, threshold);
+  let x1 = terrainVoroModeSample(pos + vec3<f32>( step, 0.0, 0.0), freqLoc, mode, edgeK, threshold);
+  let x2 = terrainVoroModeSample(pos + vec3<f32>(-step, 0.0, 0.0), freqLoc, mode, edgeK, threshold);
+  let y1 = terrainVoroModeSample(pos + vec3<f32>(0.0,  step, 0.0), freqLoc, mode, edgeK, threshold);
+  let y2 = terrainVoroModeSample(pos + vec3<f32>(0.0, -step, 0.0), freqLoc, mode, edgeK, threshold);
+  let d1 = terrainVoroModeSample(pos + vec3<f32>( step,  step, 0.0), freqLoc, mode, edgeK, threshold);
+  let d2 = terrainVoroModeSample(pos + vec3<f32>(-step,  step, 0.0), freqLoc, mode, edgeK, threshold);
+  let d3 = terrainVoroModeSample(pos + vec3<f32>( step, -step, 0.0), freqLoc, mode, edgeK, threshold);
+  let d4 = terrainVoroModeSample(pos + vec3<f32>(-step, -step, 0.0), freqLoc, mode, edgeK, threshold);
+  return clamp01((center * 4.0 + x1 * 2.0 + x2 * 2.0 + y1 * 2.0 + y2 * 2.0 + d1 + d2 + d3 + d4) / 16.0);
+}
+
+fn generateTerrainNoise(pos: vec3<f32>, paramsIn: NoiseParams) -> f32 {
+  let baseFreq = max(paramsIn.freq, 0.24);
+  let baseOctaves = max(paramsIn.octaves, 4u);
+  let lac = max(paramsIn.lacunarity, 2.0);
+  let warpAmount = 0.035 + max(paramsIn.warpAmp, 0.0) * 0.055;
+
+  var warpParams = paramsIn;
+  warpParams.freq = baseFreq * 0.55;
+  warpParams.octaves = max(baseOctaves, 3u);
+  warpParams.gain = 0.52;
+  warpParams.lacunarity = lac;
+
+  let warpA = signed01(generatePerlin(pos + vec3<f32>(7.3, -5.9, 1.7), warpParams));
+  let warpB = signed01(generateSimplex(pos + vec3<f32>(-3.1, 9.4, 2.6), warpParams));
+  let q = pos + vec3<f32>(warpA, warpB, 0.0) * warpAmount;
+
+  var macroParams = paramsIn;
+  macroParams.freq = baseFreq * 0.56;
+  macroParams.octaves = max(baseOctaves + 1u, 5u);
+  macroParams.gain = 0.58;
+  macroParams.lacunarity = lac;
+  let macroRidgeRaw = signed01(generateRidgedMultifractal4(q + vec3<f32>(4.2, 1.9, 0.0), macroParams));
+  let macroRidge = sign(macroRidgeRaw) * pow(abs(macroRidgeRaw), 1.18);
+
+  var sharpParams = paramsIn;
+  sharpParams.freq = baseFreq * 1.08;
+  sharpParams.octaves = max(baseOctaves, 5u);
+  sharpParams.gain = 0.53;
+  sharpParams.lacunarity = lac;
+  let sharpRidgeRaw = signed01(generateRidgedMultifractal2(q * 1.04 + vec3<f32>(-3.7, 2.6, 0.0), sharpParams));
+  let sharpRidge = sign(sharpRidgeRaw) * pow(abs(sharpRidgeRaw), 1.30);
+
+  var worleyParams = paramsIn;
+  worleyParams.freq = baseFreq * 0.82;
+  worleyParams.octaves = 1u;
+  worleyParams.gain = 1.0;
+  worleyParams.lacunarity = 2.0;
+  let worleyA = 1.0 - generateWorley(q + vec3<f32>(6.3, -1.7, 0.0), worleyParams);
+  let worleyB = 1.0 - generateWorley(q + vec3<f32>(6.3 + 0.012, -1.7, 0.0), worleyParams);
+  let worleyC = 1.0 - generateWorley(q + vec3<f32>(6.3 - 0.012, -1.7, 0.0), worleyParams);
+  let worleyD = 1.0 - generateWorley(q + vec3<f32>(6.3, -1.7 + 0.012, 0.0), worleyParams);
+  let worleyE = 1.0 - generateWorley(q + vec3<f32>(6.3, -1.7 - 0.012, 0.0), worleyParams);
+  let smoothedWorley = (worleyA * 4.0 + worleyB + worleyC + worleyD + worleyE) / 8.0;
+  let worleySignal = signed01(smoothedWorley);
+  let worleyCarve = smoothstep(0.38, 0.84, smoothedWorley);
+  let worleyGrad = vec2<f32>(worleyB - worleyC, worleyD - worleyE);
+  let worleyTangent = safeNormalize2(vec2<f32>(-worleyGrad.y, worleyGrad.x));
+
+  var angleParams = paramsIn;
+  angleParams.freq = baseFreq * 0.72;
+  angleParams.octaves = max(baseOctaves, 3u);
+  angleParams.gain = 0.50;
+  angleParams.lacunarity = lac;
+  let angleField = signed01(generatePerlin(q + vec3<f32>(2.1, -4.7, 0.0), angleParams));
+  let baseDir = safeNormalize2(vec2<f32>(cos(angleField * 1.9), sin(angleField * 1.9)));
+  let joinMix = smoothstep(0.18, 0.82, smoothedWorley);
+  let lineDir = safeNormalize2(mix(baseDir, worleyTangent, 0.72 * joinMix));
+  let sideDir = vec2<f32>(-lineDir.y, lineDir.x);
+
+  var rippleParams = paramsIn;
+  rippleParams.freq = baseFreq * 1.7;
+  rippleParams.octaves = 3u;
+  rippleParams.gain = 0.62;
+  rippleParams.lacunarity = max(lac, 2.0);
+  let rippleWarp = vec2<f32>(
+    signed01(generatePerlin(q * 1.25 + vec3<f32>(8.7, 1.3, 0.0), rippleParams)),
+    signed01(generateSimplex(q * 1.25 + vec3<f32>(-6.2, 4.8, 0.0), rippleParams))
+  ) * 0.024;
+  let rippleCarrier = signed01(generateBillow(q * 1.85 + vec3<f32>(3.1, -7.2, 0.0), rippleParams));
+
+  let detailMap = terrainDetailMapScalar(q.xy * 0.60 + vec2<f32>(11.7, -5.3), 2.0);
+  let detailSoft = detailMap * detailMap * (3.0 - 2.0 * detailMap);
+  let detailSignal = signed01(detailSoft);
+
+  let joinedCoord = dot(q.xy + rippleWarp, sideDir);
+  let branchCoord = dot(
+    q.xy + rippleWarp * 0.7,
+    safeNormalize2(mix(sideDir, worleyTangent, 0.35))
+  );
+  let rippleFreq = max(paramsIn.rippleFreq, 1.0) * 0.42;
+  let ripplePrimary =
+    sin(joinedCoord * rippleFreq + smoothedWorley * 4.0 + rippleCarrier * 1.1 + detailSignal * 0.28);
+  let rippleBranch =
+    sin(branchCoord * rippleFreq * 1.05 + smoothedWorley * 3.2 + rippleCarrier * 0.7 + detailSignal * 0.18);
+  let ripple = mix(ripplePrimary, rippleBranch, 0.32 + 0.28 * joinMix);
+  let rippleMask =
+    smoothstep(0.08, 0.88, abs(macroRidge)) *
+    (0.28 + 0.72 * joinMix) *
+    (0.92 + 0.08 * detailSoft);
+  let rippleBlend = clamp01(0.026 + 0.006 * max(paramsIn.rippleFreq, 1.0));
+
+  let detailMask =
+    smoothstep(0.12, 0.88, smoothedWorley) *
+    smoothstep(0.04, 0.72, abs(macroRidge));
+
+  var terrain = 0.0;
+  terrain += macroRidge * 0.40;
+  terrain += sharpRidge * 0.16;
+  terrain += worleySignal * 0.11;
+  terrain -= worleyCarve * 0.10;
+  terrain += ripple * rippleMask * rippleBlend;
+  terrain += detailSignal * detailMask * 0.012;
+
+  let shaped = sign(terrain) * pow(abs(terrain), 0.96);
+  let lifted = shaped * 0.5 + 0.5 + paramsIn.zShift;
+  return clamp01(lifted);
+}
+
+fn erosionFilter(
   p: vec2<f32>,
   heightAndSlopeIn: vec3<f32>,
   fadeTargetIn: f32,
   strengthIn: f32,
   gullyWeightIn: f32,
+  carrierWeightIn: f32,
+  steeringWeightIn: f32,
   detailIn: f32,
   roundingIn: vec4<f32>,
   onsetIn: vec4<f32>,
@@ -4252,23 +4483,24 @@ fn hydroErosionFilter(
 
   var strength = strengthIn * scaleIn;
   var freq = 1.0 / max(scaleIn * cellScaleIn, 1e-6);
+  let carrierSharpness = 1.75;
   let slopeLength = max(length(heightAndSlopeIn.yz), 1e-10);
   var magnitude = 0.0;
   var roundingMult = 1.0;
 
   let roundingForInput =
-    mix(roundingIn.y, roundingIn.x, hydroClamp01(fadeTarget + 0.5)) * roundingIn.z;
+    mix(roundingIn.y, roundingIn.x, clamp01(fadeTarget * 0.5 + 0.5)) * roundingIn.z;
 
   var combiMask =
-    hydroEaseOut(hydroSmoothStart(slopeLength * onsetIn.x, roundingForInput * onsetIn.x));
+    easeOut(smoothStart(slopeLength * onsetIn.x, roundingForInput * onsetIn.x));
 
-  var ridgeMapCombiMask = hydroEaseOut(slopeLength * onsetIn.z);
+  var ridgeMapCombiMask = easeOut(slopeLength * onsetIn.z);
   var ridgeMapFadeTarget = fadeTarget;
 
   var gullySlope =
     mix(
       heightAndSlopeIn.yz,
-      hydroSafeNormalize2(heightAndSlopeIn.yz) * assumedSlopeIn.x,
+      safeNormalize2(heightAndSlopeIn.yz) * assumedSlopeIn.x,
       assumedSlopeIn.y
     );
 
@@ -4283,9 +4515,9 @@ fn hydroErosionFilter(
     }
 
     var phacelle =
-      hydroPhacelleNoise(
+      phacelleNoise(
         p * freq,
-        hydroSafeNormalize2(gullySlope),
+        safeNormalize2(gullySlope),
         cellScaleIn,
         0.25,
         normalizationIn
@@ -4293,30 +4525,33 @@ fn hydroErosionFilter(
 
     phacelle = vec4<f32>(phacelle.xy, phacelle.z * -freq, phacelle.w * -freq);
     let sloping = abs(phacelle.y);
+    let carrierRaw = clamp(phacelle.x, -1.0, 1.0);
+    let carrierPhase = sign(carrierRaw) * pow(abs(carrierRaw), carrierSharpness);
 
     let octaveStrength = strength * stripeMask;
 
-    gullySlope += sign(phacelle.y) * phacelle.zw * octaveStrength * gullyWeightIn;
+    gullySlope += sign(phacelle.y) * phacelle.zw * octaveStrength * gullyWeightIn * steeringWeightIn;
 
-    let gullies = vec3<f32>(phacelle.x, phacelle.y * phacelle.zw);
+    let visibleGullies = vec3<f32>(carrierPhase, phacelle.y * phacelle.zw) * carrierWeightIn;
     let fadedGullies =
-      mix(vec3<f32>(fadeTarget, 0.0, 0.0), gullies * gullyWeightIn, combiMask);
+      mix(vec3<f32>(fadeTarget, 0.0, 0.0), visibleGullies, combiMask);
 
     heightAndSlope += fadedGullies * octaveStrength;
     magnitude += octaveStrength;
-    fadeTarget = mix(fadeTarget, fadedGullies.x, stripeMask);
+    let fadedCarrier = mix(fadeTarget, carrierPhase, combiMask);
+    fadeTarget = mix(fadeTarget, fadedCarrier, stripeMask);
 
     let roundingForOctave =
-      mix(roundingIn.y, roundingIn.x, hydroClamp01(phacelle.x + 0.5)) * roundingMult;
+      mix(roundingIn.y, roundingIn.x, clamp01(carrierPhase * 0.5 + 0.5)) * roundingMult;
 
     let newMask =
-      hydroEaseOut(hydroSmoothStart(sloping * onsetIn.y, roundingForOctave * onsetIn.y));
+      easeOut(smoothStart(sloping * onsetIn.y, roundingForOctave * onsetIn.y));
 
-    combiMask = hydroPowInv(combiMask, detailIn) * mix(1.0, newMask, stripeMask);
+    combiMask = powInv(combiMask, detailIn) * mix(1.0, newMask, stripeMask);
 
-    ridgeMapFadeTarget = mix(ridgeMapFadeTarget, gullies.x, ridgeMapCombiMask * stripeMask);
+    ridgeMapFadeTarget = mix(ridgeMapFadeTarget, carrierPhase, ridgeMapCombiMask * stripeMask);
 
-    let newRidgeMapMask = hydroEaseOut(sloping * onsetIn.w);
+    let newRidgeMapMask = easeOut(sloping * onsetIn.w);
     ridgeMapCombiMask = ridgeMapCombiMask * mix(1.0, newRidgeMapMask, stripeMask);
 
     strength *= gainIn;
@@ -4328,6 +4563,36 @@ fn hydroErosionFilter(
 
   let delta = heightAndSlope - inputHeightAndSlope;
   return vec4<f32>(delta, magnitude);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeTerrainNoise(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {
+    return;
+  }
+
+  let pos = fetchPos(fx, fy, fz);
+  let v0 = generateTerrainNoise(pos, params);
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn computeSmokeNoise(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let fx = i32(frame.originX) + i32(gid.x);
+  let fy = i32(frame.originY) + i32(gid.y);
+  let fz = i32(frame.originZ) + i32(gid.z);
+
+  if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) {
+    return;
+  }
+
+  let pos = fetchPos(fx, fy, fz);
+  let v0 = generateSmokeNoise(pos, params);
+  writeChannel(fx, fy, fz, v0, options.outputChannel, 0u);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -4344,12 +4609,12 @@ fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u
     return;
   }
 
-  let src = hydroLoadPrevClamped2D(fx, fy, fz);
+  let src = loadPrevClamped2D(fx, fy, fz);
   let pos = fetchPos(fx, fy, fz);
 
   var baseHeight = src.x;
   var guideHeight = src.x;
-  let rawSlope = hydroResolveFiniteSlope2D(fx, fy, fz);
+  let rawSlope = resolveFiniteSlope2D(fx, fy, fz);
   var guideSlope = rawSlope;
 
   if (params.turbulence != 0u) {
@@ -4362,8 +4627,8 @@ fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u
     }
   }
 
-  let steerSlope = mix(rawSlope, guideSlope, 0.50);
-  let fadeHeight = mix(baseHeight, guideHeight, 0.28);
+  let steerSlope = mix(rawSlope, guideSlope, 0.82);
+  let fadeHeight = mix(baseHeight, guideHeight, 0.35);
 
   var erosionScale = params.zoom;
   if (abs(erosionScale) < 1e-6) {
@@ -4386,6 +4651,17 @@ fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u
     gullyWeight = 0.5;
   }
 
+  var carrierWeight = max(params.edgeK, 0.0);
+  if (carrierWeight < 1e-6) {
+    carrierWeight = 0.24;
+  }
+  carrierWeight = clamp01(carrierWeight);
+
+  var steeringWeight = max(params.time, 0.0);
+  if (steeringWeight < 1e-6) {
+    steeringWeight = 1.10;
+  }
+
   var detail = params.seedAngle;
   if (abs(detail) < 1e-6) {
     detail = 1.5;
@@ -4405,7 +4681,7 @@ fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u
   if (abs(normalization) < 1e-6) {
     normalization = 0.5;
   }
-  normalization = hydroClamp01(normalization);
+  normalization = clamp01(normalization);
 
   var assumedSlopeValue = params.warpAmp;
   if (abs(assumedSlopeValue) < 1e-6) {
@@ -4417,7 +4693,7 @@ fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u
   if (abs(assumedSlopeMix) < 1e-6) {
     assumedSlopeMix = 1.0;
   }
-  assumedSlopeMix = hydroClamp01(assumedSlopeMix);
+  assumedSlopeMix = clamp01(assumedSlopeMix);
 
   var onsetScale = params.terraceStep;
   if (abs(onsetScale) < 1e-6) {
@@ -4449,19 +4725,20 @@ fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u
   let domainP =
     pos.xy * domainScale +
     vec2<f32>(params.xShift, params.yShift) +
-    seedShift +
-    vec2<f32>(params.time * 0.021, -params.time * 0.017);
+    seedShift;
 
-  let fadeTarget = clamp((fadeHeight + params.zShift) * fadeScale, -1.0, 1.0);
-  let pixelSpan = hydroPixelSpan2D(fx, fy, fz);
+  let fadeTarget = clamp(((fadeHeight - 0.5 + params.zShift) * 2.0) * fadeScale, -1.0, 1.0);
+  let pixelSpan = pixelSpan2D(fx, fy, fz);
 
   var ridgeMap = 0.0;
-  let h = hydroErosionFilter(
+  let h = erosionFilter(
     domainP,
     vec3<f32>(baseHeight, steerSlope.x, steerSlope.y),
     fadeTarget,
     erosionStrength,
     gullyWeight,
+    carrierWeight,
+    steeringWeight,
     detail,
     rounding,
     onset,
@@ -4477,14 +4754,12 @@ fn computeHydrologyErosionHeightfield(@builtin(global_invocation_id) gid: vec3<u
   );
 
   let terrainHeightOffsetConst = options.baseRadius;
-  let terrainHeightOffsetFollowFade = hydroClamp01(max(params.edgeK, 0.0));
 
-  let offset =
-    mix(terrainHeightOffsetConst, -fadeTarget, terrainHeightOffsetFollowFade) * h.w;
+  let offset = terrainHeightOffsetConst * h.w;
 
   let erodedHeight = baseHeight + h.x + offset;
   let outSlope = steerSlope + h.yz;
-  let ridgeMapEncoded = hydroClamp01(ridgeMap * 0.5 + 0.5);
+  let ridgeMapEncoded = clamp01(ridgeMap * 0.5 + 0.5);
 
   storeRGBA(
     fx,
@@ -4508,7 +4783,7 @@ fn computeHydrologyGuideField(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   }
 
-  let src = hydroLoadPrevClamped2D(fx, fy, fz);
+  let src = loadPrevClamped2D(fx, fy, fz);
   let rawHeight = src.x;
 
   var sigma = abs(params.threshold);
@@ -4520,24 +4795,24 @@ fn computeHydrologyGuideField(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (abs(guideBlend) < 1e-6) {
     guideBlend = 0.35;
   }
-  guideBlend = hydroClamp01(guideBlend);
+  guideBlend = clamp01(guideBlend);
 
-  let blurredC = hydroGuideHeightAt(fx, fy, fz, sigma);
-  let blurredL = hydroGuideHeightAt(fx - 1, fy, fz, sigma);
-  let blurredR = hydroGuideHeightAt(fx + 1, fy, fz, sigma);
-  let blurredD = hydroGuideHeightAt(fx, fy - 1, fz, sigma);
-  let blurredU = hydroGuideHeightAt(fx, fy + 1, fz, sigma);
+  let blurredC = guideHeightAt(fx, fy, fz, sigma);
+  let blurredL = guideHeightAt(fx - 1, fy, fz, sigma);
+  let blurredR = guideHeightAt(fx + 1, fy, fz, sigma);
+  let blurredD = guideHeightAt(fx, fy - 1, fz, sigma);
+  let blurredU = guideHeightAt(fx, fy + 1, fz, sigma);
 
   let guideHeight = mix(rawHeight, blurredC, guideBlend);
-  let guideL = mix(hydroLoadPrevClamped2D(fx - 1, fy, fz).x, blurredL, guideBlend);
-  let guideR = mix(hydroLoadPrevClamped2D(fx + 1, fy, fz).x, blurredR, guideBlend);
-  let guideD = mix(hydroLoadPrevClamped2D(fx, fy - 1, fz).x, blurredD, guideBlend);
-  let guideU = mix(hydroLoadPrevClamped2D(fx, fy + 1, fz).x, blurredU, guideBlend);
+  let guideL = mix(loadPrevClamped2D(fx - 1, fy, fz).x, blurredL, guideBlend);
+  let guideR = mix(loadPrevClamped2D(fx + 1, fy, fz).x, blurredR, guideBlend);
+  let guideD = mix(loadPrevClamped2D(fx, fy - 1, fz).x, blurredD, guideBlend);
+  let guideU = mix(loadPrevClamped2D(fx, fy + 1, fz).x, blurredU, guideBlend);
 
-  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);
-  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);
-  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);
-  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);
+  let pL = fetchPosClamped2D(fx - 1, fy, fz);
+  let pR = fetchPosClamped2D(fx + 1, fy, fz);
+  let pD = fetchPosClamped2D(fx, fy - 1, fz);
+  let pU = fetchPosClamped2D(fx, fy + 1, fz);
 
   let dx = max(abs(pR.x - pL.x), 1e-6);
   let dy = max(abs(pU.y - pD.y), 1e-6);
@@ -4556,16 +4831,16 @@ fn computeHydrologyGuideField(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn computeHydroDrainageField(fx: i32, fy: i32, fz: i32) -> vec4<f32> {
   let coarseSigma = 1.75;
 
-  let hC = hydroBlurredHeightAt(fx, fy, fz, coarseSigma);
-  let hL = hydroBlurredHeightAt(fx - 1, fy, fz, coarseSigma);
-  let hR = hydroBlurredHeightAt(fx + 1, fy, fz, coarseSigma);
-  let hD = hydroBlurredHeightAt(fx, fy - 1, fz, coarseSigma);
-  let hU = hydroBlurredHeightAt(fx, fy + 1, fz, coarseSigma);
+  let hC = blurredHeightAt(fx, fy, fz, coarseSigma);
+  let hL = blurredHeightAt(fx - 1, fy, fz, coarseSigma);
+  let hR = blurredHeightAt(fx + 1, fy, fz, coarseSigma);
+  let hD = blurredHeightAt(fx, fy - 1, fz, coarseSigma);
+  let hU = blurredHeightAt(fx, fy + 1, fz, coarseSigma);
 
-  let pL = hydroFetchPosClamped2D(fx - 1, fy, fz);
-  let pR = hydroFetchPosClamped2D(fx + 1, fy, fz);
-  let pD = hydroFetchPosClamped2D(fx, fy - 1, fz);
-  let pU = hydroFetchPosClamped2D(fx, fy + 1, fz);
+  let pL = fetchPosClamped2D(fx - 1, fy, fz);
+  let pR = fetchPosClamped2D(fx + 1, fy, fz);
+  let pD = fetchPosClamped2D(fx, fy - 1, fz);
+  let pU = fetchPosClamped2D(fx, fy + 1, fz);
 
   let dx = max(abs(pR.x - pL.x), 1e-6);
   let dy = max(abs(pU.y - pD.y), 1e-6);
@@ -4575,24 +4850,24 @@ fn computeHydroDrainageField(fx: i32, fy: i32, fz: i32) -> vec4<f32> {
     (hU - hD) / dy
   );
 
-  let flowDir = -hydroSafeNormalize2(slope);
+  let flowDir = -safeNormalize2(slope);
 
-  let ridgeBroad = hydroBlurredRidgeAt(fx, fy, fz, 1.6);
+  let ridgeBroad = blurredRidgeAt(fx, fy, fz, 1.6);
   let valleyPrior = 1.0 - smoothstep(-0.12, 0.08, ridgeBroad);
 
   let valleyDepth = max(0.0, (hL + hR + hD + hU) * 0.25 - hC);
   let concavityGain = max(abs(params.edgeK), 1e-4) * 36.0;
-  let concavityMask = hydroClamp01(valleyDepth * concavityGain);
+  let concavityMask = clamp01(valleyDepth * concavityGain);
 
   let slopeOnset = max(abs(params.warpAmp), 1e-4);
-  let slopeMask = hydroEaseOut(hydroClamp01(length(slope) / slopeOnset));
+  let slopeMask = easeOut(clamp01(length(slope) / slopeOnset));
 
   let contrast = max(abs(params.exp1), 1e-4);
   let gain = max(abs(params.exp2), 1e-4);
 
   var drainage = valleyPrior * concavityMask * slopeMask;
-  drainage = pow(hydroClamp01(drainage), contrast);
-  drainage = hydroClamp01(drainage * gain);
+  drainage = pow(clamp01(drainage), contrast);
+  drainage = clamp01(drainage * gain);
 
   return vec4<f32>(
     drainage,
