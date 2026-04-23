@@ -37,6 +37,14 @@ e.g. mixed Billow noise
 |---|---|---|
 | ![6](https://github.com/user-attachments/assets/082248d7-a0ee-4399-b128-d86416a914ba) | ![8](https://github.com/user-attachments/assets/19776136-85ff-40af-b458-722450e8908a) | <img src="https://github.com/user-attachments/assets/94bfb06f-1554-48f3-ad9d-75a73f84789a" /> |
 
+Erosion filter (based on ["Fast and Gorgeous Erosion Filter"](https://blog.runevision.com/2026/03/fast-and-gorgeous-erosion-filter.html) by Runevision)
+| Eroded RidgedMF + Lanczos Billow Noise | Drainage Mask | Composite |
+|---|---|---|
+| <img width="1024" height="1024" alt="download - 2026-04-23T150137 409" src="https://github.com/user-attachments/assets/bb58afc9-99e6-468e-9ee0-c71a6f605f36" /> | <img width="1024" height="1024" alt="download - 2026-04-23T150142 671" src="https://github.com/user-attachments/assets/fa968b74-7047-47ef-97fb-09bc20b0c1df" /> | <img width="1024" height="1024" alt="download - 2026-04-23T150145 529" src="https://github.com/user-attachments/assets/f9e2f318-e770-45a0-a79a-eb4102a2ab91" /> |
+
+| 3D Composite View | Settings Variant | Hydraulic Erosion Sim Pass [Example](https://github.com/joshbrew/webgpu_hydraulic_thermal_erosion_Jako2011) | 
+|---|---|---|
+| <img width="500" alt="image" src="https://github.com/user-attachments/assets/333fc0ef-0b6d-4d9a-8410-e996803dec15" /> |<img width="500" alt="image" src="https://github.com/user-attachments/assets/7768d79e-a3a7-4581-af98-c19595c60ff7" /> | <img width="500" height="500" alt="L1_download - 2026-04-23T144622 577 png _ L2_download - 2026-04-23T144622 577_dem_export" src="https://github.com/user-attachments/assets/da4131d5-7c52-458e-948b-4792243f936d" /> |
 
 
 ---
@@ -140,6 +148,11 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 | `computeTerraceNoise4D`          | 4D terrace shaping for toroidal volumes.         |
 | `computeFoamNoise4D`             | 4D foam noise for toroidal volumes.              |
 | `computeTurbulence4D`            | 4D turbulence wrapper for toroidal volumes.      |
+| `computeSmokeNoise`              | Looks like Perlin Worms and warped FBM           |
+| `computeTerrainNoise`            | Complex use of different noise shaders for a terrain-ish base look |
+| `computeHydrologyErosionHeightfield` | Phacelle noise 2nd pass for base textures, creates terrain-like riffles. See noiseErosionTest.js for different channel visualizations |
+| `computeHydrologyGuideField`     | May help improve erosion heightfield drainage look, special use, see noiseErosionTest.js |
+| `computeHydrologyDrainageMask`   | Masks drainage features e.g. for river or mountain snowpack texturing (see noiseErosionTest.js for usage |
 | `computeGauss5x5`                | Five by five Gaussian blur filter.               |
 | `computeNormal`                  | Scalar normal map from height channel.           |
 | `computeNormal8`                 | Eight tap normal map estimator.                  |
