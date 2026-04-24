@@ -3,7 +3,14 @@
 
 ### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
 
+Test UI: 
+
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/053c501e-68d8-4064-89d1-34d7b58e9c0a" />
+
 ##### See also: [https://codepen.io/joshbrew/pen/RNWQvXB](https://codepen.io/joshbrew/pen/RNWQvXB) Toroidal noise explainer.
+
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/cad8de6a-9b05-4cbb-8a83-47ac015ce25a" />
+
 
 ##### And for a use case: [Procedural WebGPU volumetric clouds](https://github.com/joshbrew/webgpu_realtime_clouds)
 
