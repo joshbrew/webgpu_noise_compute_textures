@@ -1,6 +1,6 @@
 // tools/clouds/cloudTestThreaded.js
 // clouds-ui.js
-// Immediate UI -> worker sync. No debounce. Per-texture mode selectors.
+// Debounced UI -> worker sync. Per-texture mode selectors.
 // Shape/detail 3D selectors are filtered to 4D entry points only.
 
 import html from "./clouds.html";
@@ -23,10 +23,11 @@ let ENTRY_POINTS = [];
 // Default preview + noise param blocks (each has seed)
 const preview = {
   cam: { x: -1.2, y: 0.1, z: -1, yawDeg: 35, pitchDeg: 1, fovYDeg: 60 },
-  exposure: 1.35,
-  sky: [0.55, 0.7, 0.95],
+  exposure: 1.08,
+  sky: [0.56, 0.68, 0.94],
   layer: 0,
-  sun: { azDeg: 45, elDeg: 22, bloom: 0.0 },
+  renderQuality: 1,
+  sun: { azDeg: 36, elDeg: 8, bloom: 0.58 },
 };
 
 // Weather params (R channel)
@@ -161,10 +162,16 @@ const u32 = (id, fallback) => {
 };
 
 const safeClone = (o) => {
+  if (o == null || typeof o !== "object") return o;
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(o);
+    } catch {}
+  }
   try {
     return JSON.parse(JSON.stringify(o));
   } catch {
-    return Object.assign({}, o);
+    return Array.isArray(o) ? o.slice() : Object.assign({}, o);
   }
 };
 
@@ -279,10 +286,11 @@ function cloneTuning(t) {
 
 function readTuning() {
   return {
-    maxSteps: +($("t-maxSteps")?.value || 256) | 0,
+    maxSteps: +($("t-maxSteps")?.value || 128) | 0,
     minStep: +($("t-minStep")?.value || 0.003),
-    maxStep: +($("t-maxStep")?.value || 0.1),
-    sunSteps: +($("t-sunSteps")?.value || 4) | 0,
+    maxStep: +($("t-maxStep")?.value || 0.16),
+    sunSteps: +($("t-sunSteps")?.value || 6) | 0,
+    sunStride: 4,
     phaseJitter: +($("t-phaseJitter")?.value || 1.0),
     stepJitter: +($("t-stepJitter")?.value || 0.08),
     baseJitterFrac: +($("t-baseJitter")?.value || 0.15),
@@ -290,10 +298,11 @@ function readTuning() {
     lodBiasWeather: +($("t-lodBiasWeather")?.value || 1.5),
     nearFluffDist: +($("t-nearFluffDist")?.value || 60.0),
     nearDensityMult: +($("t-nearDensityMult")?.value || 2.5),
+    lodBlendThreshold: +($("t-lodBlendThreshold")?.value || 0.38),
     farStart: +($("t-farStart")?.value || 800.0),
     farFull: +($("t-farFull")?.value || 2500.0),
-    raySmoothDens: +($("t-raySmoothDens")?.value || 0.5),
-    raySmoothSun: +($("t-raySmoothSun")?.value || 0.5),
+    raySmoothDens: +($("t-raySmoothDens")?.value || 0.42),
+    raySmoothSun: +($("t-raySmoothSun")?.value || 0.28),
   };
 }
 
@@ -339,19 +348,19 @@ function readCloudParams() {
   preview.sun.bloom = sunBloom;
 
   return {
-    globalCoverage: num("p-coverage", 1),
-    globalDensity: num("p-density", 100),
+    globalCoverage: num("p-coverage", 1.0),
+    globalDensity: num("p-density", 100.0),
     cloudAnvilAmount: num("p-anvil", 0.1),
-    cloudBeer: num("p-beer", 6),
-    attenuationClamp: num("p-clamp", 0.15),
-    inScatterG: num("p-ins", 0.7),
-    silverIntensity: num("p-sI", 0.25),
-    silverExponent: num("p-sE", 16.0),
-    outScatterG: num("p-outs", 0.2),
-    inVsOut: num("p-ivo", 0.3),
-    outScatterAmbientAmt: num("p-ambOut", 1.0),
-    ambientMinimum: num("p-ambMin", 0.25),
-    sunColor: [1.0, 1.0, 1.0],
+    cloudBeer: num("p-beer", 6.0),
+    attenuationClamp: num("p-clamp", 0.015),
+    inScatterG: num("p-ins", 0.72),
+    silverIntensity: num("p-sI", 3.0),
+    silverExponent: num("p-sE", 6.0),
+    outScatterG: num("p-outs", 0.0),
+    inVsOut: num("p-ivo", 0.0),
+    outScatterAmbientAmt: num("p-ambOut", 0.12),
+    ambientMinimum: num("p-ambMin", 0.055),
+    sunColor: [1.0, 0.66, 0.42],
     sunAzDeg: sunAz,
     sunElDeg: sunEl,
     sunBloom,
@@ -597,18 +606,187 @@ function ensureCoarseInPayload(payload) {
     const rp = getReprojPayload();
     payload.reproj = payload.reproj || rp;
     payload.coarseFactor = rp.coarseFactor;
-  } else payload.coarseFactor = payload.coarseFactor || 4;
+  } else payload.coarseFactor = payload.coarseFactor || 1;
   return payload;
 }
 
+
+let latestRunFramePayload = null;
+let runFrameScheduled = false;
+let runFrameInFlight = false;
+let latestLoopStatePayload = null;
+let loopStateScheduled = false;
+let loopStateInFlight = false;
+
+function scheduleOnNextAnimationFrame(fn) {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(fn);
+  } else {
+    setTimeout(fn, 0);
+  }
+}
+
+function normalizeInteractiveFramePayload(payload) {
+  const p = ensureCoarseInPayload(payload || {});
+  p.waitForGpu = false;
+  p.logFrame = false;
+  return p;
+}
+
+function scheduleLoopStateUpdate(payload) {
+  latestLoopStatePayload = normalizeInteractiveFramePayload(payload);
+  if (loopStateScheduled) return Promise.resolve();
+  loopStateScheduled = true;
+  scheduleOnNextAnimationFrame(() => {
+    loopStateScheduled = false;
+    drainLoopStateUpdates().catch((err) => console.warn("loop state update failed", err));
+  });
+  return Promise.resolve();
+}
+
+async function drainLoopStateUpdates() {
+  if (loopStateInFlight) return;
+  loopStateInFlight = true;
+  try {
+    while (latestLoopStatePayload) {
+      const payload = latestLoopStatePayload;
+      latestLoopStatePayload = null;
+      await rpc("updateLastRunPayload", payload);
+    }
+  } finally {
+    loopStateInFlight = false;
+    if (latestLoopStatePayload && !loopStateScheduled) {
+      loopStateScheduled = true;
+      scheduleOnNextAnimationFrame(() => {
+        loopStateScheduled = false;
+        drainLoopStateUpdates().catch((err) => console.warn("loop state update failed", err));
+      });
+    }
+  }
+}
+
+function scheduleRunFrameLatest(payload) {
+  const p = normalizeInteractiveFramePayload(payload);
+  if (animRunning && reprojEnabled) return scheduleLoopStateUpdate(p);
+
+  latestRunFramePayload = p;
+  if (runFrameScheduled) return Promise.resolve();
+  runFrameScheduled = true;
+  scheduleOnNextAnimationFrame(() => {
+    runFrameScheduled = false;
+    drainRunFrameLatest().catch((err) => console.warn("queued runFrame failed", err));
+  });
+  return Promise.resolve();
+}
+
+async function drainRunFrameLatest() {
+  if (runFrameInFlight) return;
+  runFrameInFlight = true;
+  try {
+    while (latestRunFramePayload) {
+      const payload = latestRunFramePayload;
+      latestRunFramePayload = null;
+      await rpc("runFrame", payload);
+    }
+  } finally {
+    runFrameInFlight = false;
+    if (latestRunFramePayload && !runFrameScheduled) {
+      runFrameScheduled = true;
+      scheduleOnNextAnimationFrame(() => {
+        runFrameScheduled = false;
+        drainRunFrameLatest().catch((err) => console.warn("queued runFrame failed", err));
+      });
+    }
+  }
+}
+
 // ---- UI wiring helpers ----
-function attachByIds(ids, handler) {
+function debounce(fn, delayMs = 80) {
+  let timer = 0;
+  const wrapped = (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = 0;
+      fn(...args);
+    }, delayMs);
+  };
+  wrapped.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = 0;
+  };
+  return wrapped;
+}
+
+function debounceAsync(fn, delayMs = 90) {
+  let timer = 0;
+  let running = false;
+  let rerun = false;
+  let lastArgs = [];
+
+  const run = async () => {
+    if (running) {
+      rerun = true;
+      return;
+    }
+    running = true;
+    try {
+      do {
+        rerun = false;
+        await fn(...lastArgs);
+      } while (rerun);
+    } finally {
+      running = false;
+    }
+  };
+
+  const wrapped = (...args) => {
+    lastArgs = args;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = 0;
+      run().catch((err) => console.warn("debounced UI task failed", err));
+    }, delayMs);
+  };
+
+  wrapped.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = 0;
+  };
+
+  wrapped.flush = (...args) => {
+    lastArgs = args;
+    wrapped.cancel();
+    return run();
+  };
+
+  return wrapped;
+}
+
+function attachByIds(ids, handler, opts = {}) {
+  const delayMs = opts.delayMs ?? 90;
+  const onInput = debounceAsync(handler, delayMs);
+  const onChange = (ev) => {
+    onInput.flush(ev).catch((err) => console.warn("UI change handler failed", err));
+  };
+
   for (const id of ids) {
     const el = $(id);
     if (!el) continue;
-    el.addEventListener("input", handler);
-    el.addEventListener("change", handler);
+    el.addEventListener("input", onInput);
+    el.addEventListener("change", onChange);
   }
+}
+
+function attachPanelInputs(panel, handler, delayMs = 70) {
+  if (!panel) return;
+  const onInput = debounceAsync(handler, delayMs);
+  const onChange = (ev) => {
+    onInput.flush(ev).catch((err) => console.warn("panel change handler failed", err));
+  };
+  panel.querySelectorAll("input,select,textarea").forEach((inp) => {
+    inp.addEventListener("input", onInput);
+    inp.addEventListener("change", onChange);
+  });
 }
 
 function attachTuningInputs() {
@@ -618,11 +796,11 @@ function attachTuningInputs() {
     ),
   );
   if (!inputs.length) return;
+  const sendDebounced = debounce(() => sendTuningIfChanged(), 100);
   inputs.forEach((inp) => {
-    inp.addEventListener("input", () => {
-      sendTuningIfChanged();
-    });
+    inp.addEventListener("input", sendDebounced);
     inp.addEventListener("change", () => {
+      sendDebounced.cancel();
       sendTuningIfChanged();
     });
   });
@@ -665,7 +843,7 @@ async function runAfterBakeAndTuning(
 async function runFrameEnsuringTuning(payload = {}) {
   await sendTuningNow();
   ensureCoarseInPayload(payload);
-  return rpc("runFrame", payload);
+  return scheduleRunFrameLatest(payload);
 }
 
 // ---- UI busy indicator ----
@@ -884,9 +1062,11 @@ async function wireUI() {
       if (reprojEnabled) payload.reproj = getReprojPayload();
       ensureCoarseInPayload(payload);
 
+      payload.waitForGpu = true;
+      payload.logFrame = true;
       const { timings } = await rpc("runFrame", payload);
       console.log(
-        "[BENCH] compute(ms):",
+        timings.waitedForGpu ? "[BENCH waited] compute(ms):" : "[BENCH submitted] compute(ms):",
         timings.computeMs.toFixed(2),
         "render(ms):",
         timings.renderMs.toFixed(2),
@@ -987,7 +1167,7 @@ async function wireUI() {
         };
         if (reprojEnabled) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
-        await rpc("runFrame", payload);
+        await scheduleRunFrameLatest(payload);
       } catch (e) {
         console.warn("weather transform update failed", e);
       }
@@ -1096,7 +1276,7 @@ async function wireUI() {
         };
         if (reprojEnabled) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
-        await rpc("runFrame", payload);
+        await scheduleRunFrameLatest(payload);
       } catch (e) {
         console.warn("shape transform update failed", e);
       }
@@ -1137,74 +1317,64 @@ async function wireUI() {
         };
         if (reprojEnabled) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
-        await rpc("runFrame", payload);
+        await scheduleRunFrameLatest(payload);
       } catch (e) {
         console.warn("detail transform update failed", e);
       }
     },
   );
 
-  // cloud params panel: send tuning then runFrame
-  {
-    const panel = $("p-cloudParams");
-    if (panel) {
-      panel.querySelectorAll("input,select,textarea").forEach((inp) => {
-        inp.addEventListener("input", async () => {
-          readPreview();
-          const cloudParams = readCloudParams();
-          await sendTuningNow();
-          const payload = {
-            weatherParams: safeClone(weatherParams),
-            billowParams: safeClone(billowParams),
-            weatherBParams: safeClone(weatherBParams),
-            shapeParams: safeClone(shapeParams),
-            detailParams: safeClone(detailParams),
-            tileTransforms: safeClone(tileTransforms),
-            preview: safeClone(preview),
-            cloudParams,
-          };
-          if (reprojEnabled) payload.reproj = getReprojPayload();
-          ensureCoarseInPayload(payload);
-          try {
-            await rpc("runFrame", payload);
-          } catch (e) {
-            console.warn("runFrame failed (cloudParams)", e);
-          }
-        });
-      });
+  // cloud params panel: debounce high-frequency sliders and run one latest frame.
+  attachPanelInputs($("p-cloudParams"), async () => {
+    readPreview();
+    const cloudParams = readCloudParams();
+    const tuning = readTuning();
+    const payload = {
+      weatherParams: safeClone(weatherParams),
+      billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
+      shapeParams: safeClone(shapeParams),
+      detailParams: safeClone(detailParams),
+      tileTransforms: safeClone(tileTransforms),
+      preview: safeClone(preview),
+      cloudParams,
+      tuning,
+    };
+    if (reprojEnabled) payload.reproj = getReprojPayload();
+    ensureCoarseInPayload(payload);
+    try {
+      await scheduleRunFrameLatest(payload);
+      lastTuningSent = cloneTuning(tuning);
+    } catch (e) {
+      console.warn("runFrame failed (cloudParams)", e);
     }
-  }
+  }, 70);
 
-  // preview panel: send tuning then runFrame
-  {
-    const panel = $("p-preview");
-    if (panel) {
-      panel.querySelectorAll("input,select,textarea").forEach((inp) => {
-        inp.addEventListener("input", async () => {
-          readPreview();
-          const cloudParams = readCloudParams();
-          await sendTuningNow();
-          const payload = {
-            weatherParams: safeClone(weatherParams),
-            billowParams: safeClone(billowParams),
-            weatherBParams: safeClone(weatherBParams),
-            shapeParams: safeClone(shapeParams),
-            detailParams: safeClone(detailParams),
-            tileTransforms: safeClone(tileTransforms),
-            preview: safeClone(preview),
-            cloudParams,
-          };
-          if (reprojEnabled) payload.reproj = getReprojPayload();
-          ensureCoarseInPayload(payload);
-          try {
-            await rpc("runFrame", payload);
-          } catch (e) {
-            console.warn("runFrame failed (preview)", e);
-          }
-        });
-      });
+  // preview panel: debounce camera/light edits and avoid a separate tuning RPC.
+  attachPanelInputs($("p-preview"), async () => {
+    readPreview();
+    const cloudParams = readCloudParams();
+    const tuning = readTuning();
+    const payload = {
+      weatherParams: safeClone(weatherParams),
+      billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
+      shapeParams: safeClone(shapeParams),
+      detailParams: safeClone(detailParams),
+      tileTransforms: safeClone(tileTransforms),
+      preview: safeClone(preview),
+      cloudParams,
+      tuning,
+    };
+    if (reprojEnabled) payload.reproj = getReprojPayload();
+    ensureCoarseInPayload(payload);
+    try {
+      await scheduleRunFrameLatest(payload);
+      lastTuningSent = cloneTuning(tuning);
+    } catch (e) {
+      console.warn("runFrame failed (preview)", e);
     }
-  }
+  }, 55);
 
   attachTuningInputs();
 
@@ -1362,7 +1532,7 @@ async function wireUI() {
     }
   });
 
-  window.addEventListener("resize", () => sendSizes());
+  window.addEventListener("resize", debounce(() => sendSizes(), 120));
 }
 
 // ---- init ----
@@ -1483,34 +1653,35 @@ async function init() {
   setIf("c-el", preview.sun.elDeg);
   setIf("c-bloom", preview.sun.bloom);
 
-  setIf("p-coverage", 1);
-  setIf("p-density", 100);
+  setIf("p-coverage", 1.0);
+  setIf("p-density", 100.0);
   setIf("p-beer", 6);
-  setIf("p-clamp", 0.15);
-  setIf("p-ins", 0.7);
-  setIf("p-outs", 0.2);
-  setIf("p-ivo", 0.3);
-  setIf("p-sI", 0.25);
-  setIf("p-sE", 16);
-  setIf("p-ambOut", 1.0);
-  setIf("p-ambMin", 0.25);
+  setIf("p-clamp", 0.015);
+  setIf("p-ins", 0.30);
+  setIf("p-outs", 0);
+  setIf("p-ivo", 0);
+  setIf("p-sI", 0.18);
+  setIf("p-sE", 6.0);
+  setIf("p-ambOut", 0.08);
+  setIf("p-ambMin", 0.045);
   setIf("p-anvil", 0.1);
 
-  setIf("t-maxSteps", 256);
+  setIf("t-maxSteps", 128);
   setIf("t-minStep", 0.003);
-  setIf("t-maxStep", 0.1);
-  setIf("t-sunSteps", 4);
+  setIf("t-maxStep", 0.16);
+  setIf("t-sunSteps", 6);
   setIf("t-phaseJitter", 1.0);
   setIf("t-stepJitter", 0.08);
   setIf("t-baseJitter", 0.15);
   setIf("t-topJitter", 0.1);
   setIf("t-lodBiasWeather", 1.5);
+  setIf("t-lodBlendThreshold", 0.38);
   setIf("t-nearFluffDist", 60);
   setIf("t-nearDensityMult", 2.5);
   setIf("t-farStart", 800);
   setIf("t-farFull", 2500);
-  setIf("t-raySmoothDens", 0.5);
-  setIf("t-raySmoothSun", 0.5);
+  setIf("t-raySmoothDens", 0.42);
+  setIf("t-raySmoothSun", 0.28);
 
   // preview
   setIf("v-cx", preview.cam.x);
@@ -1536,9 +1707,16 @@ async function init() {
     if (type === "log") console.log(...(data || []));
     if (type === "frame") {
       const info = data || {};
-      const fps = info.fps ? Math.round(info.fps * 100) / 100 : "-";
+      const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "-");
       const fpsEl = $("fpsDisplay");
-      if (fpsEl) fpsEl.textContent = String(fps);
+      if (fpsEl) {
+        const gpu = fmt(info.gpuFps);
+        const submit = fmt(info.submitFps);
+        const gpuMs = Number.isFinite(info.gpuFrameMs) && info.gpuFrameMs > 0 ? `${Math.round(info.gpuFrameMs * 10) / 10}ms` : "-";
+        fpsEl.textContent = info.gpuFps
+          ? `GPU ${gpu} fps (${gpuMs}) · submit ${submit}`
+          : `submit ${submit} fps · GPU measuring`;
+      }
     }
     if (type === "loop-stopped") {
       animRunning = false;

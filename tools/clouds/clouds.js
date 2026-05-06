@@ -138,6 +138,7 @@ export class CloudComputeBuilder {
     this._currentBg1 = null;
 
     this._render = null;
+    this._renderSourceView = null;
     this._ctxCache = new WeakMap();
     this._canvasStates = new WeakMap();
     this._renderBgCache = new WeakMap();
@@ -171,22 +172,22 @@ export class CloudComputeBuilder {
         r3: 0.0,
       },
       params: {
-        globalCoverage: 0.6,
-        globalDensity: 1.0,
+        globalCoverage: 1.0,
+        globalDensity: 1000.0,
         cloudAnvilAmount: 0.0,
         cloudBeer: 6.0,
-        attenuationClamp: 0.2,
-        inScatterG: 0.2,
-        silverIntensity: 2.5,
-        silverExponent: 2.0,
-        outScatterG: 0.1,
-        inVsOut: 0.5,
-        outScatterAmbientAmt: 0.9,
-        ambientMinimum: 0.2,
-        sunColor: [1.0, 0.95, 0.9],
+        attenuationClamp: 0.015,
+        inScatterG: 0.55,
+        silverIntensity: 12.0,
+        silverExponent: 5.0,
+        outScatterG: 0.08,
+        inVsOut: 0.55,
+        outScatterAmbientAmt: 0.12,
+        ambientMinimum: 0.075,
+        sunColor: [1.0, 0.96, 0.90],
         densityDivMin: 0.001,
-        silverDirectionBias: 0.0,
-        silverHorizonBoost: 0.0,
+        silverDirectionBias: 0.9,
+        silverHorizonBoost: 0.35,
       },
       ntransform: {
         shapeOffsetWorld: [0, 0, 0],
@@ -204,7 +205,7 @@ export class CloudComputeBuilder {
         subsample: 1,
         sampleOffset: 0,
         motionIsNormalized: 0,
-        temporalBlend: 0.0,
+        temporalBlend: 0.82,
         depthTest: 0,
         depthTolerance: 0.0,
         frameIndex: 0,
@@ -216,7 +217,7 @@ export class CloudComputeBuilder {
         coarseMipBias: 0.0,
       },
       light: {
-        sunDir: [-0.4, 0.8, 0.45],
+        sunDir: [0.65, 0.37, -0.65],
         camPos: [0, 0, 2],
       },
       box: {
@@ -225,12 +226,12 @@ export class CloudComputeBuilder {
         uvScale: 1.5,
       },
       tuning: {
-        maxSteps: 256,
+        maxSteps: 128,
         minStep: 0.003,
-        maxStep: 0.1,
-        sunSteps: 4,
+        maxStep: 0.16,
+        sunSteps: 6,
         sunStride: 4,
-        sunMinTr: 0.005,
+        sunMinTr: 0.003,
         phaseJitter: 1.0,
         stepJitter: 0.08,
         baseJitterFrac: 0.15,
@@ -239,16 +240,16 @@ export class CloudComputeBuilder {
         aabbFaceOffset: 0.0015,
         weatherRejectGate: 0.99,
         weatherRejectMip: 1.0,
-        emptySkipMult: 3.0,
+        emptySkipMult: 3.8,
         nearFluffDist: 60.0,
         nearStepScale: 0.3,
         nearLodBias: -1.5,
         nearDensityMult: 2.5,
         nearDensityRange: 45.0,
-        lodBlendThreshold: 0.05,
-        sunDensityGate: 0.015,
-        fflyRelClamp: 2.5,
-        fflyAbsFloor: 1.5,
+        lodBlendThreshold: 0.38,
+        sunDensityGate: 0.0025,
+        fflyRelClamp: 1.6,
+        fflyAbsFloor: 0.85,
         taaRelMin: 0.22,
         taaRelMax: 1.1,
         taaAbsEps: 0.02,
@@ -256,11 +257,11 @@ export class CloudComputeBuilder {
         farFull: 2500.0,
         farLodPush: 0.8,
         farDetailAtten: 0.5,
-        farStepMult: 1.6,
+        farStepMult: 1.85,
         bnFarScale: 0.35,
         farTaaHistoryBoost: 1.35,
-        raySmoothDens: 0.5,
-        raySmoothSun: 0.5,
+        raySmoothDens: 0.42,
+        raySmoothSun: 0.28,
       },
     };
 
@@ -724,7 +725,6 @@ export class CloudComputeBuilder {
     dv.setFloat32(28, s.r3, true);
 
     this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
-    this._bg0Dirty = true;
   }
 
   setTemporalSeed(seed = 0) {
@@ -792,7 +792,6 @@ export class CloudComputeBuilder {
     dv.setFloat32(76, 0.0, true);
 
     this._writeIfChanged("params", this.paramsBuffer, this._abParams);
-    this._bg0Dirty = true;
   }
 
   _retireTexture(tex) {
@@ -903,7 +902,6 @@ export class CloudComputeBuilder {
       this.nTransformBuffer,
       this._abNTransform,
     );
-    this._bg0Dirty = true;
   }
 
   // Back-compat alias
@@ -944,7 +942,6 @@ export class CloudComputeBuilder {
     this._reprojFullH = s.fullHeight | 0;
 
     this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
-    this._bg0Dirty = true;
   }
 
   setPerfParams(v = {}) {
@@ -959,7 +956,6 @@ export class CloudComputeBuilder {
     dv.setFloat32(12, 0.0, true);
 
     this._writeIfChanged("perf", this.perfBuffer, this._abPerf);
-    this._bg0Dirty = true;
   }
 
   setLight(v = {}) {
@@ -984,7 +980,6 @@ export class CloudComputeBuilder {
     dv.setFloat32(28, 0.0, true);
 
     this._writeIfChanged("light", this.lightBuffer, this._abLight);
-    this._bg1Dirty = true;
   }
 
   setSunByAngles({
@@ -1025,7 +1020,6 @@ export class CloudComputeBuilder {
     dv.setFloat32(28, s.uvScale, true);
 
     this._writeIfChanged("box", this.boxBuffer, this._abBox);
-    this._bg1Dirty = true;
   }
 
   setFrame(v = {}) {
@@ -1200,7 +1194,6 @@ export class CloudComputeBuilder {
     for (let i = 0; i < floats.length; i++)
       dv.setFloat32(i * 4, floats[i], true);
     this._writeIfChanged("view", this.viewBuffer, this._abView);
-    this._bg1Dirty = true;
   }
 
   // -------------------- TUNE setter (CloudTuning) --------------------
@@ -1209,138 +1202,64 @@ export class CloudComputeBuilder {
     for (const k in t) if (_has(t, k)) s[k] = t[k];
 
     const dv = this._dvTuning;
-    let o = 0;
+    const putI = (ofs, v) => dv.setInt32(ofs, v | 0, true);
+    const putF = (ofs, v) => dv.setFloat32(ofs, Number.isFinite(+v) ? +v : 0.0, true);
 
-    dv.setInt32(o, s.maxSteps | 0, true);
-    o += 4;
-    dv.setInt32(o, 0, true);
-    o += 4;
-    dv.setFloat32(o, +s.minStep, true);
-    o += 4;
-    dv.setFloat32(o, +s.maxStep, true);
-    o += 4;
+    // Keep this layout in 16-byte rows to match the WGSL CloudTuning struct.
+    putI(0, s.maxSteps);
+    putI(4, s.sunSteps);
+    putI(8, s.sunStride);
+    putI(12, 0);
 
-    dv.setInt32(o, s.sunSteps | 0, true);
-    o += 4;
-    dv.setInt32(o, s.sunStride | 0, true);
-    o += 4;
-    dv.setFloat32(o, +s.sunMinTr, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(16, s.minStep);
+    putF(20, s.maxStep);
+    putF(24, s.sunMinTr);
+    putF(28, s.phaseJitter);
 
-    dv.setFloat32(o, +s.phaseJitter, true);
-    o += 4;
-    dv.setFloat32(o, +s.stepJitter, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(32, s.stepJitter);
+    putF(36, s.baseJitterFrac);
+    putF(40, s.topJitterFrac);
+    putF(44, s.lodBiasWeather);
 
-    dv.setFloat32(o, +s.baseJitterFrac, true);
-    o += 4;
-    dv.setFloat32(o, +s.topJitterFrac, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(48, s.aabbFaceOffset);
+    putF(52, s.weatherRejectGate);
+    putF(56, s.weatherRejectMip);
+    putF(60, s.emptySkipMult);
 
-    dv.setFloat32(o, +s.lodBiasWeather, true);
-    o += 4;
-    dv.setFloat32(o, +s.aabbFaceOffset, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(64, s.nearFluffDist);
+    putF(68, s.nearStepScale);
+    putF(72, s.nearLodBias);
+    putF(76, s.nearDensityMult);
 
-    dv.setFloat32(o, +s.weatherRejectGate, true);
-    o += 4;
-    dv.setFloat32(o, +s.weatherRejectMip, true);
-    o += 4;
-    dv.setFloat32(o, +s.emptySkipMult, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(80, s.nearDensityRange);
+    putF(84, s.lodBlendThreshold);
+    putF(88, s.sunDensityGate);
+    putF(92, s.fflyRelClamp);
 
-    dv.setFloat32(o, +s.nearFluffDist, true);
-    o += 4;
-    dv.setFloat32(o, +s.nearStepScale, true);
-    o += 4;
-    dv.setFloat32(o, +s.nearLodBias, true);
-    o += 4;
-    dv.setFloat32(o, +s.nearDensityMult, true);
-    o += 4;
-    dv.setFloat32(o, +s.nearDensityRange, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(96, s.fflyAbsFloor);
+    putF(100, s.taaRelMin);
+    putF(104, s.taaRelMax);
+    putF(108, s.taaAbsEps);
 
-    dv.setFloat32(o, +s.lodBlendThreshold, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(112, s.farStart);
+    putF(116, s.farFull);
+    putF(120, s.farLodPush);
+    putF(124, s.farDetailAtten);
 
-    dv.setFloat32(o, +s.sunDensityGate, true);
-    o += 4;
-    dv.setFloat32(o, +s.fflyRelClamp, true);
-    o += 4;
-    dv.setFloat32(o, +s.fflyAbsFloor, true);
-    o += 4;
-    dv.setFloat32(o, +s.taaRelMin, true);
-    o += 4;
-    dv.setFloat32(o, +s.taaRelMax, true);
-    o += 4;
-    dv.setFloat32(o, +s.taaAbsEps, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(128, s.farStepMult);
+    putF(132, s.bnFarScale);
+    putF(136, s.farTaaHistoryBoost);
+    putF(140, s.raySmoothDens);
 
-    dv.setFloat32(o, +s.farStart, true);
-    o += 4;
-    dv.setFloat32(o, +s.farFull, true);
-    o += 4;
-    dv.setFloat32(o, +s.farLodPush, true);
-    o += 4;
-    dv.setFloat32(o, +s.farDetailAtten, true);
-    o += 4;
-    dv.setFloat32(o, +s.farStepMult, true);
-    o += 4;
-    dv.setFloat32(o, +s.bnFarScale, true);
-    o += 4;
-    dv.setFloat32(o, +s.farTaaHistoryBoost, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
+    putF(144, s.raySmoothSun);
+    putF(148, 0.0);
+    putF(152, 0.0);
+    putF(156, 0.0);
 
-    dv.setFloat32(o, +s.raySmoothDens, true);
-    o += 4;
-    dv.setFloat32(o, +s.raySmoothSun, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-    dv.setFloat32(o, 0.0, true);
-    o += 4;
-
-    for (let i = o; i < this._abTuning.byteLength; i += 4)
+    for (let i = 160; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
-    this._bg0Dirty = true;
   }
 
   // -------------------- input maps and history hooks --------------------
@@ -1436,8 +1355,10 @@ export class CloudComputeBuilder {
   }
 
   setHistoryOutView(view) {
-    this.historyOutView = view;
-    this._bg0Dirty = true;
+    if (view !== this.historyOutView) {
+      this.historyOutView = view || null;
+      this._bg0Dirty = true;
+    }
   }
 
   // -------------------- outputs --------------------
@@ -1726,40 +1647,32 @@ export class CloudComputeBuilder {
 
   _makeBindGroups() {
     const k0 = this._buildBg0Key();
-    if (!this._bg0Dirty && this._bg0Cache.has(k0))
+    if (this._bg0Cache.has(k0)) {
       this._currentBg0 = this._bg0Cache.get(k0);
-    else {
-      if (this._bg0Cache.has(k0) && this._bg0Dirty) {
-        const idx = this._bg0Keys.indexOf(k0);
-        if (idx >= 0) this._bg0Keys.splice(idx, 1);
-        this._bg0Cache.delete(k0);
-      }
+      this._bg0Dirty = false;
+    } else {
       const bg0 = this._createBg0ForKey();
       this._bg0Cache.set(k0, bg0);
       this._bg0Keys.push(k0);
       this._currentBg0 = bg0;
       this._bg0Dirty = false;
-      while (this._bg0Keys.length > 12) {
+      while (this._bg0Keys.length > 16) {
         const oldest = this._bg0Keys.shift();
         this._bg0Cache.delete(oldest);
       }
     }
 
     const k1 = this._buildBg1Key();
-    if (!this._bg1Dirty && this._bg1Cache.has(k1))
+    if (this._bg1Cache.has(k1)) {
       this._currentBg1 = this._bg1Cache.get(k1);
-    else {
-      if (this._bg1Cache.has(k1) && this._bg1Dirty) {
-        const idx = this._bg1Keys.indexOf(k1);
-        if (idx >= 0) this._bg1Keys.splice(idx, 1);
-        this._bg1Cache.delete(k1);
-      }
+      this._bg1Dirty = false;
+    } else {
       const bg1 = this._createBg1ForKey();
       this._bg1Cache.set(k1, bg1);
       this._bg1Keys.push(k1);
       this._currentBg1 = bg1;
       this._bg1Dirty = false;
-      while (this._bg1Keys.length > 12) {
+      while (this._bg1Keys.length > 16) {
         const oldest = this._bg1Keys.shift();
         this._bg1Cache.delete(oldest);
       }
@@ -1827,13 +1740,26 @@ export class CloudComputeBuilder {
       this._bg0Dirty = true;
     }
 
-    await this._dispatchComputeInternal({ wait });
+    const enc = this.device.createCommandEncoder();
+    this._encodeCurrentComputePass(enc);
 
     this.outTexture = savedOutTexture;
     this.outView = savedOutView;
     this.width = savedWidth;
     this.height = savedHeight;
     this.outFormat = savedFormat;
+
+    const layerForRestore = this._dvFrame.getInt32(36, true) | 0;
+    const preparedUpsample = this._prepareUpsamplePass({
+      srcW: cW,
+      srcH: cH,
+      dstX: baseX,
+      dstY: baseY,
+      dstW: tw,
+      dstH: th,
+    });
+    this._encodeUpsamplePass(enc, preparedUpsample);
+    this.queue.submit([enc.finish()]);
 
     this.setFrame({
       fullWidth: savedWidth,
@@ -1843,20 +1769,13 @@ export class CloudComputeBuilder {
       originX: baseX,
       originY: baseY,
       originZ: 0,
-      layerIndex: this._dvFrame.getInt32(36, true) | 0,
+      layerIndex: layerForRestore,
       originXf: 0.0,
       originYf: 0.0,
     });
 
-    await this._upsampleCoarseToOut({
-      srcW: cW,
-      srcH: cH,
-      dstX: baseX,
-      dstY: baseY,
-      dstW: tw,
-      dstH: th,
-      wait,
-    });
+    if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+      await this.queue.onSubmittedWorkDone();
 
     this._lastHadWork = true;
     return this.outView;
@@ -1904,74 +1823,12 @@ export class CloudComputeBuilder {
   }
 
   async dispatch({ wait = false, coarseFactor = 1 } = {}) {
-    const cf = Math.max(1, coarseFactor | 0);
-
-    if (cf >= 2 && this.outTexture) {
-      const cW = Math.max(1, Math.ceil(this.width / cf));
-      const cH = Math.max(1, Math.ceil(this.height / cf));
-      this._ensureCoarseTexture(cW, cH, this.layers);
-
-      const savedFullW = this._reprojFullW || this.width;
-      const savedFullH = this._reprojFullH || this.height;
-
-      const savedOutTexture = this.outTexture;
-      const savedOutView = this.outView;
-      const savedWidth = this.width;
-      const savedHeight = this.height;
-      const savedFormat = this.outFormat;
-
-      this.outTexture = this._coarseTexture;
-      this.outView = this._coarseView;
-      this.width = cW;
-      this.height = cH;
-      this.outFormat = savedFormat;
-
-      this.setFrame({
-        fullWidth: cW,
-        fullHeight: cH,
-        tileWidth: cW,
-        tileHeight: cH,
-        originX: 0,
-        originY: 0,
-        originZ: 0,
-        layerIndex: 0,
-        originXf: 0.0,
-        originYf: 0.0,
-      });
-
-      const curFW = this._dvReproj.getUint32(32, true) || 0;
-      const curFH = this._dvReproj.getUint32(36, true) || 0;
-      if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
-        this._dvReproj.setUint32(32, savedFullW >>> 0, true);
-        this._dvReproj.setUint32(36, savedFullH >>> 0, true);
-        this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
-        this._bg0Dirty = true;
-      }
-
-      await this._dispatchComputeInternal({ wait });
-
-      this.outTexture = savedOutTexture;
-      this.outView = savedOutView;
-      this.width = savedWidth;
-      this.height = savedHeight;
-      this.outFormat = savedFormat;
-
-      await this._upsampleCoarseToOut({
-        srcW: cW,
-        srcH: cH,
-        dstX: 0,
-        dstY: 0,
-        dstW: this.width,
-        dstH: this.height,
-        wait,
-      });
-
-      this._lastHadWork = true;
-      return this.outView;
-    }
-
-    await this._dispatchComputeInternal({ wait });
-    this._lastHadWork = true;
+    const enc = this.device.createCommandEncoder();
+    const encoded = this.encodeDispatchPasses(enc, { coarseFactor });
+    this.queue.submit([enc.finish()]);
+    encoded?.restoreAfterSubmit?.();
+    if (wait && typeof this.queue.onSubmittedWorkDone === "function")
+      await this.queue.onSubmittedWorkDone();
     return this.outView;
   }
 
@@ -2011,7 +1868,7 @@ export class CloudComputeBuilder {
     return this.outView;
   }
 
-  async _dispatchComputeInternal({ wait = false } = {}) {
+  _writeCommonComputeUniforms() {
     this._writeIfChanged("options", this.optionsBuffer, this._abOptions);
     this._writeIfChanged("params", this.paramsBuffer, this._abParams);
     this._writeIfChanged(
@@ -2023,16 +1880,123 @@ export class CloudComputeBuilder {
     this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
     this._writeIfChanged("perf", this.perfBuffer, this._abPerf);
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
+  }
 
+  _encodeCurrentComputePass(enc) {
+    this._writeCommonComputeUniforms();
     this._makeBindGroups();
 
-    const enc = this.device.createCommandEncoder();
     const pass = enc.beginComputePass();
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this._currentBg0);
     pass.setBindGroup(1, this._currentBg1);
     pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
     pass.end();
+  }
+
+  encodeDispatchPasses(enc, { coarseFactor = 1, skipUpsampleForPreview = false } = {}) {
+    if (!enc) throw new Error("encodeDispatchPasses: command encoder required.");
+    if (!this.outView)
+      throw new Error("encodeDispatchPasses: createOutputTexture/setOutputView first.");
+
+    const cf = Math.max(1, coarseFactor | 0);
+    this._renderSourceView = this.outView;
+    if (cf >= 2 && this.outTexture) {
+      const cW = Math.max(1, Math.ceil(this.width / cf));
+      const cH = Math.max(1, Math.ceil(this.height / cf));
+      this._ensureCoarseTexture(cW, cH, this.layers);
+
+      const savedFullW = this._reprojFullW || this.width;
+      const savedFullH = this._reprojFullH || this.height;
+      const savedOutTexture = this.outTexture;
+      const savedOutView = this.outView;
+      const savedWidth = this.width;
+      const savedHeight = this.height;
+      const savedFormat = this.outFormat;
+      const savedLayer = this._dvFrame.getInt32(36, true) | 0;
+
+      this.outTexture = this._coarseTexture;
+      this.outView = this._coarseView;
+      this.width = cW;
+      this.height = cH;
+      this.outFormat = savedFormat;
+
+      this.setFrame({
+        fullWidth: cW,
+        fullHeight: cH,
+        tileWidth: cW,
+        tileHeight: cH,
+        originX: 0,
+        originY: 0,
+        originZ: 0,
+        layerIndex: savedLayer,
+        originXf: 0.0,
+        originYf: 0.0,
+      });
+
+      const curFW = this._dvReproj.getUint32(32, true) || 0;
+      const curFH = this._dvReproj.getUint32(36, true) || 0;
+      if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
+        this._dvReproj.setUint32(32, savedFullW >>> 0, true);
+        this._dvReproj.setUint32(36, savedFullH >>> 0, true);
+        this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
+      }
+
+      this._encodeCurrentComputePass(enc);
+
+      this.outTexture = savedOutTexture;
+      this.outView = savedOutView;
+      this.width = savedWidth;
+      this.height = savedHeight;
+      this.outFormat = savedFormat;
+
+      var usedDirectPreview = false;
+      if (skipUpsampleForPreview) {
+        this._renderSourceView = this._coarseView;
+        usedDirectPreview = true;
+      } else {
+        const preparedUpsample = this._prepareUpsamplePass({
+          srcW: cW,
+          srcH: cH,
+          dstX: 0,
+          dstY: 0,
+          dstW: savedWidth,
+          dstH: savedHeight,
+        });
+        this._encodeUpsamplePass(enc, preparedUpsample);
+        this._renderSourceView = this.outView;
+      }
+      this._lastHadWork = true;
+
+      return {
+        coarseFactor: cf,
+        directPreview: usedDirectPreview,
+        previewView: this._renderSourceView,
+        restoreAfterSubmit: () => {
+          this.setFrame({
+            fullWidth: savedWidth,
+            fullHeight: savedHeight,
+            tileWidth: savedWidth,
+            tileHeight: savedHeight,
+            originX: 0,
+            originY: 0,
+            originZ: 0,
+            layerIndex: savedLayer,
+            originXf: 0.0,
+            originYf: 0.0,
+          });
+        },
+      };
+    }
+
+    this._encodeCurrentComputePass(enc);
+    this._lastHadWork = true;
+    return { coarseFactor: 1, restoreAfterSubmit: null };
+  }
+
+  async _dispatchComputeInternal({ wait = false } = {}) {
+    const enc = this.device.createCommandEncoder();
+    this.encodeDispatchPasses(enc, { coarseFactor: 1 });
     this.queue.submit([enc.finish()]);
     if (wait && typeof this.queue.onSubmittedWorkDone === "function")
       await this.queue.onSubmittedWorkDone();
@@ -2107,7 +2071,7 @@ export class CloudComputeBuilder {
       @group(0) @binding(2) var dstTex : texture_storage_2d_array<${fmt}, write>;
       @group(0) @binding(3) var<uniform> P : UpsampleParams;
 
-      @compute @workgroup_size(8, 8, 1)
+      @compute @workgroup_size(16, 16, 1)
       fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         let x = gid.x;
         let y = gid.y;
@@ -2191,16 +2155,8 @@ export class CloudComputeBuilder {
     return bg;
   }
 
-  async _upsampleCoarseToOut({
-    srcW,
-    srcH,
-    dstX,
-    dstY,
-    dstW,
-    dstH,
-    wait = false,
-  } = {}) {
-    if (!this._coarseView || !this.outView) return;
+  _prepareUpsamplePass({ srcW, srcH, dstX, dstY, dstW, dstH } = {}) {
+    if (!this._coarseView || !this.outView) return null;
 
     const u = this._ensureUpsamplePipeline(this.outFormat);
     const dv = this._dvUpsample;
@@ -2227,15 +2183,37 @@ export class CloudComputeBuilder {
       this.outView,
     );
 
-    const wgX = Math.max(1, Math.ceil(dstW / 8));
-    const wgY = Math.max(1, Math.ceil(dstH / 8));
+    return {
+      pipe: u.pipe,
+      bg,
+      wgX: Math.max(1, Math.ceil(dstW / 16)),
+      wgY: Math.max(1, Math.ceil(dstH / 16)),
+    };
+  }
+
+  _encodeUpsamplePass(enc, prepared) {
+    if (!prepared) return;
+    const pass = enc.beginComputePass();
+    pass.setPipeline(prepared.pipe);
+    pass.setBindGroup(0, prepared.bg);
+    pass.dispatchWorkgroups(prepared.wgX, prepared.wgY, 1);
+    pass.end();
+  }
+
+  async _upsampleCoarseToOut({
+    srcW,
+    srcH,
+    dstX,
+    dstY,
+    dstW,
+    dstH,
+    wait = false,
+  } = {}) {
+    const prepared = this._prepareUpsamplePass({ srcW, srcH, dstX, dstY, dstW, dstH });
+    if (!prepared) return;
 
     const enc = this.device.createCommandEncoder();
-    const pass = enc.beginComputePass();
-    pass.setPipeline(u.pipe);
-    pass.setBindGroup(0, bg);
-    pass.dispatchWorkgroups(wgX, wgY, 1);
-    pass.end();
+    this._encodeUpsamplePass(enc, prepared);
     this.queue.submit([enc.finish()]);
 
     if (wait && typeof this.queue.onSubmittedWorkDone === "function")
@@ -2281,14 +2259,19 @@ export class CloudComputeBuilder {
     return this._render;
   }
 
+  _getRenderSourceView() {
+    return this._renderSourceView || this.outView;
+  }
+
   _getOrCreateRenderBindGroup(canvas, bgl, samp) {
     let map = this._renderBgCache.get(canvas);
     if (!map) {
       map = new Map();
       this._renderBgCache.set(canvas, map);
     }
+    const sourceView = this._getRenderSourceView();
     const key =
-      this._getResId(this.outView) +
+      this._getResId(sourceView) +
       "|" +
       this._getResId(samp) +
       "|" +
@@ -2298,7 +2281,7 @@ export class CloudComputeBuilder {
       layout: bgl,
       entries: [
         { binding: 0, resource: samp },
-        { binding: 1, resource: this.outView },
+        { binding: 1, resource: sourceView },
         {
           binding: 2,
           resource: { buffer: this.renderParams, offset: 0, size: 128 },
@@ -2320,7 +2303,7 @@ export class CloudComputeBuilder {
       this._renderBundleCache.set(canvas, map);
     }
     const key =
-      this._getResId(this.outView) +
+      this._getResId(this._getRenderSourceView()) +
       "|" +
       this._getResId(samp) +
       "|" +
@@ -2409,8 +2392,10 @@ export class CloudComputeBuilder {
       sunDir = norm([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
     }
 
+    const renderQuality = Math.max(0, Math.min(2, opts.renderQuality ?? 1)) >>> 0;
+
     dv.setUint32(0, layerIndex, true);
-    dv.setUint32(4, 0, true);
+    dv.setUint32(4, renderQuality, true);
     dv.setUint32(8, 0, true);
     dv.setUint32(12, 0, true);
     wv3(16, camPos);

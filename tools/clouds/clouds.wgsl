@@ -2,66 +2,61 @@ const PI: f32 = 3.141592653589793;
 const EPS: f32 = 1e-6;
 const LN2: f32 = 0.6931471805599453;
 const INV_LN2: f32 = 1.4426950408889634;
+const VIEW_EXTINCTION_SCALE: f32 = 0.075;
+const SUN_EXTINCTION_SCALE: f32 = 0.014;
+const DENSITY_LIGHT_SCALE: f32 = 0.01;
 
 // ---------------------- TUNING UNIFORM
 struct CloudTuning {
   maxSteps: i32,
-  _pad0_i: i32,
-  minStep: f32,
-  maxStep: f32,
-
   sunSteps: i32,
   sunStride: i32,
+  _pad0_i: i32,
+
+  minStep: f32,
+  maxStep: f32,
   sunMinTr: f32,
-  _pad1_f: f32,
-
   phaseJitter: f32,
-  stepJitter: f32,
-  _pad2: vec2<f32>,
 
+  stepJitter: f32,
   baseJitterFrac: f32,
   topJitterFrac: f32,
-  _pad3: vec2<f32>,
-
   lodBiasWeather: f32,
-  aabbFaceOffset: f32,
-  _pad4: vec2<f32>,
 
+  aabbFaceOffset: f32,
   weatherRejectGate: f32,
   weatherRejectMip: f32,
   emptySkipMult: f32,
-  _pad5: f32,
 
   nearFluffDist: f32,
   nearStepScale: f32,
   nearLodBias: f32,
   nearDensityMult: f32,
+
   nearDensityRange: f32,
-  _pad6: vec3<f32>,
-
   lodBlendThreshold: f32,
-  _pad7: vec3<f32>,
-
   sunDensityGate: f32,
   fflyRelClamp: f32,
+
   fflyAbsFloor: f32,
   taaRelMin: f32,
   taaRelMax: f32,
   taaAbsEps: f32,
-  _pad8: vec2<f32>,
 
   farStart: f32,
   farFull: f32,
   farLodPush: f32,
   farDetailAtten: f32,
+
   farStepMult: f32,
   bnFarScale: f32,
   farTaaHistoryBoost: f32,
-  _pad9: vec2<f32>,
-
   raySmoothDens: f32,
+
   raySmoothSun: f32,
-  _pad10: vec2<f32>
+  _pad1: f32,
+  _pad2: f32,
+  _pad3: f32
 };
 @group(0) @binding(10) var<uniform> TUNE: CloudTuning;
 
@@ -92,6 +87,7 @@ struct CloudParams {
   outScatterAmbientAmt: f32,
   ambientMinimum: f32,
   sunColor: vec3<f32>,
+  _sunColorPad: f32,
 
   densityDivMin: f32,
   silverDirectionBias: f32,
@@ -308,7 +304,18 @@ fn boxMax() -> vec3<f32> { return B.center + B.half; }
 
 // robust AABB intersect
 fn intersectAABB_robust(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {
-  let rdSafe = select(vec3<f32>(EPS), rd, vec3<bool>(abs(rd) > vec3<f32>(EPS)));
+  let parallel = abs(rd) <= vec3<f32>(EPS);
+
+  if (
+    (parallel.x && (ro.x < bmin.x || ro.x > bmax.x)) ||
+    (parallel.y && (ro.y < bmin.y || ro.y > bmax.y)) ||
+    (parallel.z && (ro.z < bmin.z || ro.z > bmax.z))
+  ) {
+    return vec2<f32>(1.0, -1.0);
+  }
+
+  let epsSigned = select(vec3<f32>(-EPS), vec3<f32>(EPS), rd >= vec3<f32>(0.0));
+  let rdSafe = select(epsSigned, rd, abs(rd) > vec3<f32>(EPS));
   let inv = vec3<f32>(1.0) / rdSafe;
   let t0 = (bmin - ro) * inv;
   let t1 = (bmax - ro) * inv;
@@ -344,12 +351,8 @@ fn worldWarpXZ(pos_xz: vec2<f32>, ph: f32, boxMaxXZ: f32) -> vec2<f32> {
 }
 
 // shape & detail samplers
-fn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {
+fn shapeUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
   let scaleS = max(wg_scaleS, EPS);
-  let boxMaxXZ = max(B.half.x, B.half.z);
-
-  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);
-
   let pW = vec3<f32>(
     pos.x + w.x + NTransform.shapeOffsetWorld.x,
     pos.y + ph * 7.0 + NTransform.shapeOffsetWorld.y,
@@ -358,16 +361,11 @@ fn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {
 
   let axis = axisOrOne3(NTransform.shapeAxisScale);
   let sMul = select(NTransform.shapeScale, 1.0, NTransform.shapeScale == 0.0);
-
-  return wrap3D_shape(shape3D, sampShape, (pW * axis) * (scaleS * max(sMul, EPS)), lod);
+  return (pW * axis) * (scaleS * max(sMul, EPS));
 }
 
-fn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {
+fn detailUVW_fromWarp(pos: vec3<f32>, ph: f32, w: vec2<f32>) -> vec3<f32> {
   let scaleD = max(wg_scaleD, EPS);
-  let boxMaxXZ = max(B.half.x, B.half.z);
-
-  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);
-
   let pW = vec3<f32>(
     pos.x + w.x + NTransform.detailOffsetWorld.x,
     pos.y + NTransform.detailOffsetWorld.y,
@@ -376,8 +374,27 @@ fn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {
 
   let axis = axisOrOne3(NTransform.detailAxisScale);
   let dMul = select(NTransform.detailScale, 1.0, NTransform.detailScale == 0.0);
+  return (pW * axis) * (scaleD * max(dMul, EPS));
+}
 
-  return wrap3D_detail(detail3D, sampDetail, (pW * axis) * (scaleD * max(dMul, EPS)), lod).rgb;
+fn sampleShapeRGBAWarp(pos: vec3<f32>, ph: f32, lod: f32, w: vec2<f32>) -> vec4<f32> {
+  return wrap3D_shape(shape3D, sampShape, shapeUVW_fromWarp(pos, ph, w), lod);
+}
+
+fn sampleDetailRGBWarp(pos: vec3<f32>, ph: f32, lod: f32, w: vec2<f32>) -> vec3<f32> {
+  return wrap3D_detail(detail3D, sampDetail, detailUVW_fromWarp(pos, ph, w), lod).rgb;
+}
+
+fn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {
+  let boxMaxXZ = max(B.half.x, B.half.z);
+  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);
+  return sampleShapeRGBAWarp(pos, ph, lod, w);
+}
+
+fn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {
+  let boxMaxXZ = max(B.half.x, B.half.z);
+  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);
+  return sampleDetailRGBWarp(pos, ph, lod, w);
 }
 
 // ---------------------- weather mapping
@@ -483,7 +500,7 @@ fn densityHeight(ph: f32) -> f32 {
   ret *= saturate(remap(ph, 0.0, 0.2, 0.0, 1.0));
   ret *= mix_f(1.0, saturate(remap(sqrt(max(ph, 0.0)), 0.4, 0.95, 1.0, 0.2)), saturate(C.cloudAnvilAmount));
   ret *= saturate(remap(ph, 0.9, 1.0, 1.0, 0.0));
-  ret *= max(C.globalDensity, 0.0);
+  ret *= max(C.globalDensity * 10.0, 0.0);
   return ret;
 }
 
@@ -526,91 +543,320 @@ fn densityFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>) -> f
   return max(core * densityHeight(ph), 0.0);
 }
 
+fn densityMacroFromSamples(ph: f32, wm: vec4<f32>, s: vec4<f32>) -> f32 {
+  if (ph < 0.0) { return 0.0; }
+  if (wm.b >= 1.0) { return 0.0; }
+
+  var shape = saturate(s.r);
+  shape = contrast01(shape, 1.18);
+
+  let fbm_s = saturate(s.g * 0.625 + s.b * 0.25 + s.a * 0.125);
+  let SNsample = saturate(remap(shape, fbm_s * 0.68, 1.0, 0.0, 1.0));
+
+  var SA = saturate(heightShape(ph, 1.0));
+  let wVar = fract(wm.r * 1.7 + wm.g * 2.3);
+  let bulge = 1.0 + 0.18 * (abs(fract(ph * (1.0 + wVar * 1.7)) - 0.5) * 2.0 - 0.5) * 0.5;
+  SA = saturate(SA * bulge);
+
+  let gate = weatherCoverageGate(wm);
+  let SNnd = saturate(remap(SNsample * SA, gate * 0.88, 1.0, 0.0, 1.0));
+
+  let core = pow(SNnd, 1.1);
+  return max(core * densityHeight(ph), 0.0);
+}
+
+
+fn sampleLightingDensity(
+  pos: vec3<f32>,
+  wm: vec4<f32>,
+  lodShape: f32,
+  lodDetail: f32
+) -> f32 {
+  let phL = computePH(pos, wm);
+  if (phL < 0.0) { return 0.0; }
+
+  let w = worldWarpXZ(pos.xz, phL, max(B.half.x, B.half.z));
+  let s = sampleShapeRGBAWarp(pos, phL, lodShape, w);
+  let det = sampleDetailRGBWarp(pos, phL, lodDetail, w);
+
+  var d = densityFromSamples(phL, wm, s, det);
+  d *= insideFaceFade(pos, boxMin(), boxMax());
+  return max(d, 0.0);
+}
+
+fn approxLightingNormal(
+  pos: vec3<f32>,
+  wm: vec4<f32>,
+  lodShape: f32,
+  lodDetail: f32
+) -> vec3<f32> {
+  let probe = max(wg_finestWorld * 0.9, 1e-3);
+
+  let dx =
+    sampleLightingDensity(pos + vec3<f32>(probe, 0.0, 0.0), wm, lodShape, lodDetail) -
+    sampleLightingDensity(pos - vec3<f32>(probe, 0.0, 0.0), wm, lodShape, lodDetail);
+
+  let dy =
+    sampleLightingDensity(pos + vec3<f32>(0.0, probe, 0.0), wm, lodShape, lodDetail) -
+    sampleLightingDensity(pos - vec3<f32>(0.0, probe, 0.0), wm, lodShape, lodDetail);
+
+  let dz =
+    sampleLightingDensity(pos + vec3<f32>(0.0, 0.0, probe), wm, lodShape, lodDetail) -
+    sampleLightingDensity(pos - vec3<f32>(0.0, 0.0, probe), wm, lodShape, lodDetail);
+
+  let g = vec3<f32>(dx, dy, dz);
+  if (dot(g, g) < 1e-8) { return vec3<f32>(0.0, 1.0, 0.0); }
+
+  return normalize(-g);
+}
+
+fn directionalExposure(
+  pos: vec3<f32>,
+  wm: vec4<f32>,
+  lodShape: f32,
+  lodDetail: f32,
+  sunDir: vec3<f32>
+) -> f32 {
+  let probe = max(wg_finestWorld * 2.25, 2e-3);
+
+  let d0 = sampleLightingDensity(pos, wm, lodShape, lodDetail);
+  if (d0 <= 1e-5) { return 0.0; }
+
+  let dFront = sampleLightingDensity(pos + sunDir * probe, wm, lodShape, lodDetail);
+  let dBack = sampleLightingDensity(pos - sunDir * probe, wm, lodShape, lodDetail);
+
+  let opensToSun = saturate((d0 - dFront) / max(d0, 0.06));
+  let buriedFromBehind = saturate((dBack - d0) / max(max(dBack, d0), 0.06));
+
+  return saturate(opensToSun * (1.0 - 0.65 * buriedFromBehind));
+}
+
 // ---------------------- scattering and lighting
+fn BeerLaw(opticalDepth: f32, absorption: f32) -> f32 {
+  return exp2(-max(opticalDepth, 0.0) * max(absorption, EPS) * INV_LN2);
+}
+
+// Henyey-Greenstein phase, scaled so g = 0 returns 1.0 instead of 1 / 4PI.
+// The scale keeps the UI energy range practical while preserving the angular lobe.
 fn HG(cos_angle: f32, g: f32) -> f32 {
-  let gg = clamp(g, -0.999, 0.999);
+  let gg = clamp(g, -0.92, 0.92);
   let g2 = gg * gg;
   let ca = clamp(cos_angle, -1.0, 1.0);
-  let denom = pow(max(1.0 + g2 - 2.0 * gg * ca, 1e-6), 1.5);
+  let denom = pow(max(1.0 + g2 - 2.0 * gg * ca, 1e-5), 1.5);
   return (1.0 - g2) / denom;
 }
 
-fn InOutScatter(cos_angle: f32) -> f32 {
+fn CloudPhase(cos_angle: f32) -> f32 {
   let ca = clamp(cos_angle, -1.0, 1.0);
+  let towardSun = saturate(ca * 0.5 + 0.5);
 
-  let in_hg = HG(ca, C.inScatterG);
-  let out_hg = HG(ca, -C.outScatterG);
+  let forwardG = clamp(C.inScatterG, 0.0, 0.92);
+  let backwardG = -clamp(C.outScatterG, 0.0, 0.92);
 
-  let absCa = saturate(abs(ca));
-  let silverBase = pow(absCa, max(C.silverExponent, 0.0));
+  let forwardPhase = HG(ca, forwardG);
+  let backwardPhase = HG(ca, backwardG);
+  let balance = saturate(C.inVsOut);
 
-  let horizon = pow(saturate(1.0 - absCa), 2.0);
-  let silverH = mix_f(silverBase, max(silverBase, horizon), saturate(C.silverHorizonBoost));
+  let raw = max(mix_f(backwardPhase, forwardPhase, balance), 0.0);
+  let normalized = raw / (1.0 + raw * 0.42);
+  let forwardBoost = mix_f(1.0, 1.18, pow(towardSun, 2.0));
+  return normalized * forwardBoost;
+}
 
-  let dir01 = saturate(ca * 0.5 + 0.5);
+fn SilverSharpness() -> f32 {
+  return mix_f(3.0, 24.0, saturate(max(C.silverExponent, 0.0) / 24.0));
+}
+
+fn SilverControl() -> f32 {
+  let x = max(C.silverIntensity, 0.0);
+  return saturate(x / (x + 6.0));
+}
+
+fn BeerPowderBand(occlusion: f32) -> f32 {
+  let occ = saturate(occlusion);
+  let band = occ * (1.0 - occ) * 4.0;
+  return mix_f(0.18, 1.0, pow(saturate(band), 0.64));
+}
+
+fn SilverPhase(
+  cos_angle: f32,
+  sunVisibility: f32,
+  sampleAlpha: f32,
+  viewRim: f32,
+  sunRim: f32,
+  percent_height: f32,
+  shapeUp: f32
+) -> f32 {
+  let towardSun = saturate(cos_angle * 0.5 + 0.5);
+  let awaySun = 1.0 - towardSun;
   let bias01 = saturate(C.silverDirectionBias * 0.5 + 0.5);
-  let dirPref = mix_f(1.0 - dir01, dir01, bias01) * 2.0;
 
-  let silver = C.silverIntensity * silverH * dirPref;
+  let sharpness = SilverSharpness();
+  let towardLobe = pow(max(towardSun, 0.08), sharpness);
+  let awayLobe = pow(max(awaySun, 0.08), sharpness);
+  let directional = mix_f(awayLobe, towardLobe, bias01);
+  let angular = max(directional, towardLobe * 0.72);
 
-  let in_scatter = in_hg + silver;
-  let out_scatter = out_hg;
+  let upness = saturate(shapeUp * 0.5 + 0.5);
+  let upperExposure = smoothstep(0.52, 0.92, upness);
+  let exposedSun = mix_f(0.30, 1.0, pow(saturate(sunVisibility), 0.30));
 
-  return mix_f(in_scatter, out_scatter, saturate(C.inVsOut));
+  let viewEdge = smoothstep(0.14, 0.96, pow(saturate(viewRim), 0.58));
+  let lightEdge = smoothstep(0.12, 0.96, pow(saturate(sunRim), 0.78));
+  let edge = viewEdge * mix_f(0.22, 1.0, lightEdge) * mix_f(0.18, 1.0, upperExposure);
+
+  let thin = pow(saturate(1.0 - sampleAlpha), 0.72);
+  let thinGate = smoothstep(0.05, 0.88, thin);
+  let sunOcc = 1.0 - saturate(sunVisibility);
+  let powder = mix_f(0.42, 1.0, BeerPowderBand(sunOcc));
+  let heightGate = smoothstep(0.06, 0.96, saturate(percent_height));
+  let horizonMix = saturate(C.silverHorizonBoost);
+  let horizon = mix_f(1.0, pow(1.0 - abs(cos_angle), 0.75), horizonMix);
+
+  let strength = SilverControl() * 1.85;
+  return strength * angular * edge * thinGate * powder * heightGate * horizon * exposedSun;
 }
 
-fn Attenuation(Tsun: f32, cos_angle: f32) -> f32 {
-  let beer = max(C.cloudBeer, EPS);
-  let Tprim = clamp(Tsun, 0.0, 1.0);
-
-  let ca01 = saturate(cos_angle * 0.5 + 0.5);
-  let clampScale = mix_f(1.15, 0.70, ca01);
-  let clampOD = max(C.attenuationClamp, 0.0) * clampScale;
-
-  let Tfloor = exp2(-(beer * clampOD) * INV_LN2);
-  return max(Tprim, Tfloor);
-}
-
-fn OutScatterAmbient(density: f32, percent_height: f32) -> f32 {
+fn AmbientVisibility(density: f32, sunVisibility: f32, sunSide: f32, dist_along_ray: f32) -> f32 {
   let d = max(density, 0.0);
-  let ph = saturate(percent_height);
 
-  let h = mix_f(0.35, 1.0, ph);
-  let vertical = pow(saturate(remap(ph, 0.0, 0.3, 0.8, 1.0)), 0.8);
+  let localExtinction = BeerLaw(d * DENSITY_LIGHT_SCALE * 0.55, max(C.cloudBeer * 0.16, 0.03));
+  let densityLift = mix_f(0.64, 1.0, localExtinction);
+  let sunLift = mix_f(0.82, 1.0, pow(saturate(sunVisibility), 0.55));
+  let sideLift = mix_f(0.86, 1.0, pow(saturate(sunSide), 0.45));
+  let distanceFade = mix_f(1.0, 0.94, pow(saturate(dist_along_ray / 4500.0), 1.10));
 
-  let depth = C.outScatterAmbientAmt * d * h;
-  return exp2(-(depth * vertical) * INV_LN2);
-}
-
-fn surfaceShadowFactor(n: vec3<f32>, sunDir: vec3<f32>, minLit: f32, exponent: f32) -> f32 {
-  let s = saturate(dot(n, sunDir) * 0.5 + 0.5);
-  return mix_f(minLit, 1.0, pow(s, exponent));
+  return densityLift * sunLift * sideLift * distanceFade;
 }
 
 fn CalculateLight(
   density: f32,
+  sampleAlpha: f32,
   Tsun: f32,
   cos_angle: f32,
   percent_height: f32,
   bluenoise: f32,
   dist_along_ray: f32,
-  rimBoost: f32
+  rimBoost: f32,
+  sunSide: f32,
+  sunRim: f32,
+  viewTransmittance: f32,
+  sunExposure: f32,
+  upperExposure: f32
 ) -> vec3<f32> {
-  let scatter = InOutScatter(cos_angle);
-  let attenT = Attenuation(Tsun, cos_angle);
-  let ambT = OutScatterAmbient(density, percent_height);
+  let ca = clamp(cos_angle, -1.0, 1.0);
+  let rawSunVisibility = saturate(Tsun);
+  let shadowFloor = clamp(C.attenuationClamp * 5.0, 0.075, 0.22);
+  let sunVisibility = mix_f(shadowFloor, 1.0, pow(rawSunVisibility, 0.86));
 
-  var atten = attenT * scatter * ambT;
+  let phase = CloudPhase(ca);
+  let towardSun = saturate(ca * 0.5 + 0.5);
+  let awaySun = 1.0 - towardSun;
 
-  let amb = density * C.ambientMinimum * (1.0 - pow(saturate(dist_along_ray / 4000.0), 2.0));
-  atten = atten + amb * (1.0 - saturate(atten));
+  let lightDensity = saturate(max(density, 0.0) * DENSITY_LIGHT_SCALE * 0.10);
+  let lightSideRaw = saturate(sunSide);
+  let lightSide = mix_f(0.56, 1.0, pow(lightSideRaw, 0.62));
 
-  atten = atten + bluenoise * 0.0025;
-  atten = atten * (1.0 + 0.35 * rimBoost);
+  let body = pow(saturate(sampleAlpha), 0.38);
+  let thin = pow(saturate(1.0 - sampleAlpha), 0.86);
+  let edgeThin = pow(saturate(1.0 - sampleAlpha), 0.34);
+  let rim = pow(saturate(rimBoost), 0.58);
 
-  return atten * C.sunColor;
+  let frontShell = pow(saturate(viewTransmittance), 0.42);
+  let exposedToSun = saturate(sunExposure);
+  let upperGate = saturate(upperExposure);
+
+  let phaseGlow = phase * mix_f(0.15, 0.42, pow(towardSun, 1.10));
+  let broadDirect = 0.22 + 0.38 * lightDensity * mix_f(0.84, 1.10, lightSideRaw);
+
+  let reliefDiffuse = sunVisibility
+    * mix_f(0.035, 0.28, exposedToSun)
+    * pow(lightSideRaw, 0.82)
+    * pow(body, 0.58)
+    * mix_f(0.72, 1.0, frontShell);
+
+  let silhouetteCore = pow(body, 1.18) * pow(towardSun, 1.05);
+  let reliefShadow = silhouetteCore
+    * mix_f(0.28, 0.90, 1.0 - lightSideRaw)
+    * mix_f(0.48, 0.96, 1.0 - rim)
+    * mix_f(0.48, 0.92, 1.0 - rawSunVisibility);
+
+  let cavityShadow = pow(1.0 - lightSideRaw, 1.45)
+    * mix_f(0.035, 0.22, body)
+    * mix_f(0.52, 0.90, 1.0 - exposedToSun);
+
+  let bodyShadow = clamp(mix_f(0.0, 0.44, reliefShadow) + cavityShadow, 0.0, 0.74);
+
+  let direct = sunVisibility * lightSide * (broadDirect + phaseGlow + reliefDiffuse) * (1.0 - bodyShadow);
+
+  let multiScatter = mix_f(0.16, 0.34, body)
+    * mix_f(0.70, 1.0, rawSunVisibility)
+    * (1.0 - bodyShadow * 0.55);
+
+  let forwardWrap = pow(towardSun, 0.62)
+    * mix_f(0.02, 0.11, thin)
+    * mix_f(0.78, 1.0, exposedToSun)
+    * sunVisibility;
+
+  let backWrap = pow(awaySun, 0.55)
+    * 0.028
+    * mix_f(1.0, 0.62, body)
+    * (1.0 - reliefShadow * 0.22);
+
+  let ambientBase = 0.13 + max(C.ambientMinimum, 0.0) * 0.95;
+  let ambientEdgeFill = max(C.outScatterAmbientAmt, 0.0)
+    * mix_f(0.22, 1.0, edgeThin)
+    * mix_f(0.48, 1.0, 1.0 - bodyShadow);
+
+  let ambientRelief = mix_f(0.0, 0.06, exposedToSun) * mix_f(1.0, 0.76, bodyShadow);
+  let ambientHeight = mix_f(0.86, 1.05, saturate(percent_height));
+  let ambientVis = AmbientVisibility(density, rawSunVisibility, lightSide, dist_along_ray);
+  let ambientOcclusion = 1.0 - bodyShadow * 0.42;
+  let ambient = (ambientBase + ambientEdgeFill + ambientRelief) * ambientHeight * ambientVis * ambientOcclusion;
+
+  let bodyLift = 0.052
+    * pow(lightSideRaw, 1.02)
+    * pow(body, 0.78)
+    * mix_f(0.60, 1.0, 1.0 - bodyShadow)
+    * mix_f(0.78, 1.0, rawSunVisibility);
+
+  let silverSharpness = SilverSharpness();
+  let exposedShell = smoothstep(0.05, 0.82, exposedToSun) * pow(frontShell, 0.48) * mix_f(0.42, 1.0, upperGate);
+  let silverBase = SilverPhase(ca, rawSunVisibility, sampleAlpha, rimBoost, sunRim, percent_height, upperGate * 2.0 - 1.0) * exposedShell;
+  let sunEdge = pow(saturate(rimBoost * sunRim), 0.42);
+
+  let silverCrest = silverBase
+    * mix_f(0.78, 1.12, edgeThin)
+    * mix_f(0.78, 1.04, lightSideRaw)
+    * mix_f(0.55, 1.0, sunEdge);
+
+  let throughSunGlint = SilverControl()
+    * 0.34
+    * exposedShell
+    * pow(max(towardSun, 0.10), 1.80 + silverSharpness * 0.10)
+    * mix_f(0.35, 1.0, sunEdge)
+    * mix_f(0.82, 1.0, rawSunVisibility);
+
+  let silver = silverCrest + throughSunGlint;
+
+  let lowSunRaw = 1.0 - saturate((L.sunDir.y + 0.08) / 0.82);
+  let lowSun = saturate(lowSunRaw);
+
+  let sunCol = C.sunColor * mix_v3(vec3<f32>(1.0, 0.98, 0.96), vec3<f32>(1.15, 0.70, 0.44), lowSun * 0.70);
+  let silverCol = mix_v3(vec3<f32>(1.0, 0.985, 0.97), vec3<f32>(1.08, 0.82, 0.66), lowSun * 0.50);
+  let skyCol = mix_v3(vec3<f32>(0.54, 0.64, 0.79), vec3<f32>(0.50, 0.56, 0.82), lowSun * 0.38);
+  let shadowCol = mix_v3(vec3<f32>(0.73, 0.79, 0.89), vec3<f32>(0.62, 0.58, 0.82), lowSun * 0.42);
+
+  let directEnergy = direct + multiScatter + forwardWrap + backWrap;
+  let silverEnergy = silver + bodyLift * mix_f(0.72, 1.02, pow(towardSun, 1.10));
+  let ambientEnergy = ambient;
+
+  let shadowTint = shadowCol * (bodyShadow * 0.14 + reliefShadow * 0.06 + cavityShadow * 0.14);
+  let radiance = sunCol * directEnergy + silverCol * silverEnergy + skyCol * ambientEnergy - shadowTint;
+  let noiseLift = (bluenoise - 0.5) * 0.00010;
+
+  return max(radiance + vec3<f32>(noiseLift), vec3<f32>(0.0));
 }
-
 // approximate surface normal from coarse shape mip
 fn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
   let probe = max(wg_finestWorld * 1.25, 1e-3);
@@ -629,6 +875,18 @@ fn approxShapeNormal(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
   var n = normalize(vec3<f32>(-gx, -gy, -gz));
   if (length(n) < 1e-4) { return vec3<f32>(0.0, 1.0, 0.0); }
   return n;
+}
+
+fn approxShapeNormalFast(pos: vec3<f32>, ph: f32, lodShape: f32) -> vec3<f32> {
+  let probe = max(wg_finestWorld * 1.5, 1e-3);
+  let c = sampleShapeRGBA(pos, ph, lodShape).r;
+  let px = sampleShapeRGBA(pos + vec3<f32>(probe, 0.0, 0.0), ph, lodShape).r;
+  let pz = sampleShapeRGBA(pos + vec3<f32>(0.0, 0.0, probe), ph, lodShape).r;
+  let py = sampleShapeRGBA(pos + vec3<f32>(0.0, probe, 0.0), ph, lodShape).r;
+
+  let g = vec3<f32>((px - c) / probe, (py - c) / probe, (pz - c) / probe);
+  if (dot(g, g) < 1e-8) { return vec3<f32>(0.0, 1.0, 0.0); }
+  return normalize(-g);
 }
 
 // reprojection helpers
@@ -670,58 +928,60 @@ fn insideFaceFade(p: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> f32 {
 }
 
 // ---------------------- sun march
-fn sunSingle(
+fn sampleCloudDensityAt(
+  p: vec3<f32>,
+  weatherLOD: f32,
+  lodShapeBase: f32,
+  lodDetailBase: f32,
+  squareOrigin_xz: vec2<f32>,
+  invSide: f32,
+  wScale: f32,
+  stepIndex: i32
+) -> f32 {
+  let uv = weatherUV_from(p, squareOrigin_xz, invSide, wScale);
+  let wm = wrap2D(weather2D, samp2D, uv, 0i, weatherLOD);
+
+  let ph = computePH(p, wm);
+  if (ph < 0.0 || wm.b >= 1.0) { return 0.0; }
+
+  let lodShape = clamp(lodShapeBase + f32(stepIndex) * 0.35 + 0.50, 0.0, wg_maxMipS);
+  let s = sampleShapeRGBA(p, ph, lodShape);
+  let d = densityMacroFromSamples(ph, wm, s) * insideFaceFade(p, boxMin(), boxMax());
+
+  return max(d, 0.0);
+}
+
+fn sunTransmittance(
   p0: vec3<f32>,
   sunDir: vec3<f32>,
   weatherLOD: f32,
   lodShapeBase: f32,
   lodDetailBase: f32,
-  stepLen: f32,
+  nominalStepLen: f32,
   squareOrigin_xz: vec2<f32>,
   invSide: f32,
   wScale: f32
 ) -> f32 {
-  var T = 1.0;
-  let parity = f32(i32(reproj.frameIndex % 2u));
-  var p = p0 + sunDir * (0.5 * stepLen * parity);
+  let steps = max(TUNE.sunSteps, 1);
+  let start = p0 + sunDir * max(TUNE.aabbFaceOffset, EPS);
+  let hit = intersectAABB_robust(start, sunDir, boxMin(), boxMax());
+  let availableDist = max(hit.y, nominalStepLen * f32(steps));
+  let lightStep = clamp(availableDist / f32(steps), max(nominalStepLen * 0.5, TUNE.minStep), max(nominalStepLen * 4.0, TUNE.maxStep));
 
-  for (var i: i32 = 0; i < TUNE.sunSteps; i = i + 1) {
-    let uv = weatherUV_from(p, squareOrigin_xz, invSide, wScale);
-    let wm = wrap2D(weather2D, samp2D, uv, 0i, weatherLOD);
+  var opticalDepth = 0.0;
+  var p = start + sunDir * (0.5 * lightStep);
 
-    let ph = computePH(p, wm);
-    if (ph < 0.0) {
-      p += sunDir * stepLen;
-      continue;
-    }
-
-    let s = sampleShapeRGBA(p, ph, lodShapeBase + f32(i) * 0.5);
-    let det = sampleDetailRGB(p, ph, lodDetailBase + f32(i) * 0.5);
-    let d = densityFromSamples(ph, wm, s, det);
-
-    T *= exp2(-(C.cloudBeer * d * stepLen) * INV_LN2);
-    if (T < TUNE.sunMinTr) { break; }
-    p += sunDir * stepLen;
+  for (var i: i32 = 0; i < steps; i = i + 1) {
+    let d = sampleCloudDensityAt(
+      p, weatherLOD, lodShapeBase, lodDetailBase,
+      squareOrigin_xz, invSide, wScale, i
+    );
+    opticalDepth += d * lightStep * SUN_EXTINCTION_SCALE;
+    if (BeerLaw(opticalDepth, C.cloudBeer) < TUNE.sunMinTr) { break; }
+    p += sunDir * lightStep;
   }
 
-  return T;
-}
-
-fn sunTransmittance(
-  p: vec3<f32>,
-  sunDir: vec3<f32>,
-  weatherLOD: f32,
-  lodShapeBase: f32,
-  lodDetailBase: f32,
-  stepLen: f32,
-  squareOrigin_xz: vec2<f32>,
-  invSide: f32,
-  wScale: f32
-) -> f32 {
-  return 0.5 * (
-    sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen, squareOrigin_xz, invSide, wScale) +
-    sunSingle(p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, stepLen, squareOrigin_xz, invSide, wScale)
-  );
+  return BeerLaw(opticalDepth, C.cloudBeer);
 }
 
 // quick empty probe
@@ -875,27 +1135,21 @@ fn computeCloud(
   baseStep = min(baseStep, voxelBound);
   baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter, rand0 * 2.0 - 1.0);
 
-  let entryDepth = dot((rayRo + rayRd * t0) - V.camPos, camFwd);
-  let nearFactor = saturate(1.0 - entryDepth / TUNE.nearFluffDist);
-  baseStep = clamp(baseStep * mix_f(1.0, TUNE.nearStepScale, nearFactor), TUNE.minStep, TUNE.maxStep);
-
-  let farF = saturate(remap(entryDepth, TUNE.farStart, TUNE.farFull, 0.0, 1.0));
-  baseStep = clamp(baseStep * mix_f(1.0, TUNE.farStepMult, farF), TUNE.minStep, TUNE.maxStep);
+  baseStep = clamp(baseStep, TUNE.minStep, TUNE.maxStep);
 
   var t = clamp(t0 + (rand0 * TUNE.phaseJitter) * baseStep, t0, t1);
 
-  // lighting setup
+  // lighting setup. rayRd points from camera into the volume, matching the blog-style phase convention.
   let sunDir = normalize(L.sunDir);
-  let cosVS = dot(viewDir, sunDir);
+  let cosVS = dot(rayRd, sunDir);
 
-  // sun step length
-  let halfSpan = 0.5 * max(B.half.y * 2.0, EPS);
-  let sunStepLen = min(
-    halfSpan / f32(max(TUNE.sunSteps, 1)),
-    min(1.0 / wg_scaleS_effMax, 1.0 / wg_scaleD_effMax) * 0.6 / max(abs(sunDir.y), 0.15)
+  // sun shadowing samples should cover neighboring cloud volume, not only the vertical slab thickness.
+  let sunNominalSpan = max(length(B.half * 2.0) * 0.5, EPS);
+  let sunStepLen = clamp(
+    sunNominalSpan / f32(max(TUNE.sunSteps, 1)),
+    TUNE.minStep,
+    max(TUNE.maxStep, sunNominalSpan)
   );
-
-  let weatherLOD = min(wg_maxMipW, weatherLOD_base + TUNE.farLodPush * farF);
 
   // accumulators
   var Tr = 1.0;
@@ -903,44 +1157,47 @@ fn computeCloud(
 
   var Tsun_cached = 1.0;
   var prevDens: f32 = 0.0;
+  var prevMacroDens: f32 = 0.0;
   var prevTsun: f32 = 1.0;
 
   var shapeN_cached = vec3<f32>(0.0, 1.0, 0.0);
+  var lightN_cached = vec3<f32>(0.0, 1.0, 0.0);
   var rim_cached: f32 = 0.0;
+  var sunSide_cached: f32 = 0.5;
+  var sunRim_cached: f32 = 0.0;
+  var sunExposure_cached: f32 = 0.0;
+  var upperExposure_cached: f32 = 1.0;
 
   var runMeanL: f32 = 0.0;
   var runN: f32 = 0.0;
 
   var iter: i32 = 0;
 
-    loop {
+  loop {
     if (iter >= TUNE.maxSteps) { break; }
     if (t >= t1 || Tr < 0.001) { break; }
 
     let p = rayRo + rayRd * t;
+    let farF = 0.0;
+    let stepLen = clamp(baseStep, TUNE.minStep, TUNE.maxStep);
+    let weatherLOD = clamp(weatherLOD_base, 0.0, wg_maxMipW);
 
-    // coarse weather skip
+    // Coarse weather can accelerate empty space, but it is not allowed to be the final visibility test.
     let subsample = f32(max(reproj.subsample, 1u));
     let coarsePenalty = log2(max(subsample, 1.0));
-    var coarseMip = max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty));
-    coarseMip = min(wg_maxMipW, coarseMip + farF * 1.0);
+    let coarseMip = min(wg_maxMipW, max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty)));
 
-    if (weatherProbeEmpty(p, rayRd, baseStep * 2.0, 3, coarseMip, squareOrigin_xz, invSide, wScale)) {
-      t = min(t + baseStep * TUNE.emptySkipMult, t1);
-      prevDens = 0.0;
-      prevTsun = 1.0;
-      Tsun_cached = 1.0;
-      iter = iter + 1;
-      continue;
+    let uv_coarse = weatherUV_from(p, squareOrigin_xz, invSide, wScale);
+    var wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, clamp(max(weatherLOD, coarseMip), 0.0, wg_maxMipW));
+
+    if (weatherCoverageGate(wm_coarse) >= TUNE.weatherRejectGate) {
+      wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, clamp(weatherLOD, 0.0, wg_maxMipW));
     }
 
-    // quick weather density proxy
-    let uv_coarse = weatherUV_from(p, squareOrigin_xz, invSide, wScale);
-    let wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, min(weatherLOD, max(0.0, wg_maxMipW)));
-
     if (wm_coarse.b >= 1.0) {
-      t = min(t + baseStep * 2.0, t1);
+      t = min(t + stepLen, t1);
       prevDens = 0.0;
+      prevMacroDens = 0.0;
       prevTsun = 1.0;
       Tsun_cached = 1.0;
       iter = iter + 1;
@@ -948,47 +1205,24 @@ fn computeCloud(
     }
 
     let ph_coarse = computePH(p, wm_coarse);
-    let quickCoverage = saturate((wm_coarse.r - 0.35) * 2.5);
-    if (quickCoverage < 0.01 && (ph_coarse < 0.02)) {
-      t = min(t + baseStep * 2.0, t1);
-      prevDens = 0.0;
-      prevTsun = 1.0;
-      Tsun_cached = 1.0;
-      iter = iter + 1;
-      continue;
-    }
-
     // LOD from step
-    let baseLOD = clamp(log2(max(baseStep / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);
-    let nearDepth = max(cosVF * (t - t0), 0.0);
-    let nearSmooth = pow(saturate(1.0 - nearDepth / TUNE.nearFluffDist), 0.85);
+    let baseLOD = clamp(log2(max(stepLen / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);
+    let lodShapeBase = clamp(baseLOD, 0.0, wg_maxMipS);
+    let lodDetailBase = clamp(baseLOD, 0.0, wg_maxMipD);
 
-    let lodBias = mix_f(0.0, TUNE.nearLodBias, nearSmooth);
-    let lodShapeBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipS);
-    let lodDetailBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipD);
-
-    // weather full
-    let uv = weatherUV_from(p, squareOrigin_xz, invSide, wScale);
-    let wm = wrap2D(weather2D, samp2D, uv, 0i, weatherLOD);
-
-    if (wm.b >= 1.0) {
-      t = min(t + baseStep * 2.0, t1);
-      prevDens = 0.0;
-      prevTsun = 1.0;
-      Tsun_cached = 1.0;
-      iter = iter + 1;
-      continue;
-    }
-
-    let ph = computePH(p, wm);
+    let wm = wm_coarse;
+    let ph = ph_coarse;
     if (ph < 0.0) {
-      t = min(t + baseStep * 2.0, t1);
+      t = min(t + stepLen, t1);
       prevDens = 0.0;
+      prevMacroDens = 0.0;
       prevTsun = 1.0;
       Tsun_cached = 1.0;
       iter = iter + 1;
       continue;
     }
+
+    let stepWarp = worldWarpXZ(p.xz, ph, max(B.half.x, B.half.z));
 
     // mip hysteresis
     let sL: f32 = floor(lodShapeBase);
@@ -998,33 +1232,49 @@ fn computeCloud(
 
     var s: vec4<f32>;
     if (sF > TUNE.lodBlendThreshold) {
-      let s_lo = sampleShapeRGBA(p, ph, sL);
-      let s_hi = sampleShapeRGBA(p, ph, min(sL + 1.0, wg_maxMipS));
+      let s_lo = sampleShapeRGBAWarp(p, ph, sL, stepWarp);
+      let s_hi = sampleShapeRGBAWarp(p, ph, min(sL + 1.0, wg_maxMipS), stepWarp);
       s = mix_v4(s_lo, s_hi, sF);
     } else {
-      s = sampleShapeRGBA(p, ph, sL);
+      s = sampleShapeRGBAWarp(p, ph, sL, stepWarp);
+    }
+
+    let faceFade = insideFaceFade(p, bmin, bmax);
+    let nearDense = 1.0;
+
+    var densMacro = densityMacroFromSamples(ph, wm, s) * faceFade * nearDense;
+
+    if (densMacro <= 0.00004 && prevMacroDens <= 0.00004) {
+      prevDens = 0.0;
+      prevMacroDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
+      t = min(t + stepLen * 1.15, t1);
+      iter = iter + 1;
+      continue;
     }
 
     var det: vec3<f32>;
     if (dF > TUNE.lodBlendThreshold) {
-      let d_lo = sampleDetailRGB(p, ph, dL);
-      let d_hi = sampleDetailRGB(p, ph, min(dL + 1.0, wg_maxMipD));
+      let d_lo = sampleDetailRGBWarp(p, ph, dL, stepWarp);
+      let d_hi = sampleDetailRGBWarp(p, ph, min(dL + 1.0, wg_maxMipD), stepWarp);
       det = mix_v3(d_lo, d_hi, dF);
     } else {
-      det = sampleDetailRGB(p, ph, dL);
+      det = sampleDetailRGBWarp(p, ph, dL, stepWarp);
     }
-    det = mix_v3(det, det * TUNE.farDetailAtten, farF);
+    det = det;
 
-    // density
-    var dens = densityFromSamples(ph, wm, s, det);
-    dens *= insideFaceFade(p, bmin, bmax);
-    dens *= mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / TUNE.nearDensityRange));
+    var dens = densityFromSamples(ph, wm, s, det) * faceFade * nearDense;
 
-    let densSmoothed = mix_f(dens, prevDens, saturate(TUNE.raySmoothDens));
+    let bodySmooth = smoothstep(0.08, 0.42, max(densMacro, prevMacroDens));
+    let raySmoothDensAdaptive = saturate(mix_f(TUNE.raySmoothDens * 0.30, TUNE.raySmoothDens, bodySmooth));
+    let densSmoothed = mix_f(dens, prevDens, raySmoothDensAdaptive);
+    let densMacroSmoothed = mix_f(densMacro, prevMacroDens, saturate(raySmoothDensAdaptive * 0.90));
 
     if (densSmoothed > 0.00008) {
-      if ((iter % TUNE.sunStride) == 0) {
-        if (densSmoothed * baseStep > TUNE.sunDensityGate) {
+      let sunStrideSafe = max(TUNE.sunStride, 1);
+      if ((iter % sunStrideSafe) == 0) {
+        if (densMacroSmoothed * stepLen > TUNE.sunDensityGate) {
           Tsun_cached = sunTransmittance(
             p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepLen,
             squareOrigin_xz, invSide, wScale
@@ -1033,28 +1283,85 @@ fn computeCloud(
           Tsun_cached = 1.0;
         }
 
-        shapeN_cached = approxShapeNormal(p, ph, max(0.0, lodShapeBase));
-        rim_cached = pow(1.0 - saturate(dot(shapeN_cached, viewDir)), 2.0);
+        if (sunStrideSafe <= 1) {
+          shapeN_cached = approxShapeNormal(p, ph, max(0.0, lodShapeBase));
+        } else {
+          shapeN_cached = approxShapeNormalFast(p, ph, max(0.0, lodShapeBase + 0.35));
+        }
+
+        let shadowInteriorProbe = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0));
+        if (sunStrideSafe <= 1) {
+          let densityN = approxLightingNormal(
+            p,
+            wm,
+            max(0.0, lodShapeBase + 0.65),
+            max(0.0, lodDetailBase + 1.25)
+          );
+          lightN_cached = normalize(mix_v3(shapeN_cached, densityN, mix_f(0.65, 0.25, shadowInteriorProbe)));
+          sunExposure_cached = directionalExposure(
+            p,
+            wm,
+            max(0.0, lodShapeBase + 0.50),
+            max(0.0, lodDetailBase + 1.00),
+            sunDir
+          );
+        } else {
+          lightN_cached = normalize(mix_v3(shapeN_cached, vec3<f32>(0.0, 1.0, 0.0), 0.18 * shadowInteriorProbe));
+          sunExposure_cached = saturate(dot(lightN_cached, sunDir) * 0.72 + 0.28);
+        }
+
+        rim_cached = pow(1.0 - saturate(dot(lightN_cached, viewDir)), 1.7);
+
+        let sunFacing = saturate(dot(lightN_cached, sunDir));
+        sunSide_cached = sunFacing;
+        sunRim_cached = pow(1.0 - sunFacing, 1.30);
+
+        upperExposure_cached = smoothstep(
+          0.42,
+          0.78,
+          saturate(lightN_cached.y * 0.5 + 0.5)
+        );
       }
 
-      let TsunSmoothed = mix_f(Tsun_cached, prevTsun, saturate(TUNE.raySmoothSun));
-      let bnScaled = mix_f(bnPix, bnPix * TUNE.bnFarScale, farF);
+      let raySmoothSunAdaptive = saturate(mix_f(TUNE.raySmoothSun * 0.35, TUNE.raySmoothSun, bodySmooth));
+      let TsunSmoothed = mix_f(Tsun_cached, prevTsun, raySmoothSunAdaptive);
+      let shadowInterior = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0)) * (1.0 - saturate(TsunSmoothed * 1.35));
+      let bnScaled = bnPix * mix_f(1.0, 0.18, shadowInterior);
 
-      let lightBase = CalculateLight(densSmoothed, TsunSmoothed, cosVS, ph, bnScaled, t - t0, rim_cached);
+      let rawSampleODFine = densSmoothed * stepLen * VIEW_EXTINCTION_SCALE;
+      let rawSampleODMacro = densMacroSmoothed * stepLen * VIEW_EXTINCTION_SCALE;
+      let sampleOD = min(mix_f(rawSampleODFine, rawSampleODMacro, 0.58 * shadowInterior), max(C.attenuationClamp, 0.001));
+      let absorb = BeerLaw(sampleOD, C.cloudBeer);
+      let alpha = 1.0 - absorb;
 
-      let surfShade = surfaceShadowFactor(shapeN_cached, sunDir, 0.25, 1.15);
-      let occlusion = mix_f(0.6, 1.0, saturate(TsunSmoothed));
+      let lightDensity = mix_f(densSmoothed, densMacroSmoothed, 0.82 * shadowInterior);
+      let rimEffective = rim_cached * mix_f(1.0, 0.20, shadowInterior);
+      let exposureEffective = sunExposure_cached * mix_f(1.0, 0.28, shadowInterior);
+      let sideEffective = mix_f(sunSide_cached, 0.62, 0.35 * shadowInterior);
 
-      var lightCol = lightBase * surfShade * occlusion;
+      var lightCol = CalculateLight(
+        lightDensity,
+        alpha,
+        TsunSmoothed,
+        cosVS,
+        ph,
+        bnScaled,
+        t - t0,
+        rimEffective,
+        sideEffective,
+        sunRim_cached,
+        Tr,
+        exposureEffective,
+        upperExposure_cached
+      );
+
+      let shadowLift = vec3<f32>(0.045, 0.050, 0.058) * shadowInterior;
+      lightCol = lightCol + shadowLift * alpha;
 
       let lNow = luminance(lightCol);
       let meanL = select(lNow, runMeanL / max(runN, 1.0), runN > 0.0);
       let allow = max(meanL * (1.0 + TUNE.fflyRelClamp), TUNE.fflyAbsFloor);
       if (lNow > allow) { lightCol *= allow / max(lNow, 1e-6); }
-
-      let beer = max(C.cloudBeer, EPS);
-      let absorb = exp2(-(beer * densSmoothed * baseStep) * INV_LN2);
-      let alpha = 1.0 - absorb;
 
       rgb += Tr * lightCol * alpha;
       Tr *= absorb;
@@ -1066,9 +1373,10 @@ fn computeCloud(
     }
 
     prevDens = densSmoothed;
+    prevMacroDens = densMacroSmoothed;
     prevTsun = Tsun_cached;
 
-    t = min(t + baseStep, t1);
+    t = min(t + stepLen, t1);
     iter = iter + 1;
   }
 
@@ -1084,14 +1392,12 @@ fn computeCloud(
     else { newCol = vec4<f32>(0.0, 0.0, 0.0, a); }
   }
 
-  // soft fluff + ambient tint
-  {
-    let a = newCol.a;
-    let fluff = clamp(0.28 * a * mix_f(1.0, 1.4, saturate(1.0 - cosVS)), 0.02, 0.50);
-    let sunTint = mix_v3(vec3<f32>(0.92, 0.93, 0.96), C.sunColor, saturate(0.5 + 0.5 * cosVS));
-    let ambientFill = sunTint * 0.06;
-    newCol = vec4<f32>(mix_v3(newCol.rgb, newCol.rgb + ambientFill * a, fluff), smoothstep(0.0, 1.0, a * 1.03));
-  }
+  // Preserve compute output as premultiplied volumetric radiance.
+  // The preview pass composites this over the procedural sky.
+  newCol = vec4<f32>(max(newCol.rgb, vec3<f32>(0.0)), clamp(newCol.a, 0.0, 1.0));
+
+  let historyDepth = max(clamp(t, t0, t1), 0.0);
+  let historyFarF = 0.0;
 
   // TAA with variance clamp
   if (reproj.enabled == 1u) {
@@ -1116,8 +1422,10 @@ fn computeCloud(
         let alphaDiff = abs(prevCol.a - newCol.a);
 
         var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0);
+        let bodyStable = smoothstep(0.38, 0.95, min(prevCol.a, newCol.a)) * exp(-motionMag * 0.35) * exp(-alphaDiff * 3.5);
         var tb = clamp(reproj.temporalBlend * stability, 0.0, 0.985);
-        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, farF);
+        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, historyFarF);
+        tb = clamp(tb * mix_f(1.0, 1.28, bodyStable), 0.0, 0.992);
 
         if (reproj.depthTest == 1u) {
           let prevDepth = textureSampleLevel(depthPrev, sampDepth, prevUV, 0.0).r;
@@ -1125,7 +1433,8 @@ fn computeCloud(
         }
 
         let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));
-        let rel = relBase * mix_f(1.0, 0.80, farF);
+        let relBody = mix_f(relBase, max(TUNE.taaRelMin * 0.72, 0.05), bodyStable);
+        let rel = relBody * mix_f(1.0, 0.80, historyFarF);
 
         let newClampedRGB = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);
         let newClamped = vec4<f32>(newClampedRGB, newCol.a);

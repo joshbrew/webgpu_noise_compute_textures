@@ -36,7 +36,7 @@ let SHAPE_SIZE = 128,
 
 // baked noise resources
 const noise = {
-  weather: { arrayView: null, dirty: false },
+  weather: { arrayView: null, dirty: false, gCleared: false, bCleared: false },
   blue: { arrayView: null, dirty: false },
   shape128: { view3D: null, size: 128, dirty: false },
   detail32: { view3D: null, size: 32, dirty: false },
@@ -76,7 +76,8 @@ let lastAppliedTuningVersion = -1;
 let loopEnabled = false,
   loopRunning = false,
   lastRunPayload = null,
-  emaFps = null;
+  emaSubmitFps = null,
+  emaGpuFps = null;
 
 // NoiseTransforms (world-space offsets/scales + per-axis scaling)
 let shapeOffsetWorld = [0, 0, 0],
@@ -97,6 +98,19 @@ let shapeAxisScale = [1, 1, 1],
 
 const renderBundleCache = new Map();
 const log = (...a) => postMessage({ type: "log", data: a });
+
+const LOOP_TARGET_MS = 1000 / 60;
+const LOOP_BACKPRESSURE_EVERY = 3;
+const FRAME_LOG_EVERY = 60;
+const CAMERA_RESET_FRAMES = 8;
+const CAMERA_SIG_EPS = 1e-4;
+let submittedFrameCount = 0;
+let completedFrameCount = 0;
+let lastFenceTime = 0;
+let framesSinceFence = 0;
+let lastViewSignature = null;
+let reprojResetFrames = 0;
+let lastGpuFrameMs = 0;
 
 // -----------------------------------------------------------------------------
 // device and builders
@@ -322,7 +336,8 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
       viewDimension: "2d-array",
     });
     gMs = performance.now() - tg0;
-  } else {
+    noise.weather.gCleared = false;
+  } else if (!noise.weather.gCleared) {
     const tc0 = performance.now();
     await nb.computeToTexture(
       WEATHER_W,
@@ -335,6 +350,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
         viewDimension: "2d-array",
       },
     );
+    noise.weather.gCleared = true;
     gMs = performance.now() - tc0;
   }
 
@@ -356,7 +372,8 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
       viewDimension: "2d-array",
     });
     bMs = performance.now() - tb0;
-  } else {
+    noise.weather.bCleared = false;
+  } else if (!noise.weather.bCleared) {
     const tc0 = performance.now();
     await nb.computeToTexture(
       WEATHER_W,
@@ -369,6 +386,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
         viewDimension: "2d-array",
       },
     );
+    noise.weather.bCleared = true;
     bMs = performance.now() - tc0;
   }
 
@@ -730,10 +748,6 @@ function applyNoiseTransforms(nt, opts = {}) {
   const wAx = pickAxis(nt.weatherAxisScale);
   if (wAx) weatherAxisScale = wAx;
 
-  if (cb) {
-    cb._bg0Dirty = true;
-    cb._bg1Dirty = true;
-  }
 }
 
 function pushTransformsToCloudBuilder() {
@@ -754,9 +768,6 @@ function pushTransformsToCloudBuilder() {
   if (typeof cb.setNoiseTransforms === "function") cb.setNoiseTransforms(t);
   else if (typeof cb.setTileScaling === "function") cb.setTileScaling(t);
   else cb.noiseTransforms = t;
-
-  cb._bg0Dirty = true;
-  cb._bg1Dirty = true;
 }
 
 function snapshotTransforms() {
@@ -787,7 +798,7 @@ function normalizeReproj(r) {
     subsample: (r.subsample ? r.subsample >>> 0 : 0) >>> 0,
     sampleOffset: (r.sampleOffset ? r.sampleOffset >>> 0 : 0) >>> 0,
     motionIsNormalized: (r.motionIsNormalized ? 1 : 0) >>> 0,
-    temporalBlend: typeof r.temporalBlend === "number" ? r.temporalBlend : 0.0,
+    temporalBlend: typeof r.temporalBlend === "number" ? r.temporalBlend : ((r.enabled ? 0.82 : 0.0)),
     depthTest: (r.depthTest ? 1 : 0) >>> 0,
     depthTolerance: typeof r.depthTolerance === "number" ? r.depthTolerance : 0.0,
     frameIndex: (r.frameIndex ? r.frameIndex >>> 0 : 0) >>> 0,
@@ -822,7 +833,8 @@ function makeRenderBundleKey(pipe, bg, samp, paramsBuffer, outView) {
 
 function getOrCreateRenderBundle(pipe, bgl, samp, format) {
   const bg = cb._getOrCreateRenderBindGroup(canvasMain, bgl, samp);
-  const bundleKey = makeRenderBundleKey(pipe, bg, samp, cb.renderParams, cb.outView);
+  const sourceView = typeof cb._getRenderSourceView === "function" ? cb._getRenderSourceView() : cb.outView;
+  const bundleKey = makeRenderBundleKey(pipe, bg, samp, cb.renderParams, sourceView);
 
   if (renderBundleCache.has(bundleKey)) return { bundle: renderBundleCache.get(bundleKey), bg };
 
@@ -875,12 +887,11 @@ function applyWorkerTuning() {
   try {
     if (cb && typeof cb.setTuning === "function") {
       cb.setTuning(Object.assign({}, workerTuning));
-      if (cb._bg0Dirty !== undefined) cb._bg0Dirty = true;
       lastAppliedTuningVersion = workerTuningVersion;
 
-      if (typeof workerTuning.lodBiasWeather === "number" && typeof cb?.setPerfParams === "function") {
+      if (typeof cb?.setPerfParams === "function") {
         cb.setPerfParams({
-          lodBiasMul: workerTuning.lodBiasWeather,
+          lodBiasMul: 1.0,
           coarseMipBias: 0.0,
         });
       }
@@ -912,6 +923,70 @@ function norm(a) {
   return [a[0] / L, a[1] / L, a[2] / L];
 }
 
+function roundSig(v, scale = 10000) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * scale) / scale : 0;
+}
+
+function makeViewSignature(preview, w, h) {
+  const cam = preview?.cam || {};
+  const sun = preview?.sun || {};
+  return [
+    roundSig(cam.x),
+    roundSig(cam.y),
+    roundSig(cam.z),
+    roundSig(cam.yawDeg),
+    roundSig(cam.pitchDeg),
+    roundSig(cam.fovYDeg),
+    roundSig(sun.azDeg),
+    roundSig(sun.elDeg),
+    w | 0,
+    h | 0,
+  ].join('|');
+}
+
+function invalidateReprojectionHistory() {
+  historyPrevView = null;
+  historyOutView = historyUsesAasOut ? historyViewA : historyViewB;
+  reprojResetFrames = Math.max(reprojResetFrames, CAMERA_RESET_FRAMES);
+  if (workerReproj) {
+    workerReproj.frameIndex = 0;
+    workerReproj.sampleOffset = 0;
+  }
+}
+
+function updateViewInvalidation(preview) {
+  const sig = makeViewSignature(preview, MAIN_W, MAIN_H);
+  if (lastViewSignature === null) {
+    lastViewSignature = sig;
+    return false;
+  }
+  if (sig !== lastViewSignature) {
+    lastViewSignature = sig;
+    invalidateReprojectionHistory();
+    return true;
+  }
+  return false;
+}
+
+function cloneReprojForReset(r) {
+  if (!r) return null;
+  const ss = Math.max(1, (r.subsample || r.coarseFactor || 1) | 0);
+  return Object.assign({}, r, {
+    enabled: r.enabled ? 1 : 0,
+    subsample: ss,
+    sampleOffset: 0,
+    temporalBlend: 0.0,
+    frameIndex: 0,
+    scale: typeof r.scale === "number" ? r.scale : 1.0 / f32Like(ss * ss),
+    coarseFactor: Math.max(1, (r.coarseFactor || ss) | 0),
+  });
+}
+
+function f32Like(v) {
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+
 // -----------------------------------------------------------------------------
 // runFrame
 // -----------------------------------------------------------------------------
@@ -931,6 +1006,8 @@ async function runFrame({
   depthImage = null,
   coarseFactor = 1,
   tuning = null,
+  waitForGpu = false,
+  logFrame = false,
 } = {}) {
   await ensureDevice();
 
@@ -951,6 +1028,8 @@ async function runFrame({
       depthImage,
       coarseFactor,
       tuning,
+      waitForGpu,
+      logFrame,
     };
   } catch {}
 
@@ -976,8 +1055,11 @@ async function runFrame({
 
   pushTransformsToCloudBuilder();
 
+  const cameraChanged = updateViewInvalidation(preview);
+
   if (reproj) workerReproj = normalizeReproj(reproj);
   if (perf) workerPerf = perf;
+  if (cameraChanged && workerReproj && workerReproj.enabled) invalidateReprojectionHistory();
 
   if (!noise.weather.arrayView) await bakeWeather2D(weatherParams, true, billowParams, weatherBParams);
   if (!noise.blue.arrayView) await bakeBlue2D({}, true);
@@ -992,8 +1074,18 @@ async function runFrame({
   });
 
   const useReproj = (reproj && reproj.enabled) || (workerReproj && workerReproj.enabled);
+  const resetReprojThisFrame = useReproj && reprojResetFrames > 0;
+  let effectiveReproj = workerReproj;
+  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0);
+  if (resetReprojThisFrame) {
+    effectiveReproj = cloneReprojForReset(workerReproj);
+    effectiveCoarseFactor = Math.max(1, (effectiveReproj?.coarseFactor || effectiveReproj?.subsample || coarseFactor || 1) | 0);
+    historyPrevView = null;
+  }
+
   if (useReproj) {
     if (!workerReproj && reproj) workerReproj = normalizeReproj(reproj);
+    if (!effectiveReproj) effectiveReproj = workerReproj;
 
     if (motionImage) {
       try {
@@ -1045,19 +1137,14 @@ async function runFrame({
     cb.setHistoryOutView(historyOutView);
 
     if (workerPerf) cb.setPerfParams(workerPerf);
-    if (workerReproj) cb.setReprojSettings(workerReproj);
-
-    cb._bg0Dirty = true;
-    cb._bg1Dirty = true;
+    if (effectiveReproj) cb.setReprojSettings(effectiveReproj);
   } else {
     cb.setInputMaps({
-      motionView: undefined,
-      depthPrevView: undefined,
-      historyPrevView: undefined,
+      motionView: null,
+      depthPrevView: null,
+      historyPrevView: null,
     });
     cb.setHistoryOutView(null);
-    cb._bg1Dirty = true;
-    cb._bg0Dirty = true;
   }
 
   cb.setBox({ center: [0, 0, 0], half: [1, 0.3, 1], uvScale: 1 });
@@ -1109,26 +1196,23 @@ async function runFrame({
 
   if (!useReproj) cb.createOutputTexture(MAIN_W, MAIN_H, 1);
 
+  const shouldWaitForGpu = !!waitForGpu;
   const tAll0 = performance.now();
-  if (typeof queue.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-  const tC0 = performance.now();
-
-  const cf = Math.max(1, coarseFactor | 0);
-  await cb.dispatch({ coarseFactor: cf });
-
-  if (typeof queue.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-  else await new Promise((r) => setTimeout(r, 8));
-  const tC1 = performance.now();
-
-  if (useReproj && historyAllocated) {
-    historyPrevView = historyOutView;
-    historyUsesAasOut = !historyUsesAasOut;
-    historyOutView = historyUsesAasOut ? historyViewA : historyViewB;
-
-    cb.setInputMaps({ historyPrevView });
-    cb.setHistoryOutView(historyOutView);
-    cb._bg1Dirty = cb._bg0Dirty = true;
+  if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
+    await queue.onSubmittedWorkDone();
   }
+
+  const cf = effectiveCoarseFactor;
+  const enc = device.createCommandEncoder();
+  const tC0 = performance.now();
+  const encodedDispatch =
+    typeof cb.encodeDispatchPasses === "function"
+      ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, skipUpsampleForPreview: true })
+      : null;
+  if (!encodedDispatch) {
+    throw new Error("CloudComputeBuilder.encodeDispatchPasses is required for fused frame submission.");
+  }
+  const tC1 = performance.now();
 
   const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
   if (!ctxMain) configureMainContext();
@@ -1147,11 +1231,12 @@ async function runFrame({
     exposure: preview?.exposure || 1.0,
     skyColor: preview?.sky || [0.5, 0.6, 0.8],
     sunBloom: preview?.sun?.bloom || 0.0,
+    renderQuality: preview?.renderQuality ?? 1,
   });
 
+  const tR0 = performance.now();
   const { bundle } = getOrCreateRenderBundle(pipe, bgl, samp, format);
 
-  const enc = device.createCommandEncoder();
   const tex = ctxMain.getCurrentTexture();
   const pass = enc.beginRenderPass({
     colorAttachments: [
@@ -1170,30 +1255,70 @@ async function runFrame({
   });
   pass.executeBundles([bundle]);
   pass.end();
-  queue.submit([enc.finish()]);
 
-  const tR0 = performance.now();
-  if (typeof queue.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-  else await new Promise((r) => setTimeout(r, 8));
+  const tSubmit0 = performance.now();
+  queue.submit([enc.finish()]);
+  encodedDispatch.restoreAfterSubmit?.();
+
+  if (useReproj && historyAllocated) {
+    historyPrevView = historyOutView;
+    historyUsesAasOut = !historyUsesAasOut;
+    historyOutView = historyUsesAasOut ? historyViewA : historyViewB;
+
+    cb.setInputMaps({ historyPrevView });
+    cb.setHistoryOutView(historyOutView);
+    if (resetReprojThisFrame) {
+      reprojResetFrames = Math.max(0, reprojResetFrames - 1);
+      if (workerReproj) {
+        workerReproj.frameIndex = 0;
+        workerReproj.sampleOffset = 0;
+      }
+    }
+  }
+  const tSubmit1 = performance.now();
   const tR1 = performance.now();
+
+  const tWait0 = performance.now();
+  if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
+    await queue.onSubmittedWorkDone();
+  }
+  const tWait1 = performance.now();
   const tAll1 = performance.now();
+
+  submittedFrameCount = (submittedFrameCount + 1) >>> 0;
 
   const timings = {
     computeMs: tC1 - tC0,
     renderMs: tR1 - tR0,
+    submitMs: tSubmit1 - tSubmit0,
+    gpuWaitMs: tWait1 - tWait0,
     totalMs: tAll1 - tAll0,
+    waitedForGpu: shouldWaitForGpu,
+    coarseFactor: cf,
+    directPreview: !!encodedDispatch.directPreview,
+    resetReprojection: resetReprojThisFrame,
+    frame: submittedFrameCount,
   };
 
-  log(
-    "[BENCH] compute(waited, ms):",
-    timings.computeMs.toFixed(2),
-    " render(waited, ms):",
-    timings.renderMs.toFixed(2),
-    " total(ms):",
-    timings.totalMs.toFixed(2),
-    " coarseFactor:",
-    cf,
-  );
+  if (shouldWaitForGpu || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
+    log(
+      shouldWaitForGpu ? "[BENCH waited]" : "[BENCH submitted]",
+      "compute(ms):",
+      timings.computeMs.toFixed(2),
+      "render-encode(ms):",
+      timings.renderMs.toFixed(2),
+      "submit(ms):",
+      (timings.submitMs || 0).toFixed(2),
+      "gpu-wait(ms):",
+      (timings.gpuWaitMs || 0).toFixed(2),
+      "total(ms):",
+      timings.totalMs.toFixed(2),
+      "coarseFactor:",
+      cf,
+      "directPreview:",
+      !!encodedDispatch.directPreview,
+    );
+  }
 
   return timings;
 }
@@ -1217,6 +1342,10 @@ function startLoop() {
     log("animation loop started");
 
     let prevTime = performance.now();
+    let submitWindowStart = prevTime;
+    let submitWindowFrames = 0;
+    lastFenceTime = prevTime;
+    framesSinceFence = 0;
     if (workerReproj && workerReproj.enabled) {
       workerReproj = normalizeReproj(workerReproj);
       if (!workerReproj.frameIndex) workerReproj.frameIndex = 0;
@@ -1251,7 +1380,6 @@ function startLoop() {
           try {
             cb?.setReprojSettings?.(workerReproj);
             if (workerPerf) cb?.setPerfParams?.(workerPerf);
-            if (cb) cb._bg0Dirty = cb._bg1Dirty = true;
           } catch (e) {
             console.warn("startLoop reproj apply failed", e);
           }
@@ -1263,19 +1391,71 @@ function startLoop() {
           const merged = Object.assign({}, lastRunPayload.tileTransforms || {});
           Object.assign(merged, snapshotTransforms(), { explicit: true });
           lastRunPayload.tileTransforms = merged;
+          lastRunPayload.waitForGpu = false;
+          lastRunPayload.logFrame = false;
         }
 
         const timings = await runFrame(lastRunPayload);
-        const frameTime = performance.now() - t0 || timings.totalMs || 1;
-        const fpsInst = 1000 / frameTime;
-        emaFps = emaFps === null ? fpsInst : emaFps * 0.92 + fpsInst * 0.08;
+        const submitFrameMs = performance.now() - t0 || timings.totalMs || 1;
 
-        postMessage({ type: "frame", data: { timings, fps: emaFps, frameTime } });
+        submitWindowFrames += 1;
+        framesSinceFence += 1;
+        const nowForSubmit = performance.now();
+        if (nowForSubmit - submitWindowStart >= 250) {
+          const submitFpsInst = (submitWindowFrames * 1000) / Math.max(1, nowForSubmit - submitWindowStart);
+          emaSubmitFps = emaSubmitFps === null ? submitFpsInst : emaSubmitFps * 0.85 + submitFpsInst * 0.15;
+          submitWindowStart = nowForSubmit;
+          submitWindowFrames = 0;
+        }
+
+        postMessage({
+          type: "frame",
+          data: {
+            timings,
+            fps: emaGpuFps ?? emaSubmitFps,
+            submitFps: emaSubmitFps,
+            gpuFps: emaGpuFps,
+            submitFrameMs,
+            gpuFrameMs: lastGpuFrameMs,
+            resetReprojection: timings.resetReprojection,
+          },
+        });
       } catch (err) {
         postMessage({ type: "log", data: ["animation loop error", String(err)] });
       }
 
-      await Promise.resolve();
+      const elapsed = performance.now() - t0;
+      const delay = Math.max(0, LOOP_TARGET_MS - elapsed);
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+      else await Promise.resolve();
+
+      if (
+        typeof queue?.onSubmittedWorkDone === "function" &&
+        framesSinceFence >= LOOP_BACKPRESSURE_EVERY
+      ) {
+        const fenceStart = performance.now();
+        await queue.onSubmittedWorkDone();
+        const fenceEnd = performance.now();
+        const elapsedSinceFence = Math.max(1, fenceEnd - lastFenceTime);
+        const completedNow = framesSinceFence;
+        completedFrameCount += completedNow;
+        const gpuFpsInst = (completedNow * 1000) / elapsedSinceFence;
+        emaGpuFps = emaGpuFps === null ? gpuFpsInst : emaGpuFps * 0.80 + gpuFpsInst * 0.20;
+        lastGpuFrameMs = elapsedSinceFence / Math.max(1, completedNow);
+        lastFenceTime = fenceEnd;
+        framesSinceFence = 0;
+        postMessage({
+          type: "frame",
+          data: {
+            fps: emaGpuFps,
+            gpuFps: emaGpuFps,
+            submitFps: emaSubmitFps,
+            gpuFrameMs: lastGpuFrameMs,
+            fenceWaitMs: fenceEnd - fenceStart,
+            completedFrames: completedFrameCount,
+          },
+        });
+      }
     }
 
     loopRunning = false;
@@ -1372,6 +1552,7 @@ async function _handleMessage(ev) {
 
       renderBundleCache.clear();
       if (cb) cb._bg0Dirty = cb._bg1Dirty = true;
+      invalidateReprojectionHistory();
 
       respond(true, { ok: true });
       return;
@@ -1385,6 +1566,7 @@ async function _handleMessage(ev) {
         payload.billowParams || {},
         payload.weatherBParams || payload.weatherB || null,
       );
+      invalidateReprojectionHistory();
       respond(true, { baked: "weather", timings });
       return;
     }
@@ -1392,6 +1574,7 @@ async function _handleMessage(ev) {
     if (type === "bakeBlue") {
       await ensureDevice();
       const timings = await bakeBlue2D(payload.blueParams || {}, true);
+      invalidateReprojectionHistory();
       respond(true, { baked: "blue", timings });
       return;
     }
@@ -1403,6 +1586,7 @@ async function _handleMessage(ev) {
       pushTransformsToCloudBuilder();
       noise.shape128.dirty = true;
       const timings = await bakeShape128(payload.shapeParams || {}, true);
+      invalidateReprojectionHistory();
       respond(true, { baked: "shape128", timings });
       return;
     }
@@ -1414,6 +1598,7 @@ async function _handleMessage(ev) {
       pushTransformsToCloudBuilder();
       noise.detail32.dirty = true;
       const timings = await bakeDetail32(payload.detailParams || {}, true);
+      invalidateReprojectionHistory();
       respond(true, { baked: "detail32", timings });
       return;
     }
@@ -1437,6 +1622,7 @@ async function _handleMessage(ev) {
       const detail = await bakeDetail32(payload.detailParams || {}, true);
 
       const t1 = performance.now();
+      invalidateReprojectionHistory();
       respond(true, { baked: "all", timings: { weather, blue, shape, detail, totalMs: t1 - t0 } });
       return;
     }
@@ -1457,7 +1643,6 @@ async function _handleMessage(ev) {
         });
 
         pushTransformsToCloudBuilder();
-        renderBundleCache.clear();
 
         try {
           if (lastRunPayload) {
@@ -1482,6 +1667,55 @@ async function _handleMessage(ev) {
       return;
     }
 
+    if (type === "updateLastRunPayload") {
+      const incoming = payload || {};
+      await ensureDevice();
+
+      if (incoming.tuning && typeof incoming.tuning === "object") {
+        mergeTuningPatch(incoming.tuning);
+        try {
+          applyWorkerTuning();
+        } catch (e) {
+          console.warn("updateLastRunPayload tuning apply failed", e);
+        }
+      }
+
+      if (incoming.reproj) workerReproj = normalizeReproj(incoming.reproj);
+      if (incoming.perf) workerPerf = incoming.perf;
+
+      if (incoming.tileTransforms && typeof incoming.tileTransforms === "object") {
+        applyNoiseTransforms(incoming.tileTransforms, {
+          allowPositions: incoming.tileTransforms.explicit ? true : false,
+          allowScale: true,
+          allowVel: true,
+          additive: !!incoming.tileTransforms.additive,
+        });
+      }
+      if (incoming.noiseTransforms && typeof incoming.noiseTransforms === "object") {
+        applyNoiseTransforms(incoming.noiseTransforms, {
+          allowPositions: true,
+          allowScale: true,
+          allowVel: true,
+          additive: !!incoming.noiseTransforms.additive,
+        });
+      }
+      pushTransformsToCloudBuilder();
+
+      const merged = Object.assign({}, lastRunPayload || {}, incoming, {
+        waitForGpu: false,
+        logFrame: false,
+      });
+      if (incoming.tileTransforms || incoming.noiseTransforms) {
+        const tMerged = Object.assign({}, merged.tileTransforms || {});
+        Object.assign(tMerged, snapshotTransforms(), { explicit: true });
+        merged.tileTransforms = tMerged;
+      }
+      lastRunPayload = merged;
+
+      respond(true, { ok: true, queued: true });
+      return;
+    }
+
     if (type === "setReproj") {
       workerReproj = normalizeReproj(payload.reproj || null);
       workerPerf = payload.perf || workerPerf;
@@ -1489,14 +1723,13 @@ async function _handleMessage(ev) {
       if (workerReproj && workerReproj.enabled && (workerReproj.frameIndex === 0 || typeof workerReproj.frameIndex === "undefined")) {
         workerReproj.frameIndex = 0;
         workerReproj.sampleOffset = 0;
+        invalidateReprojectionHistory();
       }
 
       if (cb) {
         if (workerPerf) cb.setPerfParams(workerPerf);
         if (workerReproj) {
           cb.setReprojSettings(workerReproj);
-          cb._bg0Dirty = true;
-          cb._bg1Dirty = true;
         }
       }
 
