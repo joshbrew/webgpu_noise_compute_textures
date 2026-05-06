@@ -1037,6 +1037,23 @@ fn voro_thresh_mask(v: f32, threshold: f32, feather: f32) -> f32 {
   return select(0.0, 1.0, v >= t);
 }
 
+fn voro_eval3D_metrics(m: Voro3DMetrics, params: NoiseParams, freqOrScale: f32) -> f32 {
+  return voro_eval(
+    m.f1Sq,
+    m.f2Sq,
+    m.cellVal,
+    params.voroMode,
+    max(params.edgeK, 0.0),
+    max(params.threshold, 0.0),
+    freqOrScale
+  );
+}
+
+fn voro_legacy_cell_or_eval3D(m: Voro3DMetrics, params: NoiseParams, freqOrScale: f32, legacyCellValue: f32) -> f32 {
+  let modeValue = voro_eval3D_metrics(m, params, freqOrScale);
+  return select(modeValue, legacyCellValue, params.voroMode == VORO_CELL);
+}
+
 
 // f1Sq/f2Sq are squared distances; cellVal in [0,1].
 // edgeK is scale (edges modes) or feather (mask modes). freqOrScale unused.
@@ -3274,54 +3291,17 @@ fn generateLanczosAntiBillow(pos : vec3<f32>, p : NoiseParams) -> f32 {
 
 // Raw Voronoi circle‐gradient cell value
 fn voronoiCircleGradient(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let fx : i32 = i32(floor(pos.x));
-    let fy : i32 = i32(floor(pos.y));
-    let fz : i32 = i32(floor(pos.z));
-    var minDist    : f32 = 1e9;
-    var secondDist : f32 = 1e9;
-    var centerVal  : f32 = 0.0;
+    let m = voro3D_metrics(pos);
+    let minDist = sqrt(max(m.f1Sq, 0.0));
+    let secondDist = sqrt(max(m.f2Sq, 0.0));
 
-    // search the 3×3×3 neighborhood
-    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
-        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
-            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
-                let xi = fx + dx;
-                let yi = fy + dy;
-                let zi = fz + dz;
-
-                // pseudo‐random feature point within the cell
-                let r0 = rand3u(xi, yi, zi);
-                let r1 = rand3u(yi, zi, xi);
-                let r2 = rand3u(zi, xi, yi);
-                let px = f32(xi) + r0;
-                let py = f32(yi) + r1;
-                let pz = f32(zi) + r2;
-
-                // Euclidean distance
-                let dx_ = px - pos.x;
-                let dy_ = py - pos.y;
-                let dz_ = pz - pos.z;
-                let d   = sqrt(dx_*dx_ + dy_*dy_ + dz_*dz_);
-
-                // track the two smallest distances
-                if (d < minDist) {
-                    secondDist = minDist;
-                    minDist    = d;
-                    centerVal  = r0;           // store the cell’s “value”
-                } else if (d < secondDist) {
-                    secondDist = d;
-                }
-            }
-        }
-    }
-
-    // build the circle gradient: fall‐off from cell center
     let centerGrad = 1.0 - min(minDist, 1.0);
-    // edge mask: if the ridge is too thin, kill it
-    let edgeDist   = secondDist - minDist;
-    let edgeGrad   = select(1.0, 0.0, edgeDist < params.threshold);
+    let edgeDist = max(secondDist - minDist, 0.0);
+    let edgeGrad = select(1.0, 0.0, edgeDist < params.threshold);
+    let legacyCellValue = centerGrad * edgeGrad;
 
-    return centerGrad * edgeGrad;
+    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
+    return select(modeValue * centerGrad, legacyCellValue, params.voroMode == VORO_CELL);
 }
 
 // Octaved generator matching your JS .generateNoise()
@@ -3382,35 +3362,13 @@ fn euclideanDistSq4(a: vec4<f32>, b: vec4<f32>) -> f32 {
 // ───── 1. Voronoi Circle‐Gradient Tile Noise 2 ─────
 
 fn voronoiCircleGradient2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let fx : i32 = i32(floor(pos.x));
-    let fy : i32 = i32(floor(pos.y));
-    let fz : i32 = i32(floor(pos.z));
-    var minDist : f32 = 1e9;
-    var minVal  : f32 = 0.0;
-    var closest : vec3<f32> = vec3<f32>(0.0);
-
-    for(var dz = -1; dz <= 1; dz = dz + 1) {
-        for(var dy = -1; dy <= 1; dy = dy + 1) {
-            for(var dx = -1; dx <= 1; dx = dx + 1) {
-                let xi = fx + dx;
-                let yi = fy + dy;
-                let zi = fz + dz;
-                let r0 = rand3u(xi, yi, zi);
-                let feature = vec3<f32>(f32(xi) + r0,
-                                        f32(yi) + rand3u(yi, zi, xi),
-                                        f32(zi) + rand3u(zi, xi, yi));
-                let d = euclideanDist(feature, pos);
-                if(d < minDist) {
-                    minDist = d;
-                    minVal = rand3u(xi, yi, zi);
-                    closest = feature;
-                }
-            }
-        }
-    }
-    let centerDist = euclideanDist(closest, pos);
+    let m = voro3D_metrics(pos);
+    let centerDist = sqrt(max(m.f1Sq, 0.0));
     let gradient = sin(centerDist * PI);
-    return minVal * gradient;
+    let legacyCellValue = m.cellVal * gradient;
+
+    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
+    return select(modeValue * gradient, legacyCellValue, params.voroMode == VORO_CELL);
 }
 
 fn generateVoronoiCircle2(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -3487,36 +3445,14 @@ fn generateVoronoiFlatShade(posIn: vec3<f32>, params: NoiseParams) -> f32 {
 // ───── 3. Voronoi Ripple 3D ─────
 
 fn voronoiRipple3DRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let fx : i32 = i32(floor(pos.x));
-    let fy : i32 = i32(floor(pos.y));
-    let fz : i32 = i32(floor(pos.z));
-    var minDist    : f32 = 1e9;
-    var secondDist : f32 = 1e9;
-    var minVal     : f32 = 0.0;
+    let m = voro3D_metrics(pos);
+    let edgeDist = voro_edge_dist(m.f1Sq, m.f2Sq);
+    let ripple = sin(PI + edgeDist * PI * params.rippleFreq + params.time);
+    let rippleAmp = (1.0 + ripple) * 0.5;
+    let legacyCellValue = m.cellVal * rippleAmp;
 
-    for(var dz=-1; dz<=1; dz=dz+1) {
-        for(var dy=-1; dy<=1; dy=dy+1) {
-            for(var dx=-1; dx<=1; dx=dx+1) {
-                let xi = fx+dx;
-                let yi = fy+dy;
-                let zi = fz+dz;
-                let feature = vec3<f32>(f32(xi)+rand3u(xi,yi,zi),
-                                        f32(yi)+rand3u(yi,zi,xi),
-                                        f32(zi)+rand3u(zi,xi,yi));
-                let d = euclideanDist(feature, pos);
-                if(d < minDist) {
-                    secondDist = minDist;
-                    minDist    = d;
-                    minVal     = rand3u(xi, yi, zi);
-                } else if(d < secondDist) {
-                    secondDist = d;
-                }
-            }
-        }
-    }
-    let edgeDist = secondDist - minDist;
-    let ripple   = sin(PI + edgeDist * PI * params.rippleFreq + params.time);
-    return minVal * (1.0 + ripple) * 0.5;
+    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
+    return select(modeValue * rippleAmp, legacyCellValue, params.voroMode == VORO_CELL);
 }
 
 fn generateVoronoiRipple3D(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -3543,36 +3479,14 @@ fn generateVoronoiRipple3D(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
 // ───── 4. Voronoi Ripple 3D 2 ─────
 fn voronoiRipple3D2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let fx : i32 = i32(floor(pos.x));
-    let fy : i32 = i32(floor(pos.y));
-    let fz : i32 = i32(floor(pos.z));
-    var minDist: f32 = 1e9;
-    var secondDist: f32 = 1e9;
-    var minVal: f32 = 0.0;
-
-    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
-        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
-            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
-                let xi = fx + dx;
-                let yi = fy + dy;
-                let zi = fz + dz;
-                let feature = vec3<f32>(f32(xi) + rand3u(xi, yi, zi),
-                                        f32(yi) + rand3u(yi, zi, xi),
-                                        f32(zi) + rand3u(zi, xi, yi));
-                let d = euclideanDist(feature, pos);
-                if (d < minDist) {
-                    secondDist = minDist;
-                    minDist = d;
-                    minVal = rand3u(xi, yi, zi);
-                } else if (d < secondDist) {
-                    secondDist = d;
-                }
-            }
-        }
-    }
-    let edgeDist = secondDist - minDist;
+    let m = voro3D_metrics(pos);
+    let edgeDist = voro_edge_dist(m.f1Sq, m.f2Sq);
     let ripple = sin(PI + params.zoom * edgeDist * PI * params.rippleFreq + params.time);
-    return minVal * (1.0 + ripple) * 0.5;
+    let rippleAmp = (1.0 + ripple) * 0.5;
+    let legacyCellValue = m.cellVal * rippleAmp;
+
+    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
+    return select(modeValue * rippleAmp, legacyCellValue, params.voroMode == VORO_CELL);
 }
 
 fn generateVoronoiRipple3D2(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -3599,30 +3513,14 @@ fn generateVoronoiRipple3D2(pos: vec3<f32>, params: NoiseParams) -> f32 {
 
 // ───── 5. Voronoi Circular Ripple 3D ─────
 fn voronoiCircularRippleRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
-    let fx : i32 = i32(floor(pos.x));
-    let fy : i32 = i32(floor(pos.y));
-    let fz : i32 = i32(floor(pos.z));
-    var minDist: f32 = 1e9;
-    var minVal: f32 = 0.0;
-    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
-        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
-            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
-                let xi = fx + dx;
-                let yi = fy + dy;
-                let zi = fz + dz;
-                let feature = vec3<f32>(f32(xi) + rand3u(xi, yi, zi),
-                                        f32(yi) + rand3u(yi, zi, xi),
-                                        f32(zi) + rand3u(zi, xi, yi));
-                let d = euclideanDist(feature, pos);
-                if (d < minDist) {
-                    minDist = d;
-                    minVal = rand3u(xi, yi, zi);
-                }
-            }
-        }
-    }
+    let m = voro3D_metrics(pos);
+    let minDist = sqrt(max(m.f1Sq, 0.0));
     let ripple = sin(PI + minDist * PI * params.rippleFreq + params.time);
-    return minVal * (1.0 + ripple) * 0.5;
+    let rippleAmp = (1.0 + ripple) * 0.5;
+    let legacyCellValue = m.cellVal * rippleAmp;
+
+    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
+    return select(modeValue * rippleAmp, legacyCellValue, params.voroMode == VORO_CELL);
 }
 
 fn generateVoronoiCircularRipple(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -3994,42 +3892,60 @@ fn generateWhiteNoise(pos : vec3<f32>, params: NoiseParams) -> f32 {
   return clamp(v01, 0.0, 1.0);
 }
 
+fn wrapCoordOffset(base: u32, offset: i32, size: u32) -> u32 {
+  let s = max(i32(size), 1);
+  let v = ((i32(base) + offset) % s + s) % s;
+  return u32(v);
+}
+
+fn blueNoiseLocalRank(ip: vec3<u32>, seed: u32, radius: i32) -> f32 {
+  let center = hashTo01_seeded(ip.x, ip.y, ip.z, seed);
+  var lower = 0.0;
+  var total = 0.0;
+
+  for (var dy: i32 = -radius; dy <= radius; dy = dy + 1) {
+    for (var dx: i32 = -radius; dx <= radius; dx = dx + 1) {
+      if (dx == 0 && dy == 0) {
+        continue;
+      }
+
+      let sx = wrapCoordOffset(ip.x, dx, tileSizeX());
+      let sy = wrapCoordOffset(ip.y, dy, tileSizeY());
+      let n = hashTo01_seeded(sx, sy, ip.z, seed);
+      lower += select(0.0, 1.0, n < center);
+      total += 1.0;
+    }
+  }
+
+  return (lower + center) / (total + 1.0);
+}
+
 // ---------------------- Blue Noise Generator (tiled, seeded) -------------
 fn generateBlueNoise(pos : vec3<f32>, params: NoiseParams) -> f32 {
   let seed : u32 = params.seed;
+  let ip0 = posToPixelCoords_tiled(pos);
 
-  // pixel-space coords
-  let px = pos.xy * vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));
-
-  // scale control (same heuristic you had)
-  let pixelBase = max(min(f32(frame.fullWidth), f32(frame.fullHeight)), 1.0);
-  let highScale = max(params.freq * 0.02 * pixelBase, 1e-6);
-  let lowScaleFactor = 0.12;
-  let lowScale = max(highScale * lowScaleFactor, 1e-6);
-
-  // Optional domain warp (seeded) — jitter indices with tiled lattice lookups
-  var wp = px;
+  var ip = ip0;
   if (params.warpAmp > 0.0) {
-    let ip0 = posToIntsForHash_tiled(pos, params.freq, params.xShift, params.yShift, params.zShift);
-    let jx = hashToSigned01_seeded(ip0.x + 5u, ip0.y + 11u, ip0.z + 17u, seed);
-    let jy = hashToSigned01_seeded(ip0.x + 19u, ip0.y + 23u, ip0.z + 29u, seed);
-    let warpScale = params.warpAmp * pixelBase * 0.0025;
-    wp = px + vec2<f32>(jx, jy) * warpScale;
+    let jx = i32(round(hashToSigned01_seeded(ip0.x + 5u, ip0.y + 11u, ip0.z + 17u, seed) * params.warpAmp * 2.0));
+    let jy = i32(round(hashToSigned01_seeded(ip0.x + 19u, ip0.y + 23u, ip0.z + 29u, seed) * params.warpAmp * 2.0));
+    ip = vec3<u32>(
+      wrapCoordOffset(ip0.x, jx, tileSizeX()),
+      wrapCoordOffset(ip0.y, jy, tileSizeY()),
+      ip0.z
+    );
   }
 
-  // Sample HF and LF bands using the tiled value noise (coords pre-scaled)
-  let high = valueNoise2D_seeded(wp * highScale, 1.0, seed, 0.0, 0.0);
-  let lowSample = valueNoise2D_seeded(wp * lowScale, 1.0, seed, 0.0, 0.0);
+  let rankSmall = blueNoiseLocalRank(ip, seed, 1);
+  let rankLarge = blueNoiseLocalRank(ip, seed ^ 0x9E3779B9u, 2);
+  var result = mix(rankLarge, rankSmall, 0.65);
 
-  let suppress = max(params.gain, 0.0);
-  var result = high - lowSample * suppress;
+  let micro = hashTo01_seeded(ip.x + 37u, ip.y + 61u, ip.z + 17u, seed ^ 0x85EBCA6Bu);
+  result = clamp(result + (micro - 0.5) * (1.0 / 25.0), 0.0, 1.0);
 
-  let contrastFactor = 2.0;
-  result = result * contrastFactor;
-  result = result * (1.0 / (1.0 + suppress));
-
-  let rClamped = clamp(result, -1.0, 1.0);
-  return rClamped * 0.5 + 0.5;
+  let contrast = max(1.0 + params.gain, 0.05);
+  result = clamp((result - 0.5) * contrast + 0.5, 0.0, 1.0);
+  return result;
 }
 
 const HYDRO_TAU : f32 = 6.283185307179586;

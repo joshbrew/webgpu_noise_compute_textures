@@ -290,12 +290,28 @@ fn wrap3D_detail(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) 
 }
 
 // blue noise
+fn frameBlueOffset() -> vec2<i32> {
+  let bnW = max(i32(wg_blueDim.x), 1);
+  let bnH = max(i32(wg_blueDim.y), 1);
+  let fi = i32(reproj.frameIndex);
+  let so = i32(reproj.sampleOffset);
+  let ox = (fi * 73 + fi * fi * 19 + so * 31) % bnW;
+  let oy = (fi * 151 + fi * fi * 27 + so * 17) % bnH;
+  return vec2<i32>(ox, oy);
+}
+
 fn sampleBlueScreen(pixI: vec2<i32>) -> f32 {
-  let res = vec2<f32>(f32(frame.fullWidth), f32(frame.fullHeight));
-  let bnD = wg_blueDim;
-  let uvSS = (vec2<f32>(pixI) + 0.5) / res;
-  let uvBN = fract(uvSS * res / bnD);
-  return textureSampleLevel(blueTex, sampBN, uvBN, 0i, 0.0).r;
+  let bnW = max(i32(wg_blueDim.x), 1);
+  let bnH = max(i32(wg_blueDim.y), 1);
+  let baseOff = frameBlueOffset();
+  let p0 = vec2<i32>((pixI.x + baseOff.x) % bnW, (pixI.y + baseOff.y) % bnH);
+  let p1 = vec2<i32>((pixI.x + baseOff.x * 3 + 17) % bnW, (pixI.y + baseOff.y * 5 + 29) % bnH);
+  let uv0 = (vec2<f32>(p0) + 0.5) / wg_blueDim;
+  let uv1 = (vec2<f32>(p1) + 0.5) / wg_blueDim;
+  let a = textureSampleLevel(blueTex, sampBN, uv0, 0i, 0.0).r;
+  let b = textureSampleLevel(blueTex, sampBN, uv1, 0i, 0.0).r;
+  let mixT = fract(0.61803398875 * f32(reproj.frameIndex) + 0.41421356237 * f32(reproj.sampleOffset));
+  return mix_f(a, b, mixT);
 }
 
 // box helpers
@@ -840,12 +856,12 @@ fn CalculateLight(
   let silver = silverCrest + throughSunGlint;
 
   let lowSunRaw = 1.0 - saturate((L.sunDir.y + 0.08) / 0.82);
-  let lowSun = saturate(lowSunRaw);
+  let lowSun = lowSunRaw * 0.42;
 
-  let sunCol = C.sunColor * mix_v3(vec3<f32>(1.0, 0.98, 0.96), vec3<f32>(1.15, 0.70, 0.44), lowSun * 0.70);
-  let silverCol = mix_v3(vec3<f32>(1.0, 0.985, 0.97), vec3<f32>(1.08, 0.82, 0.66), lowSun * 0.50);
-  let skyCol = mix_v3(vec3<f32>(0.54, 0.64, 0.79), vec3<f32>(0.50, 0.56, 0.82), lowSun * 0.38);
-  let shadowCol = mix_v3(vec3<f32>(0.73, 0.79, 0.89), vec3<f32>(0.62, 0.58, 0.82), lowSun * 0.42);
+  let sunCol = C.sunColor * mix_v3(vec3<f32>(1.0, 0.98, 0.96), vec3<f32>(1.0, 0.90, 0.84), lowSun);
+  let silverCol = mix_v3(vec3<f32>(1.0, 0.985, 0.97), vec3<f32>(1.0, 0.92, 0.89), lowSun);
+  let skyCol = mix_v3(vec3<f32>(0.54, 0.64, 0.79), vec3<f32>(0.60, 0.61, 0.82), lowSun * 0.35);
+  let shadowCol = mix_v3(vec3<f32>(0.73, 0.79, 0.89), vec3<f32>(0.72, 0.74, 0.87), lowSun * 0.35);
 
   let directEnergy = direct + multiScatter + forwardWrap + backWrap;
   let silverEnergy = silver + bodyLift * mix_f(0.72, 1.02, pow(towardSun, 1.10));
@@ -960,9 +976,10 @@ fn sunTransmittance(
   nominalStepLen: f32,
   squareOrigin_xz: vec2<f32>,
   invSide: f32,
-  wScale: f32
+  wScale: f32,
+  stepsIn: i32
 ) -> f32 {
-  let steps = max(TUNE.sunSteps, 1);
+  let steps = max(stepsIn, 1);
   let start = p0 + sunDir * max(TUNE.aabbFaceOffset, EPS);
   let hit = intersectAABB_robust(start, sunDir, boxMin(), boxMax());
   let availableDist = max(hit.y, nominalStepLen * f32(steps));
@@ -1135,7 +1152,12 @@ fn computeCloud(
   baseStep = min(baseStep, voxelBound);
   baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter, rand0 * 2.0 - 1.0);
 
-  baseStep = clamp(baseStep, TUNE.minStep, TUNE.maxStep);
+  let entryDepth = dot((rayRo + rayRd * t0) - V.camPos, camFwd);
+  let nearFactor = saturate(1.0 - entryDepth / TUNE.nearFluffDist);
+  baseStep = clamp(baseStep * mix_f(1.0, TUNE.nearStepScale, nearFactor), TUNE.minStep, TUNE.maxStep);
+
+  let rayExitDepth = max(dot((rayRo + rayRd * t1) - V.camPos, camFwd), entryDepth);
+  let rayFarHistoryF = saturate(remap(rayExitDepth, TUNE.farStart, TUNE.farFull, 0.0, 1.0));
 
   var t = clamp(t0 + (rand0 * TUNE.phaseJitter) * baseStep, t0, t1);
 
@@ -1178,24 +1200,34 @@ fn computeCloud(
     if (t >= t1 || Tr < 0.001) { break; }
 
     let p = rayRo + rayRd * t;
-    let farF = 0.0;
-    let stepLen = clamp(baseStep, TUNE.minStep, TUNE.maxStep);
-    let weatherLOD = clamp(weatherLOD_base, 0.0, wg_maxMipW);
+    let sampleViewDepth = max(dot(p - V.camPos, camFwd), 0.0);
+    let farF = saturate(remap(sampleViewDepth, TUNE.farStart, TUNE.farFull, 0.0, 1.0));
+    let stepLen = clamp(baseStep * mix_f(1.0, TUNE.farStepMult, farF), TUNE.minStep, TUNE.maxStep);
+    let weatherLOD = min(wg_maxMipW, weatherLOD_base + TUNE.farLodPush * farF);
 
-    // Coarse weather can accelerate empty space, but it is not allowed to be the final visibility test.
+    // coarse weather skip
     let subsample = f32(max(reproj.subsample, 1u));
     let coarsePenalty = log2(max(subsample, 1.0));
-    let coarseMip = min(wg_maxMipW, max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty)));
+    var coarseMip = max(0.0, wg_maxMipW - (TUNE.weatherRejectMip + max(perf.coarseMipBias, 0.0) + coarsePenalty));
+    coarseMip = min(wg_maxMipW, coarseMip + farF * 1.0);
 
+    // Single weather proxy for this step. Shape/detail volumes carry the high-frequency structure,
+    // so this can use the reject mip instead of doing both a coarse and a full weather fetch.
     let uv_coarse = weatherUV_from(p, squareOrigin_xz, invSide, wScale);
-    var wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, clamp(max(weatherLOD, coarseMip), 0.0, wg_maxMipW));
+    let wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, clamp(max(weatherLOD, coarseMip), 0.0, wg_maxMipW));
 
     if (weatherCoverageGate(wm_coarse) >= TUNE.weatherRejectGate) {
-      wm_coarse = wrap2D(weather2D, samp2D, uv_coarse, 0i, clamp(weatherLOD, 0.0, wg_maxMipW));
+      t = min(t + stepLen * TUNE.emptySkipMult, t1);
+      prevDens = 0.0;
+      prevMacroDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
+      iter = iter + 1;
+      continue;
     }
 
     if (wm_coarse.b >= 1.0) {
-      t = min(t + stepLen, t1);
+      t = min(t + stepLen * 2.0, t1);
       prevDens = 0.0;
       prevMacroDens = 0.0;
       prevTsun = 1.0;
@@ -1205,15 +1237,30 @@ fn computeCloud(
     }
 
     let ph_coarse = computePH(p, wm_coarse);
+    let quickCoverage = saturate((wm_coarse.r - 0.35) * 2.5);
+    if (quickCoverage < 0.01 && (ph_coarse < 0.02)) {
+      t = min(t + stepLen * 2.0, t1);
+      prevDens = 0.0;
+      prevMacroDens = 0.0;
+      prevTsun = 1.0;
+      Tsun_cached = 1.0;
+      iter = iter + 1;
+      continue;
+    }
+
     // LOD from step
     let baseLOD = clamp(log2(max(stepLen / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);
-    let lodShapeBase = clamp(baseLOD, 0.0, wg_maxMipS);
-    let lodDetailBase = clamp(baseLOD, 0.0, wg_maxMipD);
+    let nearDepth = max(cosVF * (t - t0), 0.0);
+    let nearSmooth = pow(saturate(1.0 - nearDepth / TUNE.nearFluffDist), 0.85);
+
+    let lodBias = mix_f(0.0, TUNE.nearLodBias, nearSmooth);
+    let lodShapeBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipS);
+    let lodDetailBase = clamp(baseLOD + lodBias + TUNE.farLodPush * farF, 0.0, wg_maxMipD);
 
     let wm = wm_coarse;
     let ph = ph_coarse;
     if (ph < 0.0) {
-      t = min(t + stepLen, t1);
+      t = min(t + stepLen * 2.0, t1);
       prevDens = 0.0;
       prevMacroDens = 0.0;
       prevTsun = 1.0;
@@ -1240,7 +1287,7 @@ fn computeCloud(
     }
 
     let faceFade = insideFaceFade(p, bmin, bmax);
-    let nearDense = 1.0;
+    let nearDense = mix_f(TUNE.nearDensityMult, 1.0, saturate(nearDepth / TUNE.nearDensityRange));
 
     var densMacro = densityMacroFromSamples(ph, wm, s) * faceFade * nearDense;
 
@@ -1249,22 +1296,28 @@ fn computeCloud(
       prevMacroDens = 0.0;
       prevTsun = 1.0;
       Tsun_cached = 1.0;
-      t = min(t + stepLen * 1.15, t1);
+      t = min(t + stepLen * 1.5, t1);
       iter = iter + 1;
       continue;
     }
 
-    var det: vec3<f32>;
-    if (dF > TUNE.lodBlendThreshold) {
-      let d_lo = sampleDetailRGBWarp(p, ph, dL, stepWarp);
-      let d_hi = sampleDetailRGBWarp(p, ph, min(dL + 1.0, wg_maxMipD), stepWarp);
-      det = mix_v3(d_lo, d_hi, dF);
-    } else {
-      det = sampleDetailRGBWarp(p, ph, dL, stepWarp);
-    }
-    det = det;
+    let farMacroOnly = saturate(remap(farF, 0.62, 1.0, 0.0, 1.0));
+    let denseMacroOnly = saturate(remap(max(densMacro, prevMacroDens), 0.08, 0.26, 0.0, 1.0));
+    let macroOnly = (farMacroOnly * denseMacroOnly) > 0.55;
 
-    var dens = densityFromSamples(ph, wm, s, det) * faceFade * nearDense;
+    var det: vec3<f32> = vec3<f32>(0.5, 0.5, 0.5);
+    var dens: f32 = densMacro;
+    if (!macroOnly) {
+      if (dF > TUNE.lodBlendThreshold) {
+        let d_lo = sampleDetailRGBWarp(p, ph, dL, stepWarp);
+        let d_hi = sampleDetailRGBWarp(p, ph, min(dL + 1.0, wg_maxMipD), stepWarp);
+        det = mix_v3(d_lo, d_hi, dF);
+      } else {
+        det = sampleDetailRGBWarp(p, ph, dL, stepWarp);
+      }
+      det = mix_v3(det, det * TUNE.farDetailAtten, farF);
+      dens = densityFromSamples(ph, wm, s, det) * faceFade * nearDense;
+    }
 
     let bodySmooth = smoothstep(0.08, 0.42, max(densMacro, prevMacroDens));
     let raySmoothDensAdaptive = saturate(mix_f(TUNE.raySmoothDens * 0.30, TUNE.raySmoothDens, bodySmooth));
@@ -1272,25 +1325,29 @@ fn computeCloud(
     let densMacroSmoothed = mix_f(densMacro, prevMacroDens, saturate(raySmoothDensAdaptive * 0.90));
 
     if (densSmoothed > 0.00008) {
-      let sunStrideSafe = max(TUNE.sunStride, 1);
+      let shadowInteriorProbe = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0));
+      let adaptiveStrideAdd = i32(floor(farF * 3.0 + shadowInteriorProbe * farF * 2.0));
+      let sunStrideSafe = max(TUNE.sunStride + adaptiveStrideAdd, 1);
       if ((iter % sunStrideSafe) == 0) {
         if (densMacroSmoothed * stepLen > TUNE.sunDensityGate) {
+          let sunStepsAdaptive = max(2, TUNE.sunSteps - i32(floor(farF * 2.0)) - i32(floor(shadowInteriorProbe * farF * 1.5)));
+          let sunStepAdaptive = sunStepLen * mix_f(1.0, 1.35, farF);
           Tsun_cached = sunTransmittance(
-            p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepLen,
-            squareOrigin_xz, invSide, wScale
+            p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepAdaptive,
+            squareOrigin_xz, invSide, wScale, sunStepsAdaptive
           );
         } else {
           Tsun_cached = 1.0;
         }
 
-        if (sunStrideSafe <= 1) {
+        let fastLighting = (sunStrideSafe > TUNE.sunStride) || macroOnly || (farF > 0.40);
+        if (!fastLighting && sunStrideSafe <= 1) {
           shapeN_cached = approxShapeNormal(p, ph, max(0.0, lodShapeBase));
         } else {
           shapeN_cached = approxShapeNormalFast(p, ph, max(0.0, lodShapeBase + 0.35));
         }
 
-        let shadowInteriorProbe = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0));
-        if (sunStrideSafe <= 1) {
+        if (!fastLighting && sunStrideSafe <= 1) {
           let densityN = approxLightingNormal(
             p,
             wm,
@@ -1326,7 +1383,7 @@ fn computeCloud(
       let raySmoothSunAdaptive = saturate(mix_f(TUNE.raySmoothSun * 0.35, TUNE.raySmoothSun, bodySmooth));
       let TsunSmoothed = mix_f(Tsun_cached, prevTsun, raySmoothSunAdaptive);
       let shadowInterior = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0)) * (1.0 - saturate(TsunSmoothed * 1.35));
-      let bnScaled = bnPix * mix_f(1.0, 0.18, shadowInterior);
+      let bnScaled = mix_f(bnPix, bnPix * TUNE.bnFarScale, farF) * mix_f(1.0, 0.18, shadowInterior);
 
       let rawSampleODFine = densSmoothed * stepLen * VIEW_EXTINCTION_SCALE;
       let rawSampleODMacro = densMacroSmoothed * stepLen * VIEW_EXTINCTION_SCALE;
@@ -1396,48 +1453,66 @@ fn computeCloud(
   // The preview pass composites this over the procedural sky.
   newCol = vec4<f32>(max(newCol.rgb, vec3<f32>(0.0)), clamp(newCol.a, 0.0, 1.0));
 
-  let historyDepth = max(clamp(t, t0, t1), 0.0);
-  let historyFarF = 0.0;
-
   // TAA with variance clamp
-  if (reproj.enabled == 1u) {
+  let temporalActive = reproj.temporalBlend > 0.0001;
+  if (temporalActive) {
     let fullRes = vec2<f32>(f32(reproj.fullWidth), f32(reproj.fullHeight));
     let uv_full = (vec2<f32>(fullPixFromCurrent(pixI)) + 0.5) / fullRes;
 
-    var motion = textureSampleLevel(motionTex, sampMotion, uv_full, 0.0).rg;
-    if (reproj.motionIsNormalized == 0u) { motion = motion / fullRes; }
-    let prevUV = uv_full - motion;
+    var motion = vec2<f32>(0.0, 0.0);
+    var prevUV = uv_full;
+    if (reproj.enabled == 1u) {
+      motion = textureSampleLevel(motionTex, sampMotion, uv_full, 0.0).rg;
+      if (reproj.motionIsNormalized == 0u) { motion = motion / fullRes; }
+      prevUV = uv_full - motion;
+    }
 
     if (prevUV.x < 0.0 || prevUV.y < 0.0 || prevUV.x > 1.0 || prevUV.y > 1.0) {
       textureStore(outTex, pixI, frame.layerIndex, newCol);
       store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);
     } else {
       let prevCol = textureSampleLevel(historyPrev, sampHistory, prevUV, frame.layerIndex, 0.0);
-      if (reproj.frameIndex == 0u || prevCol.a < 1e-5 || reproj.temporalBlend <= 0.0001) {
+      if (reproj.frameIndex == 0u || prevCol.a < 1e-5) {
         textureStore(outTex, pixI, frame.layerIndex, newCol);
         store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);
       } else {
         let motionPix = motion * fullRes;
         let motionMag = length(motionPix);
         let alphaDiff = abs(prevCol.a - newCol.a);
+        let rgbDiff = length(prevCol.rgb - newCol.rgb);
 
-        var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0);
+        var stability = exp(-motionMag * 0.9) * exp(-alphaDiff * 6.0) * exp(-rgbDiff * 3.5);
         let bodyStable = smoothstep(0.38, 0.95, min(prevCol.a, newCol.a)) * exp(-motionMag * 0.35) * exp(-alphaDiff * 3.5);
+        let speckleStable = bodyStable * exp(-motionMag * 1.8) * (1.0 - smoothstep(0.02, 0.16, rgbDiff));
+        let convFrames = min(f32(reproj.frameIndex), 4.0);
+        let convWarm = saturate((convFrames - 1.0) / 3.0);
+        let staticConv = exp(-motionMag * 2.7) * exp(-alphaDiff * 9.0) * exp(-rgbDiff * 6.5);
+        let stableBody = smoothstep(0.50, 0.98, bodyStable);
+        let stableSpeckle = smoothstep(0.35, 0.96, speckleStable);
         var tb = clamp(reproj.temporalBlend * stability, 0.0, 0.985);
-        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, historyFarF);
-        tb = clamp(tb * mix_f(1.0, 1.28, bodyStable), 0.0, 0.992);
+        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, rayFarHistoryF);
+        tb = clamp(tb * mix_f(1.0, 1.34, bodyStable), 0.0, 0.993);
+        tb = max(tb, 0.76 * speckleStable);
+        let fastConvLo = mix_f(0.62, 0.76, stableBody);
+        let fastConvHi = mix_f(0.84, 0.94, max(stableBody, stableSpeckle));
+        let fastConvFloor = mix_f(fastConvLo, fastConvHi, convWarm) * staticConv;
+        tb = max(tb, fastConvFloor * mix_f(1.0, 1.08, rayFarHistoryF));
+        tb = max(tb, 0.72 * stableBody * convWarm);
+        tb = max(tb, 0.84 * stableSpeckle * convWarm);
+        tb = clamp(tb, 0.0, 0.996);
 
-        if (reproj.depthTest == 1u) {
+        if (reproj.enabled == 1u && reproj.depthTest == 1u) {
           let prevDepth = textureSampleLevel(depthPrev, sampDepth, prevUV, 0.0).r;
           tb *= select(1.0 - saturate(reproj.depthTolerance), 0.25, prevDepth < 1e-6 || prevDepth > 1.0);
         }
 
         let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));
-        let relBody = mix_f(relBase, max(TUNE.taaRelMin * 0.72, 0.05), bodyStable);
-        let rel = relBody * mix_f(1.0, 0.80, historyFarF);
+        let relBody = mix_f(relBase, max(TUNE.taaRelMin * 0.60, 0.035), stableBody);
+        let rel = relBody * mix_f(1.0, 0.74, rayFarHistoryF);
 
-        let newClampedRGB = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);
-        let newClamped = vec4<f32>(newClampedRGB, newCol.a);
+        let newClampedRGB0 = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);
+        let newClampedRGB = mix_v3(newClampedRGB0, prevCol.rgb, 0.18 * stableSpeckle + 0.10 * stableBody * convWarm);
+        let newClamped = vec4<f32>(newClampedRGB, mix_f(newCol.a, prevCol.a, 0.10 * stableBody * convWarm));
 
         let blended = mix_v4(newClamped, prevCol, tb);
         textureStore(outTex, pixI, frame.layerIndex, blended);

@@ -1482,6 +1482,20 @@ export class NoiseComputeBuilder {
     return p.isA ? p.viewA : p.viewB;
   }
 
+  getCurrentTextureResource(tid = null) {
+    const id = tid !== null && tid !== undefined ? String(tid) : this._tid;
+    const p = this._texPairs.get(id);
+    if (!p) return null;
+    return {
+      texture: p.isA ? p.texA : p.texB,
+      view: p.isA ? p.viewA : p.viewB,
+      width: p.fullWidth,
+      height: p.fullHeight,
+      layers: p.layers,
+      format: 'rgba16float',
+    };
+  }
+
   // ---------------------------
   // 3D compute (chunking for large volumes)
   // ---------------------------

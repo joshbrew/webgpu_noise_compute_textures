@@ -22,12 +22,17 @@ let ENTRY_POINTS = [];
 
 // Default preview + noise param blocks (each has seed)
 const preview = {
-  cam: { x: -1.2, y: 0.1, z: -1, yawDeg: 35, pitchDeg: 1, fovYDeg: 60 },
-  exposure: 1.08,
-  sky: [0.56, 0.68, 0.94],
+  cam: { x: -0.8, y: 0.1, z: -1, yawDeg: 35, pitchDeg: 1, fovYDeg: 60 },
+  exposure: 1.12,
+  sky: [0.55, 0.7, 0.95],
   layer: 0,
   renderQuality: 1,
-  sun: { azDeg: 36, elDeg: 8, bloom: 0.58 },
+  gradeStyle: 1,
+  sunTint: [1.0, 1.0, 1.0],
+  cloudLitTint: [1.0, 1.0, 1.0],
+  cloudShadowTint: [1.0, 1.0, 1.0],
+  edgeTint: [1.0, 1.0, 1.0],
+  sun: { azDeg: 45, elDeg: 22, bloom: 0.55 },
 };
 
 // Weather params (R channel)
@@ -145,6 +150,8 @@ const tileTransforms = {
 
 let reprojEnabled = false;
 const reprojDefaultScale = 1 / 4;
+
+const reprojTemporalBlend = 0.94;
 let animRunning = false;
 
 // ---- DOM helpers ----
@@ -160,6 +167,119 @@ const u32 = (id, fallback) => {
   const n = Number.isFinite(v) ? Math.max(0, Math.floor(v)) : fallback;
   return n >>> 0;
 };
+
+const clamp01 = (v) => Math.max(0, Math.min(2, Number.isFinite(+v) ? +v : 1));
+
+function injectPreviewLookControls() {
+  const panel = $("p-preview");
+  if (!panel || $("v-grade")) return;
+
+  const wrap = document.createElement("div");
+  wrap.id = "preview-look-controls";
+  wrap.style.marginTop = "16px";
+  wrap.style.paddingTop = "12px";
+  wrap.style.borderTop = "1px solid rgba(255,255,255,0.08)";
+  wrap.innerHTML = `
+    <div style="font-size:12px; letter-spacing:0.04em; text-transform:uppercase; opacity:0.82; margin-bottom:10px;">Look / Grade</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end;">
+      <label style="display:flex; flex-direction:column; gap:6px;">
+        <span>Color Grade</span>
+        <select id="v-grade">
+          <option value="0">Default Gray</option>
+          <option value="1">Sunset</option>
+          <option value="2">Dusky Purple</option>
+          <option value="3">Storm Cool</option>
+        </select>
+      </label>
+      <div></div>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint R</span><input id="v-sun-r" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint G</span><input id="v-sun-g" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint B</span><input id="v-sun-b" type="number" step="0.01" min="0" max="2"></label>
+      <div></div>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit R</span><input id="v-lit-r" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit G</span><input id="v-lit-g" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit B</span><input id="v-lit-b" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow R</span><input id="v-shad-r" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow G</span><input id="v-shad-g" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow B</span><input id="v-shad-b" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint R</span><input id="v-edge-r" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint G</span><input id="v-edge-g" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint B</span><input id="v-edge-b" type="number" step="0.01" min="0" max="2"></label>
+    </div>`;
+  panel.appendChild(wrap);
+}
+
+
+const GRADE_PRESETS = {
+  0: {
+    sky: [0.55, 0.70, 0.95],
+    sunBloom: 0.35,
+    sunTint: [1.0, 1.0, 1.0],
+    cloudLitTint: [1.0, 1.0, 1.0],
+    cloudShadowTint: [1.0, 1.0, 1.0],
+    edgeTint: [1.0, 1.0, 1.0],
+  },
+  1: {
+    sky: [0.49, 0.53, 0.78],
+    sunBloom: 0.76,
+    sunTint: [1.14, 0.90, 0.76],
+    cloudLitTint: [1.08, 0.98, 0.92],
+    cloudShadowTint: [0.74, 0.70, 1.08],
+    edgeTint: [1.12, 0.88, 0.74],
+  },
+  2: {
+    sky: [0.50, 0.52, 0.86],
+    sunBloom: 0.64,
+    sunTint: [1.02, 0.94, 1.08],
+    cloudLitTint: [1.04, 0.96, 1.06],
+    cloudShadowTint: [0.66, 0.62, 1.14],
+    edgeTint: [1.04, 0.88, 1.10],
+  },
+  3: {
+    sky: [0.50, 0.61, 0.90],
+    sunBloom: 0.28,
+    sunTint: [0.92, 0.98, 1.04],
+    cloudLitTint: [0.96, 0.99, 1.02],
+    cloudShadowTint: [0.78, 0.86, 1.04],
+    edgeTint: [0.92, 0.97, 1.04],
+  },
+};
+
+function setFieldValue(id, val) {
+  const el = $(id);
+  if (!el) return;
+  el.value = `${val}`;
+}
+
+function applyGradePreset(style, syncInputs = true) {
+  const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
+  preview.gradeStyle = style >>> 0;
+  preview.sky = preset.sky.slice();
+  preview.sun.bloom = preset.sunBloom;
+  preview.sunTint = preset.sunTint.slice();
+  preview.cloudLitTint = preset.cloudLitTint.slice();
+  preview.cloudShadowTint = preset.cloudShadowTint.slice();
+  preview.edgeTint = preset.edgeTint.slice();
+
+  if (!syncInputs) return;
+  setFieldValue("v-grade", preview.gradeStyle);
+  setFieldValue("v-sr", preview.sky[0]);
+  setFieldValue("v-sg", preview.sky[1]);
+  setFieldValue("v-sb", preview.sky[2]);
+  setFieldValue("c-bloom", preview.sun.bloom);
+  setFieldValue("v-sun-r", preview.sunTint[0]);
+  setFieldValue("v-sun-g", preview.sunTint[1]);
+  setFieldValue("v-sun-b", preview.sunTint[2]);
+  setFieldValue("v-lit-r", preview.cloudLitTint[0]);
+  setFieldValue("v-lit-g", preview.cloudLitTint[1]);
+  setFieldValue("v-lit-b", preview.cloudLitTint[2]);
+  setFieldValue("v-shad-r", preview.cloudShadowTint[0]);
+  setFieldValue("v-shad-g", preview.cloudShadowTint[1]);
+  setFieldValue("v-shad-b", preview.cloudShadowTint[2]);
+  setFieldValue("v-edge-r", preview.edgeTint[0]);
+  setFieldValue("v-edge-g", preview.edgeTint[1]);
+  setFieldValue("v-edge-b", preview.edgeTint[2]);
+}
 
 const safeClone = (o) => {
   if (o == null || typeof o !== "object") return o;
@@ -286,11 +406,11 @@ function cloneTuning(t) {
 
 function readTuning() {
   return {
-    maxSteps: +($("t-maxSteps")?.value || 128) | 0,
+    maxSteps: +($("t-maxSteps")?.value || 256) | 0,
     minStep: +($("t-minStep")?.value || 0.003),
     maxStep: +($("t-maxStep")?.value || 0.16),
-    sunSteps: +($("t-sunSteps")?.value || 6) | 0,
-    sunStride: 4,
+    sunSteps: +($("t-sunSteps")?.value || 5) | 0,
+    sunStride: +($("t-sunStride")?.value || 5) | 0,
     phaseJitter: +($("t-phaseJitter")?.value || 1.0),
     stepJitter: +($("t-stepJitter")?.value || 0.08),
     baseJitterFrac: +($("t-baseJitter")?.value || 0.15),
@@ -299,8 +419,8 @@ function readTuning() {
     nearFluffDist: +($("t-nearFluffDist")?.value || 60.0),
     nearDensityMult: +($("t-nearDensityMult")?.value || 2.5),
     lodBlendThreshold: +($("t-lodBlendThreshold")?.value || 0.38),
-    farStart: +($("t-farStart")?.value || 800.0),
-    farFull: +($("t-farFull")?.value || 2500.0),
+    farStart: +($("t-farStart")?.value || 0.65),
+    farFull: +($("t-farFull")?.value || 2.4),
     raySmoothDens: +($("t-raySmoothDens")?.value || 0.42),
     raySmoothSun: +($("t-raySmoothSun")?.value || 0.28),
   };
@@ -347,6 +467,16 @@ function readCloudParams() {
   preview.sun.elDeg = sunEl;
   preview.sun.bloom = sunBloom;
 
+  const baseSunColor =
+    preview.gradeStyle === 1
+      ? [1.08, 0.76, 0.60]
+      : preview.gradeStyle === 2
+        ? [0.98, 0.84, 0.96]
+        : preview.gradeStyle === 3
+          ? [0.92, 0.96, 1.0]
+          : [1.0, 0.95, 0.87];
+  const sunTint = preview.sunTint || [1.0, 1.0, 1.0];
+
   return {
     globalCoverage: num("p-coverage", 1.0),
     globalDensity: num("p-density", 100.0),
@@ -360,7 +490,7 @@ function readCloudParams() {
     inVsOut: num("p-ivo", 0.0),
     outScatterAmbientAmt: num("p-ambOut", 0.12),
     ambientMinimum: num("p-ambMin", 0.055),
-    sunColor: [1.0, 0.66, 0.42],
+    sunColor: baseSunColor.map((v, i) => v * (sunTint[i] ?? 1.0)),
     sunAzDeg: sunAz,
     sunElDeg: sunEl,
     sunBloom,
@@ -584,6 +714,19 @@ function readPreview() {
   preview.sky[0] = num("v-sr", preview.sky[0]);
   preview.sky[1] = num("v-sg", preview.sky[1]);
   preview.sky[2] = num("v-sb", preview.sky[2]);
+  preview.gradeStyle = u32("v-grade", preview.gradeStyle);
+  preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));
+  preview.sunTint[1] = clamp01(num("v-sun-g", preview.sunTint[1]));
+  preview.sunTint[2] = clamp01(num("v-sun-b", preview.sunTint[2]));
+  preview.cloudLitTint[0] = clamp01(num("v-lit-r", preview.cloudLitTint[0]));
+  preview.cloudLitTint[1] = clamp01(num("v-lit-g", preview.cloudLitTint[1]));
+  preview.cloudLitTint[2] = clamp01(num("v-lit-b", preview.cloudLitTint[2]));
+  preview.cloudShadowTint[0] = clamp01(num("v-shad-r", preview.cloudShadowTint[0]));
+  preview.cloudShadowTint[1] = clamp01(num("v-shad-g", preview.cloudShadowTint[1]));
+  preview.cloudShadowTint[2] = clamp01(num("v-shad-b", preview.cloudShadowTint[2]));
+  preview.edgeTint[0] = clamp01(num("v-edge-r", preview.edgeTint[0]));
+  preview.edgeTint[1] = clamp01(num("v-edge-g", preview.edgeTint[1]));
+  preview.edgeTint[2] = clamp01(num("v-edge-b", preview.edgeTint[2]));
 }
 
 // ---- reproj helpers ----
@@ -595,7 +738,12 @@ function computeCoarseFactorFromScale(scale) {
 function getReprojPayload() {
   const enabled = !!reprojEnabled;
   const scale = reprojDefaultScale;
-  return { enabled, scale, coarseFactor: computeCoarseFactorFromScale(scale) };
+  return {
+    enabled,
+    scale,
+    coarseFactor: computeCoarseFactorFromScale(scale),
+    temporalBlend: enabled ? 0.92 : 0.0,
+  };
 }
 
 function ensureCoarseInPayload(payload) {
@@ -610,94 +758,41 @@ function ensureCoarseInPayload(payload) {
   return payload;
 }
 
+let _frameRunActive = false;
+let _frameRunQueued = null;
 
-let latestRunFramePayload = null;
-let runFrameScheduled = false;
-let runFrameInFlight = false;
-let latestLoopStatePayload = null;
-let loopStateScheduled = false;
-let loopStateInFlight = false;
-
-function scheduleOnNextAnimationFrame(fn) {
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(fn);
-  } else {
-    setTimeout(fn, 0);
-  }
-}
-
-function normalizeInteractiveFramePayload(payload) {
-  const p = ensureCoarseInPayload(payload || {});
-  p.waitForGpu = false;
-  p.logFrame = false;
-  return p;
-}
-
-function scheduleLoopStateUpdate(payload) {
-  latestLoopStatePayload = normalizeInteractiveFramePayload(payload);
-  if (loopStateScheduled) return Promise.resolve();
-  loopStateScheduled = true;
-  scheduleOnNextAnimationFrame(() => {
-    loopStateScheduled = false;
-    drainLoopStateUpdates().catch((err) => console.warn("loop state update failed", err));
-  });
-  return Promise.resolve();
-}
-
-async function drainLoopStateUpdates() {
-  if (loopStateInFlight) return;
-  loopStateInFlight = true;
+async function _pumpRunFrameLatest() {
+  if (_frameRunActive) return;
+  _frameRunActive = true;
   try {
-    while (latestLoopStatePayload) {
-      const payload = latestLoopStatePayload;
-      latestLoopStatePayload = null;
-      await rpc("updateLastRunPayload", payload);
+    while (_frameRunQueued) {
+      const batch = _frameRunQueued;
+      _frameRunQueued = null;
+      try {
+        const res = await rpc("runFrame", batch.payload);
+        for (const waiter of batch.waiters) waiter.resolve(res);
+      } catch (err) {
+        for (const waiter of batch.waiters) waiter.reject(err);
+      }
     }
   } finally {
-    loopStateInFlight = false;
-    if (latestLoopStatePayload && !loopStateScheduled) {
-      loopStateScheduled = true;
-      scheduleOnNextAnimationFrame(() => {
-        loopStateScheduled = false;
-        drainLoopStateUpdates().catch((err) => console.warn("loop state update failed", err));
-      });
+    _frameRunActive = false;
+    if (_frameRunQueued) {
+      _pumpRunFrameLatest().catch((err) => console.warn("runFrameLatest pump failed", err));
     }
   }
 }
 
-function scheduleRunFrameLatest(payload) {
-  const p = normalizeInteractiveFramePayload(payload);
-  if (animRunning && reprojEnabled) return scheduleLoopStateUpdate(p);
-
-  latestRunFramePayload = p;
-  if (runFrameScheduled) return Promise.resolve();
-  runFrameScheduled = true;
-  scheduleOnNextAnimationFrame(() => {
-    runFrameScheduled = false;
-    drainRunFrameLatest().catch((err) => console.warn("queued runFrame failed", err));
+function runFrameLatest(payload) {
+  return new Promise((resolve, reject) => {
+    if (_frameRunQueued) {
+      _frameRunQueued.payload = payload;
+      _frameRunQueued.waiters.push({ resolve, reject });
+    } else {
+      _frameRunQueued = { payload, waiters: [{ resolve, reject }] };
+    }
+    _pumpRunFrameLatest().catch((err) => console.warn("runFrameLatest failed", err));
   });
-  return Promise.resolve();
-}
-
-async function drainRunFrameLatest() {
-  if (runFrameInFlight) return;
-  runFrameInFlight = true;
-  try {
-    while (latestRunFramePayload) {
-      const payload = latestRunFramePayload;
-      latestRunFramePayload = null;
-      await rpc("runFrame", payload);
-    }
-  } finally {
-    runFrameInFlight = false;
-    if (latestRunFramePayload && !runFrameScheduled) {
-      runFrameScheduled = true;
-      scheduleOnNextAnimationFrame(() => {
-        runFrameScheduled = false;
-        drainRunFrameLatest().catch((err) => console.warn("queued runFrame failed", err));
-      });
-    }
-  }
 }
 
 // ---- UI wiring helpers ----
@@ -834,7 +929,7 @@ async function runAfterBakeAndTuning(
 
     if (reprojEnabled) payload.reproj = getReprojPayload();
     ensureCoarseInPayload(payload);
-    await rpc("runFrame", payload);
+    await runFrameLatest(payload);
   } finally {
     setBusy(false);
   }
@@ -843,7 +938,7 @@ async function runAfterBakeAndTuning(
 async function runFrameEnsuringTuning(payload = {}) {
   await sendTuningNow();
   ensureCoarseInPayload(payload);
-  return scheduleRunFrameLatest(payload);
+  return runFrameLatest(payload);
 }
 
 // ---- UI busy indicator ----
@@ -957,6 +1052,11 @@ async function wireUI() {
   $("pass")?.addEventListener("change", () => showPanelsFor($("pass").value));
   showPanelsFor($("pass")?.value || "preview");
 
+  $("v-grade")?.addEventListener("change", () => {
+    const style = u32("v-grade", preview.gradeStyle);
+    applyGradePreset(style, true);
+  });
+
   const reprojBtn = $("reproj-anim-toggle");
   const fpsSpan = $("fpsDisplay");
 
@@ -993,7 +1093,7 @@ async function wireUI() {
           reproj: rp,
         };
         ensureCoarseInPayload(payload);
-        await rpc("runFrame", payload);
+        await runFrameLatest(payload);
         await rpc("startLoop", {});
         animRunning = true;
         if (reprojBtn) reprojBtn.textContent = "Stop Anim";
@@ -1167,7 +1267,7 @@ async function wireUI() {
         };
         if (reprojEnabled) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
-        await scheduleRunFrameLatest(payload);
+        await runFrameLatest(payload);
       } catch (e) {
         console.warn("weather transform update failed", e);
       }
@@ -1276,7 +1376,7 @@ async function wireUI() {
         };
         if (reprojEnabled) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
-        await scheduleRunFrameLatest(payload);
+        await runFrameLatest(payload);
       } catch (e) {
         console.warn("shape transform update failed", e);
       }
@@ -1317,7 +1417,7 @@ async function wireUI() {
         };
         if (reprojEnabled) payload.reproj = getReprojPayload();
         ensureCoarseInPayload(payload);
-        await scheduleRunFrameLatest(payload);
+        await runFrameLatest(payload);
       } catch (e) {
         console.warn("detail transform update failed", e);
       }
@@ -1343,7 +1443,7 @@ async function wireUI() {
     if (reprojEnabled) payload.reproj = getReprojPayload();
     ensureCoarseInPayload(payload);
     try {
-      await scheduleRunFrameLatest(payload);
+      await runFrameLatest(payload);
       lastTuningSent = cloneTuning(tuning);
     } catch (e) {
       console.warn("runFrame failed (cloudParams)", e);
@@ -1369,7 +1469,7 @@ async function wireUI() {
     if (reprojEnabled) payload.reproj = getReprojPayload();
     ensureCoarseInPayload(payload);
     try {
-      await scheduleRunFrameLatest(payload);
+      await runFrameLatest(payload);
       lastTuningSent = cloneTuning(tuning);
     } catch (e) {
       console.warn("runFrame failed (preview)", e);
@@ -1453,7 +1553,7 @@ async function wireUI() {
 
       if (reprojEnabled) payload.reproj = getReprojPayload();
       ensureCoarseInPayload(payload);
-      await rpc("runFrame", payload);
+      await runFrameLatest(payload);
     } finally {
       setBusy(false);
     }
@@ -1538,6 +1638,7 @@ async function wireUI() {
 // ---- init ----
 async function init() {
   document.body.insertAdjacentHTML("beforeend", html);
+  injectPreviewLookControls();
 
   const setIf = (id, val) => {
     const el = $(id);
@@ -1666,10 +1767,10 @@ async function init() {
   setIf("p-ambMin", 0.045);
   setIf("p-anvil", 0.1);
 
-  setIf("t-maxSteps", 128);
+  setIf("t-maxSteps", 256);
   setIf("t-minStep", 0.003);
   setIf("t-maxStep", 0.16);
-  setIf("t-sunSteps", 6);
+  setIf("t-sunSteps", 5);
   setIf("t-phaseJitter", 1.0);
   setIf("t-stepJitter", 0.08);
   setIf("t-baseJitter", 0.15);
@@ -1678,8 +1779,8 @@ async function init() {
   setIf("t-lodBlendThreshold", 0.38);
   setIf("t-nearFluffDist", 60);
   setIf("t-nearDensityMult", 2.5);
-  setIf("t-farStart", 800);
-  setIf("t-farFull", 2500);
+  setIf("t-farStart", 0.65);
+  setIf("t-farFull", 2.4);
   setIf("t-raySmoothDens", 0.42);
   setIf("t-raySmoothSun", 0.28);
 
@@ -1691,9 +1792,7 @@ async function init() {
   setIf("v-yaw", preview.cam.yawDeg);
   setIf("v-pitch", preview.cam.pitchDeg);
   setIf("v-exposure", preview.exposure);
-  setIf("v-sr", preview.sky[0]);
-  setIf("v-sg", preview.sky[1]);
-  setIf("v-sb", preview.sky[2]);
+  applyGradePreset(preview.gradeStyle, true);
 
   // spawn worker
   worker = new Worker(wrkr, { type: "module" });

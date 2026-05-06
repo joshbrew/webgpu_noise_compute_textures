@@ -96,8 +96,8 @@ export class CloudComputeBuilder {
     this._abTuning = new ArrayBuffer(256);
     this._dvTuning = new DataView(this._abTuning);
 
-    // Preview render params: 128 bytes
-    this._abRender = new ArrayBuffer(128);
+    // Preview render params: 224 bytes
+    this._abRender = new ArrayBuffer(224);
     this._dvRender = new DataView(this._abRender);
 
     // Upsample params: 32 bytes
@@ -205,7 +205,7 @@ export class CloudComputeBuilder {
         subsample: 1,
         sampleOffset: 0,
         motionIsNormalized: 0,
-        temporalBlend: 0.82,
+        temporalBlend: 0.9,
         depthTest: 0,
         depthTolerance: 0.0,
         frameIndex: 0,
@@ -226,11 +226,11 @@ export class CloudComputeBuilder {
         uvScale: 1.5,
       },
       tuning: {
-        maxSteps: 128,
+        maxSteps: 256,
         minStep: 0.003,
         maxStep: 0.16,
-        sunSteps: 6,
-        sunStride: 4,
+        sunSteps: 5,
+        sunStride: 5,
         sunMinTr: 0.003,
         phaseJitter: 1.0,
         stepJitter: 0.08,
@@ -253,13 +253,13 @@ export class CloudComputeBuilder {
         taaRelMin: 0.22,
         taaRelMax: 1.1,
         taaAbsEps: 0.02,
-        farStart: 800.0,
-        farFull: 2500.0,
-        farLodPush: 0.8,
-        farDetailAtten: 0.5,
-        farStepMult: 1.85,
-        bnFarScale: 0.35,
-        farTaaHistoryBoost: 1.35,
+        farStart: 0.65,
+        farFull: 2.4,
+        farLodPush: 1.1,
+        farDetailAtten: 0.38,
+        farStepMult: 2.25,
+        bnFarScale: 0.28,
+        farTaaHistoryBoost: 1.8,
         raySmoothDens: 0.42,
         raySmoothSun: 0.28,
       },
@@ -680,7 +680,7 @@ export class CloudComputeBuilder {
     });
 
     this.renderParams = d.createBuffer({
-      size: 128,
+      size: 224,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -2284,7 +2284,7 @@ export class CloudComputeBuilder {
         { binding: 1, resource: sourceView },
         {
           binding: 2,
-          resource: { buffer: this.renderParams, offset: 0, size: 128 },
+          resource: { buffer: this.renderParams, offset: 0, size: 224 },
         },
       ],
     });
@@ -2334,6 +2334,11 @@ export class CloudComputeBuilder {
     const exposure = opts.exposure ?? 1.2;
     const sunBloom = opts.sunBloom ?? 0.0;
     const skyColor = opts.skyColor ?? [0.55, 0.7, 0.95];
+    const gradeStyle = (opts.gradeStyle ?? 0) >>> 0;
+    const sunColorTint = opts.sunColorTint ?? [1.0, 1.0, 1.0];
+    const lightTint = opts.lightTint ?? [1.0, 1.0, 1.0];
+    const shadowTint = opts.shadowTint ?? [1.0, 1.0, 1.0];
+    const edgeTint = opts.edgeTint ?? [1.0, 1.0, 1.0];
 
     const rad = (d) => (d * Math.PI) / 180;
     const cross = (a, b) => [
@@ -2408,6 +2413,14 @@ export class CloudComputeBuilder {
     dv.setFloat32(92, sunBloom, true);
     wv3(96, sunDir);
     wv3(112, skyColor);
+    dv.setUint32(128, gradeStyle, true);
+    dv.setUint32(132, 0, true);
+    dv.setUint32(136, 0, true);
+    dv.setUint32(140, 0, true);
+    wv3(144, sunColorTint);
+    wv3(160, lightTint);
+    wv3(176, shadowTint);
+    wv3(192, edgeTint);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }
