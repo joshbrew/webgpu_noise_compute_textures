@@ -96,8 +96,8 @@ export class CloudComputeBuilder {
     this._abTuning = new ArrayBuffer(256);
     this._dvTuning = new DataView(this._abTuning);
 
-    // Preview render params: 224 bytes
-    this._abRender = new ArrayBuffer(224);
+    // Preview render params: 240 bytes
+    this._abRender = new ArrayBuffer(240);
     this._dvRender = new DataView(this._abRender);
 
     // Upsample params: 32 bytes
@@ -125,6 +125,8 @@ export class CloudComputeBuilder {
 
     // bookkeeping & caches
     this._lastSums = new Map();
+    this._u8Views = new WeakMap();
+    this._u32Views = new WeakMap();
     this._resId = new WeakMap();
     this._nextResId = 1;
 
@@ -233,7 +235,7 @@ export class CloudComputeBuilder {
         sunStride: 6,
         sunMinTr: 0.003,
         phaseJitter: 1.0,
-        stepJitter: 0.08,
+        stepJitter: 0.3,
         baseJitterFrac: 0.15,
         topJitterFrac: 0.1,
         lodBiasWeather: 1.5,
@@ -288,8 +290,26 @@ export class CloudComputeBuilder {
     return id;
   }
 
+  _u8(ab) {
+    let v = this._u8Views.get(ab);
+    if (!v) {
+      v = new Uint8Array(ab);
+      this._u8Views.set(ab, v);
+    }
+    return v;
+  }
+
+  _u32(ab) {
+    let v = this._u32Views.get(ab);
+    if (!v) {
+      v = new Uint32Array(ab);
+      this._u32Views.set(ab, v);
+    }
+    return v;
+  }
+
   _sum32(ab) {
-    const u = new Uint32Array(ab);
+    const u = this._u32(ab);
     let s = 2166136261 >>> 0;
     for (let i = 0; i < u.length; ++i) {
       s = (s ^ u[i]) >>> 0;
@@ -302,7 +322,7 @@ export class CloudComputeBuilder {
     const sum = this._sum32(ab);
     const prev = this._lastSums.get(tag);
     if (!prev || prev.sum !== sum || prev.len !== ab.byteLength) {
-      this.queue.writeBuffer(gpuBuf, 0, new Uint8Array(ab));
+      this.queue.writeBuffer(gpuBuf, 0, this._u8(ab));
       this._lastSums.set(tag, { sum, len: ab.byteLength });
     }
   }
@@ -680,7 +700,7 @@ export class CloudComputeBuilder {
     });
 
     this.renderParams = d.createBuffer({
-      size: 224,
+      size: 240,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -1646,36 +1666,38 @@ export class CloudComputeBuilder {
   }
 
   _makeBindGroups() {
-    const k0 = this._buildBg0Key();
-    if (this._bg0Cache.has(k0)) {
-      this._currentBg0 = this._bg0Cache.get(k0);
-      this._bg0Dirty = false;
-    } else {
-      const bg0 = this._createBg0ForKey();
-      this._bg0Cache.set(k0, bg0);
-      this._bg0Keys.push(k0);
-      this._currentBg0 = bg0;
-      this._bg0Dirty = false;
-      while (this._bg0Keys.length > 16) {
-        const oldest = this._bg0Keys.shift();
-        this._bg0Cache.delete(oldest);
+    if (this._bg0Dirty || !this._currentBg0) {
+      const k0 = this._buildBg0Key();
+      if (this._bg0Cache.has(k0)) {
+        this._currentBg0 = this._bg0Cache.get(k0);
+      } else {
+        const bg0 = this._createBg0ForKey();
+        this._bg0Cache.set(k0, bg0);
+        this._bg0Keys.push(k0);
+        this._currentBg0 = bg0;
+        while (this._bg0Keys.length > 16) {
+          const oldest = this._bg0Keys.shift();
+          this._bg0Cache.delete(oldest);
+        }
       }
+      this._bg0Dirty = false;
     }
 
-    const k1 = this._buildBg1Key();
-    if (this._bg1Cache.has(k1)) {
-      this._currentBg1 = this._bg1Cache.get(k1);
-      this._bg1Dirty = false;
-    } else {
-      const bg1 = this._createBg1ForKey();
-      this._bg1Cache.set(k1, bg1);
-      this._bg1Keys.push(k1);
-      this._currentBg1 = bg1;
-      this._bg1Dirty = false;
-      while (this._bg1Keys.length > 16) {
-        const oldest = this._bg1Keys.shift();
-        this._bg1Cache.delete(oldest);
+    if (this._bg1Dirty || !this._currentBg1) {
+      const k1 = this._buildBg1Key();
+      if (this._bg1Cache.has(k1)) {
+        this._currentBg1 = this._bg1Cache.get(k1);
+      } else {
+        const bg1 = this._createBg1ForKey();
+        this._bg1Cache.set(k1, bg1);
+        this._bg1Keys.push(k1);
+        this._currentBg1 = bg1;
+        while (this._bg1Keys.length > 16) {
+          const oldest = this._bg1Keys.shift();
+          this._bg1Cache.delete(oldest);
+        }
       }
+      this._bg1Dirty = false;
     }
   }
 
@@ -1717,6 +1739,7 @@ export class CloudComputeBuilder {
     this.width = cW;
     this.height = cH;
     this.outFormat = savedFormat;
+    this._bg0Dirty = true;
 
     this.setFrame({
       fullWidth: cW,
@@ -1748,6 +1771,7 @@ export class CloudComputeBuilder {
     this.width = savedWidth;
     this.height = savedHeight;
     this.outFormat = savedFormat;
+    this._bg0Dirty = true;
 
     const layerForRestore = this._dvFrame.getInt32(36, true) | 0;
     const preparedUpsample = this._prepareUpsamplePass({
@@ -1920,6 +1944,7 @@ export class CloudComputeBuilder {
       this.width = cW;
       this.height = cH;
       this.outFormat = savedFormat;
+      this._bg0Dirty = true;
 
       this.setFrame({
         fullWidth: cW,
@@ -1949,6 +1974,7 @@ export class CloudComputeBuilder {
       this.width = savedWidth;
       this.height = savedHeight;
       this.outFormat = savedFormat;
+      this._bg0Dirty = true;
 
       var usedDirectPreview = false;
       if (skipUpsampleForPreview) {
@@ -1985,6 +2011,7 @@ export class CloudComputeBuilder {
             originXf: 0.0,
             originYf: 0.0,
           });
+          this._bg0Dirty = true;
         },
       };
     }
@@ -2175,7 +2202,7 @@ export class CloudComputeBuilder {
     this.queue.writeBuffer(
       this._upsampleParamsBuffer,
       0,
-      new Uint8Array(this._abUpsample),
+      this._u8(this._abUpsample),
     );
 
     const bg = this._getOrCreateUpsampleBindGroup(
@@ -2284,7 +2311,7 @@ export class CloudComputeBuilder {
         { binding: 1, resource: sourceView },
         {
           binding: 2,
-          resource: { buffer: this.renderParams, offset: 0, size: 224 },
+          resource: { buffer: this.renderParams, offset: 0, size: 240 },
         },
       ],
     });
@@ -2339,6 +2366,16 @@ export class CloudComputeBuilder {
     const lightTint = opts.lightTint ?? [1.0, 1.0, 1.0];
     const shadowTint = opts.shadowTint ?? [0.0, 0.0, 0.0];
     const edgeTint = opts.edgeTint ?? [1.0, 1.0, 1.0];
+    const styleShadowStrength = opts.styleShadowStrength ?? 0.88;
+    const styleColorLift = opts.styleColorLift ?? 1.12;
+    const styleSaturation = opts.styleSaturation ?? 1.10;
+    const styleRimStrength = opts.styleRimStrength ?? 1.0;
+    const styleSunBleed = opts.styleSunBleed ?? 0.85;
+    const styleMidLift = opts.styleMidLift ?? 1.10;
+    const godRaysEnabled = opts.godRaysEnabled ?? false;
+    const godRayStrength = opts.godRayStrength ?? 0.0;
+    const godRayLength = opts.godRayLength ?? 1.0;
+    const godRayFalloff = opts.godRayFalloff ?? 1.55;
 
     const rad = (d) => (d * Math.PI) / 180;
     const cross = (a, b) => [
@@ -2414,13 +2451,21 @@ export class CloudComputeBuilder {
     wv3(96, sunDir);
     wv3(112, skyColor);
     dv.setUint32(128, gradeStyle, true);
-    dv.setUint32(132, 0, true);
-    dv.setUint32(136, 0, true);
-    dv.setUint32(140, 0, true);
+    dv.setFloat32(132, styleShadowStrength, true);
+    dv.setFloat32(136, styleColorLift, true);
+    dv.setFloat32(140, styleSaturation, true);
     wv3(144, sunColorTint);
     wv3(160, lightTint);
     wv3(176, shadowTint);
     wv3(192, edgeTint);
+    dv.setFloat32(208, styleRimStrength, true);
+    dv.setFloat32(212, styleSunBleed, true);
+    dv.setFloat32(216, 0.0, true);
+    dv.setFloat32(220, styleMidLift, true);
+    dv.setFloat32(224, godRaysEnabled ? 1.0 : 0.0, true);
+    dv.setFloat32(228, godRayStrength, true);
+    dv.setFloat32(232, godRayLength, true);
+    dv.setFloat32(236, godRayFalloff, true);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }

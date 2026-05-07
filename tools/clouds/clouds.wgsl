@@ -211,6 +211,12 @@ var<workgroup> wg_weatherDim: vec2<f32>;
 var<workgroup> wg_blueDim: vec2<f32>;
 var<workgroup> wg_shapeDim: vec3<f32>;
 var<workgroup> wg_detailDim: vec3<f32>;
+var<workgroup> wg_weatherUvMul: vec2<f32>;
+var<workgroup> wg_weatherUvAdd: vec2<f32>;
+var<workgroup> wg_shapeUvMul: vec3<f32>;
+var<workgroup> wg_shapeUvAdd: vec3<f32>;
+var<workgroup> wg_detailUvMul: vec3<f32>;
+var<workgroup> wg_detailUvAdd: vec3<f32>;
 var<workgroup> wg_maxMipW: f32;
 var<workgroup> wg_maxMipS: f32;
 var<workgroup> wg_maxMipD: f32;
@@ -219,6 +225,7 @@ var<workgroup> wg_scaleD: f32;
 var<workgroup> wg_scaleS_effMax: f32;
 var<workgroup> wg_scaleD_effMax: f32;
 var<workgroup> wg_finestWorld: f32;
+var<workgroup> wg_boxMaxXZ: f32;
 
 // ---------------------- helpers
 fn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
@@ -269,49 +276,31 @@ fn smoothCellHash2D(p: vec2<f32>, freq: f32) -> f32 {
 
 // texture wrappers
 fn wrap2D(tex: texture_2d_array<f32>, samp: sampler, uv: vec2<f32>, layer_idx: i32, lod: f32) -> vec4<f32> {
-  let d = wg_weatherDim;
-  let ep = vec2<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0));
-  let u = uv * (vec2<f32>(1.0) - 2.0 * ep) + ep;
-  return textureSampleLevel(tex, samp, u, layer_idx, lod);
+  return textureSampleLevel(tex, samp, uv * wg_weatherUvMul + wg_weatherUvAdd, layer_idx, lod);
 }
 
 fn wrap3D_shape(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {
-  let d = wg_shapeDim;
-  let ep = vec3<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0), 0.5 / max(d.z, 1.0));
-  let u = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;
-  return textureSampleLevel(tex, samp, u, lod);
+  return textureSampleLevel(tex, samp, uvw * wg_shapeUvMul + wg_shapeUvAdd, lod);
 }
 
 fn wrap3D_detail(tex: texture_3d<f32>, samp: sampler, uvw: vec3<f32>, lod: f32) -> vec4<f32> {
-  let d = wg_detailDim;
-  let ep = vec3<f32>(0.5 / max(d.x, 1.0), 0.5 / max(d.y, 1.0), 0.5 / max(d.z, 1.0));
-  let u = uvw * (vec3<f32>(1.0) - 2.0 * ep) + ep;
-  return textureSampleLevel(tex, samp, u, lod);
+  return textureSampleLevel(tex, samp, uvw * wg_detailUvMul + wg_detailUvAdd, lod);
 }
 
 // blue noise
 fn frameBlueOffset() -> vec2<i32> {
-  let bnW = max(i32(wg_blueDim.x), 1);
-  let bnH = max(i32(wg_blueDim.y), 1);
-  let fi = i32(reproj.frameIndex);
-  let so = i32(reproj.sampleOffset);
-  let ox = (fi * 73 + fi * fi * 19 + so * 31) % bnW;
-  let oy = (fi * 151 + fi * fi * 27 + so * 17) % bnH;
-  return vec2<i32>(ox, oy);
+  return vec2<i32>(0, 0);
 }
 
 fn sampleBlueScreen(pixI: vec2<i32>) -> f32 {
-  let bnW = max(i32(wg_blueDim.x), 1);
-  let bnH = max(i32(wg_blueDim.y), 1);
-  let baseOff = frameBlueOffset();
-  let p0 = vec2<i32>((pixI.x + baseOff.x) % bnW, (pixI.y + baseOff.y) % bnH);
-  let p1 = vec2<i32>((pixI.x + baseOff.x * 3 + 17) % bnW, (pixI.y + baseOff.y * 5 + 29) % bnH);
-  let uv0 = (vec2<f32>(p0) + 0.5) / wg_blueDim;
-  let uv1 = (vec2<f32>(p1) + 0.5) / wg_blueDim;
+  let ioff = frameBlueOffset();
+  let baseOff = vec2<f32>(f32(ioff.x), f32(ioff.y));
+  let p = vec2<f32>(f32(pixI.x), f32(pixI.y)) + baseOff + vec2<f32>(0.5, 0.5);
+  let uv0 = p / wg_blueDim;
+  let uv1 = (p + vec2<f32>(17.0, 29.0)) / wg_blueDim;
   let a = textureSampleLevel(blueTex, sampBN, uv0, 0i, 0.0).r;
   let b = textureSampleLevel(blueTex, sampBN, uv1, 0i, 0.0).r;
-  let mixT = fract(0.61803398875 * f32(reproj.frameIndex) + 0.41421356237 * f32(reproj.sampleOffset));
-  return mix_f(a, b, mixT);
+  return mix_f(a, b, 0.38196601125);
 }
 
 // box helpers
@@ -402,14 +391,12 @@ fn sampleDetailRGBWarp(pos: vec3<f32>, ph: f32, lod: f32, w: vec2<f32>) -> vec3<
 }
 
 fn sampleShapeRGBA(pos: vec3<f32>, ph: f32, lod: f32) -> vec4<f32> {
-  let boxMaxXZ = max(B.half.x, B.half.z);
-  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);
+  let w = worldWarpXZ(pos.xz, ph, wg_boxMaxXZ);
   return sampleShapeRGBAWarp(pos, ph, lod, w);
 }
 
 fn sampleDetailRGB(pos: vec3<f32>, ph: f32, lod: f32) -> vec3<f32> {
-  let boxMaxXZ = max(B.half.x, B.half.z);
-  let w = worldWarpXZ(pos.xz, ph, boxMaxXZ);
+  let w = worldWarpXZ(pos.xz, ph, wg_boxMaxXZ);
   return sampleDetailRGBWarp(pos, ph, lod, w);
 }
 
@@ -591,7 +578,7 @@ fn sampleLightingDensity(
   let phL = computePH(pos, wm);
   if (phL < 0.0) { return 0.0; }
 
-  let w = worldWarpXZ(pos.xz, phL, max(B.half.x, B.half.z));
+  let w = worldWarpXZ(pos.xz, phL, wg_boxMaxXZ);
   let s = sampleShapeRGBAWarp(pos, phL, lodShape, w);
   let det = sampleDetailRGBWarp(pos, phL, lodDetail, w);
 
@@ -1035,15 +1022,32 @@ fn computeCloud(
   if (local_id.x == 0u && local_id.y == 0u) {
     let wd = textureDimensions(weather2D, 0);
     wg_weatherDim = vec2<f32>(f32(wd.x), f32(wd.y));
+    let weatherEp = vec2<f32>(0.5 / max(wg_weatherDim.x, 1.0), 0.5 / max(wg_weatherDim.y, 1.0));
+    wg_weatherUvMul = vec2<f32>(1.0, 1.0) - 2.0 * weatherEp;
+    wg_weatherUvAdd = weatherEp;
 
     let bd = textureDimensions(blueTex, 0);
     wg_blueDim = vec2<f32>(f32(bd.x), f32(bd.y));
 
     let sd = textureDimensions(shape3D);
     wg_shapeDim = vec3<f32>(f32(sd.x), f32(sd.y), f32(sd.z));
+    let shapeEp = vec3<f32>(
+      0.5 / max(wg_shapeDim.x, 1.0),
+      0.5 / max(wg_shapeDim.y, 1.0),
+      0.5 / max(wg_shapeDim.z, 1.0)
+    );
+    wg_shapeUvMul = vec3<f32>(1.0, 1.0, 1.0) - 2.0 * shapeEp;
+    wg_shapeUvAdd = shapeEp;
 
     let dd = textureDimensions(detail3D);
     wg_detailDim = vec3<f32>(f32(dd.x), f32(dd.y), f32(dd.z));
+    let detailEp = vec3<f32>(
+      0.5 / max(wg_detailDim.x, 1.0),
+      0.5 / max(wg_detailDim.y, 1.0),
+      0.5 / max(wg_detailDim.z, 1.0)
+    );
+    wg_detailUvMul = vec3<f32>(1.0, 1.0, 1.0) - 2.0 * detailEp;
+    wg_detailUvAdd = detailEp;
 
     wg_maxMipW = f32(textureNumLevels(weather2D)) - 1.0;
     wg_maxMipS = f32(textureNumLevels(shape3D)) - 1.0;
@@ -1063,6 +1067,7 @@ fn computeCloud(
     wg_scaleD_effMax = wg_scaleD * max(dMul, EPS) * axisMaxAbs3(dAxis);
 
     wg_finestWorld = min(1.0 / wg_scaleS_effMax, 1.0 / wg_scaleD_effMax) * 0.6;
+    wg_boxMaxXZ = max(B.half.x, B.half.z);
   }
   workgroupBarrier();
 
@@ -1140,7 +1145,7 @@ fn computeCloud(
 
   // noise and jitter
   let bnPix = sampleBlueScreen(pixI);
-  let rand0 = fract(bnPix + 0.61803398875 * f32(reproj.frameIndex));
+  let rand0 = bnPix;
 
   // step sizing
   let viewDir = normalize(-rayRd);
@@ -1269,7 +1274,7 @@ fn computeCloud(
       continue;
     }
 
-    let stepWarp = worldWarpXZ(p.xz, ph, max(B.half.x, B.half.z));
+    let stepWarp = worldWarpXZ(p.xz, ph, wg_boxMaxXZ);
 
     // mip hysteresis
     let sL: f32 = floor(lodShapeBase);
@@ -1491,16 +1496,16 @@ fn computeCloud(
         let stableBody = smoothstep(0.50, 0.98, bodyStable);
         let stableSpeckle = smoothstep(0.35, 0.96, speckleStable);
         var tb = clamp(reproj.temporalBlend * stability, 0.0, 0.985);
-        tb *= mix_f(1.0, TUNE.farTaaHistoryBoost, rayFarHistoryF);
+        tb *= mix_f(1.0, min(TUNE.farTaaHistoryBoost, 1.18), rayFarHistoryF);
         tb = clamp(tb * mix_f(1.0, 1.34, bodyStable), 0.0, 0.993);
         tb = max(tb, 0.76 * speckleStable);
         let fastConvLo = mix_f(0.62, 0.76, stableBody);
         let fastConvHi = mix_f(0.84, 0.94, max(stableBody, stableSpeckle));
         let fastConvFloor = mix_f(fastConvLo, fastConvHi, convWarm) * staticConv;
         tb = max(tb, fastConvFloor * mix_f(1.0, 1.08, rayFarHistoryF));
-        tb = max(tb, 0.72 * stableBody * convWarm);
-        tb = max(tb, 0.84 * stableSpeckle * convWarm);
-        tb = clamp(tb, 0.0, 0.996);
+        tb = max(tb, 0.62 * stableBody * convWarm);
+        tb = max(tb, 0.74 * stableSpeckle * convWarm);
+        tb = clamp(tb, 0.0, 0.94);
 
         if (reproj.enabled == 1u && reproj.depthTest == 1u) {
           let prevDepth = textureSampleLevel(depthPrev, sampDepth, prevUV, 0.0).r;
@@ -1508,14 +1513,28 @@ fn computeCloud(
         }
 
         let relBase = mix_f(TUNE.taaRelMax, TUNE.taaRelMin, saturate(stability));
-        let relBody = mix_f(relBase, max(TUNE.taaRelMin * 0.60, 0.035), stableBody);
-        let rel = relBody * mix_f(1.0, 0.74, rayFarHistoryF);
+        let relBody = mix_f(relBase, max(TUNE.taaRelMin * 0.95, 0.070), stableBody);
+        let rel = relBody * mix_f(1.0, 0.92, rayFarHistoryF);
 
-        let newClampedRGB0 = clamp_luma_to(newCol.rgb, prevCol.rgb, rel, TUNE.taaAbsEps);
-        let newClampedRGB = mix_v3(newClampedRGB0, prevCol.rgb, 0.18 * stableSpeckle + 0.10 * stableBody * convWarm);
-        let newClamped = vec4<f32>(newClampedRGB, mix_f(newCol.a, prevCol.a, 0.10 * stableBody * convWarm));
+        let newLum = luminance(newCol.rgb);
+        let prevLum = luminance(prevCol.rgb);
+        let currentIsBrighter = smoothstep(0.010, 0.160, newLum - prevLum) * smoothstep(0.08, 0.80, newCol.a);
+        let currentIsDarker = smoothstep(0.020, 0.180, prevLum - newLum) * smoothstep(0.08, 0.80, newCol.a);
 
-        let blended = mix_v4(newClamped, prevCol, tb);
+        let histMinLum = newLum * mix_f(0.52, 0.86, stableBody) * currentIsBrighter;
+        let histLift = max(prevLum, histMinLum) / max(prevLum, 1e-5);
+        let liftedPrevRGB = prevCol.rgb * mix_f(1.0, histLift, currentIsBrighter);
+        let prevClampedRGB = clamp_luma_to(liftedPrevRGB, newCol.rgb, rel, max(TUNE.taaAbsEps, 0.035));
+
+        var tbSafe = tb;
+        tbSafe *= mix_f(1.0, 0.42, currentIsBrighter);
+        tbSafe *= mix_f(1.0, 0.72, currentIsDarker);
+        tbSafe = min(tbSafe, mix_f(0.78, 0.46, currentIsBrighter));
+        tbSafe = min(tbSafe, mix_f(0.88, 0.58, currentIsDarker));
+
+        let historyA = clamp(prevCol.a, newCol.a - 0.12, newCol.a + 0.12);
+        let historyCol = vec4<f32>(prevClampedRGB, historyA);
+        let blended = mix_v4(newCol, historyCol, tbSafe);
         textureStore(outTex, pixI, frame.layerIndex, blended);
         store_history_full_res_if_owner(pixI, frame.layerIndex, blended);
       }

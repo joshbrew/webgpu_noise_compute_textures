@@ -26,12 +26,22 @@ const preview = {
   exposure: 1.12,
   sky: [0.55, 0.7, 0.95],
   layer: 0,
-  renderQuality: 1,
-  gradeStyle: 1,
+  renderQuality: 2,
+  gradeStyle: 4,
   sunTint: [1.0, 1.0, 1.0],
   cloudLitTint: [1.0, 1.0, 1.0],
   cloudShadowTint: [0.0, 0.0, 0.0],
   edgeTint: [1.0, 1.0, 1.0],
+  styleShadowStrength: 0.88,
+  styleColorLift: 1.28,
+  styleSaturation: 1.24,
+  styleRimStrength: 1.04,
+  styleSunBleed: 0.66,
+  styleMidLift: 1.26,
+  godRaysEnabled: true,
+  godRayStrength: 0.35,
+  godRayLength: 1.10,
+  godRayFalloff: 1.10,
   sun: { azDeg: 45, elDeg: 7, bloom: 0.55 },
 };
 
@@ -103,11 +113,11 @@ const shapeParams = {
   voroMode: 3,
   edgeK: 0.0,
   warpAmp: 0.0,
-  baseModeA: "computeBillow4D",
-  baseModeB: "computeWorley4D",
-  bandMode2: "computeWorley4D",
-  bandMode3: "computeWorley4D",
-  bandMode4: "computeWorley4D",
+  baseModeA: "computeAntiWorley4D",
+  baseModeB: "computeAntiWorley4D",
+  bandMode2: "computeAntiWorley4D",
+  bandMode3: "computeAntiWorley4D",
+  bandMode4: "computeAntiWorley4D",
 };
 
 const detailParams = {
@@ -123,9 +133,9 @@ const detailParams = {
   voroMode: 7,
   edgeK: 0.0,
   warpAmp: 0.0,
-  mode1: "computeAntiWorley4D",
-  mode2: "computeAntiWorley4D",
-  mode3: "computeAntiWorley4D",
+  mode1: "computeWorley4D",
+  mode2: "computeWorley4D",
+  mode3: "computeWorley4D",
 };
 
 const blueParams = { seed: (Date.now() & 0xffffffff) >>> 0 };
@@ -168,7 +178,7 @@ const u32 = (id, fallback) => {
   return n >>> 0;
 };
 
-const clamp01 = (v) => Math.max(0, Math.min(2, Number.isFinite(+v) ? +v : 1));
+const clamp01 = (v) => Math.max(0, Math.min(4, Number.isFinite(+v) ? +v : 1));
 
 function injectPreviewLookControls() {
   const panel = $("p-preview");
@@ -193,20 +203,30 @@ function injectPreviewLookControls() {
           <option value="5">Ember Violet</option>
         </select>
       </label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Color Lift</span><input id="v-color-lift" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Saturation</span><input id="v-saturation" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Rim Strength</span><input id="v-rim-strength" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Bleed</span><input id="v-sun-bleed" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Mid Lift</span><input id="v-mid-lift" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:row; gap:8px; align-items:center; align-self:center;"><input id="v-god-rays-enabled" type="checkbox"><span>God Rays</span></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>God Ray Strength</span><input id="v-god-ray-strength" type="number" step="0.01" min="0" max="3"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>God Ray Length</span><input id="v-god-ray-length" type="number" step="0.01" min="0.1" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>God Ray Falloff</span><input id="v-god-ray-falloff" type="number" step="0.01" min="0.2" max="4"></label>
       <div></div>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint R</span><input id="v-sun-r" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint G</span><input id="v-sun-g" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint B</span><input id="v-sun-b" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint R</span><input id="v-sun-r" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint G</span><input id="v-sun-g" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint B</span><input id="v-sun-b" type="number" step="0.01" min="0" max="4"></label>
       <div></div>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit R</span><input id="v-lit-r" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit G</span><input id="v-lit-g" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit B</span><input id="v-lit-b" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow R</span><input id="v-shad-r" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow G</span><input id="v-shad-g" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow B</span><input id="v-shad-b" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint R</span><input id="v-edge-r" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint G</span><input id="v-edge-g" type="number" step="0.01" min="0" max="2"></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint B</span><input id="v-edge-b" type="number" step="0.01" min="0" max="2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit R</span><input id="v-lit-r" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit G</span><input id="v-lit-g" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit B</span><input id="v-lit-b" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow R</span><input id="v-shad-r" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow G</span><input id="v-shad-g" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Shadow B</span><input id="v-shad-b" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint R</span><input id="v-edge-r" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint G</span><input id="v-edge-g" type="number" step="0.01" min="0" max="4"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Edge Tint B</span><input id="v-edge-b" type="number" step="0.01" min="0" max="4"></label>
     </div>`;
   panel.appendChild(wrap);
 }
@@ -217,25 +237,55 @@ const GRADE_PRESETS = {
     sky: [0.55, 0.70, 0.95],
     sunBloom: 0.35,
     sunTint: [1.0, 1.0, 1.0],
-    cloudLitTint: [2.0, 2.0, 2.0],
+    cloudLitTint: [2.5, 2.5, 2.5],
     cloudShadowTint: [0.0, 0.0, 0.0],
-    edgeTint: [1.0, 1.0, 1.0],
+    edgeTint: [1.0, 2.0, 2.0],
+    styleShadowStrength: 1.0,
+    styleColorLift: 2.00,
+    styleSaturation: 1.08,
+    styleRimStrength: 0.95,
+    styleSunBleed: 2.00,
+    styleMidLift: 2.00,
+    godRaysEnabled: false,
+    godRayStrength: 0.0,
+    godRayLength: 1.0,
+    godRayFalloff: 1.55,
   },
   1: {
-    sky: [0.52, 0.42, 0.80],
+    sky: [0.38, 0.22, 0.68],
     sunBloom: 0.72,
-    sunTint: [1.16, 0.94, 0.84],
-    cloudLitTint: [1.1, 0.86, 0.66],
-    cloudShadowTint: [0.5, 0.5, 0.5],
-    edgeTint: [1.18, 0.90, 0.76],
+    sunTint: [1.50, 1.10, 0.36],
+    cloudLitTint: [2.35, 1.50, 0.34],
+    cloudShadowTint: [0.06, 0.1, 0.30],
+    edgeTint: [2.10, 1.48, 0.40],
+    styleShadowStrength: 1.74,
+    styleColorLift: 1.62,
+    styleSaturation: 1.72,
+    styleRimStrength: 2.00,
+    styleSunBleed: 0.26,
+    styleMidLift: 1.00,
+    godRaysEnabled: true,
+    godRayStrength: 1.00,
+    godRayLength: 1.10,
+    godRayFalloff: 1.10,
   },
   2: {
-    sky: [0.50, 0.44, 0.78],
-    sunBloom: 0.70,
-    sunTint: [1.08, 0.92, 1.10],
-    cloudLitTint: [1.16, 0.82, 0.98],
-    cloudShadowTint: [0.48, 0.38, 1.26],
-    edgeTint: [1.12, 0.82, 1.08],
+    sky: [0.46, 0.40, 0.74],
+    sunBloom: 0.54,
+    sunTint: [1.02, 0.92, 1.06],
+    cloudLitTint: [1.12, 0.84, 1.00],
+    cloudShadowTint: [0.36, 0.32, 0.72],
+    edgeTint: [1.08, 0.86, 1.06],
+    styleShadowStrength: 1.82,
+    styleColorLift: 1.18,
+    styleSaturation: 1.18,
+    styleRimStrength: 1.02,
+    styleSunBleed: 0.68,
+    styleMidLift: 1.22,
+    godRaysEnabled: true,
+    godRayStrength: 1.00,
+    godRayLength: 1.02,
+    godRayFalloff: 1.40,
   },
   3: {
     sky: [0.46, 0.56, 0.82],
@@ -244,22 +294,52 @@ const GRADE_PRESETS = {
     cloudLitTint: [0.98, 1.02, 1.06],
     cloudShadowTint: [0.70, 0.82, 1.12],
     edgeTint: [0.94, 1.00, 1.06],
+    styleShadowStrength: 1.78,
+    styleColorLift: 1.12,
+    styleSaturation: 1.08,
+    styleRimStrength: 0.95,
+    styleSunBleed: 0.70,
+    styleMidLift: 1.16,
+    godRaysEnabled: false,
+    godRayStrength: 1.0,
+    godRayLength: 0.9,
+    godRayFalloff: 1.90,
   },
   4: {
     sky: [0.44, 0.34, 0.54],
-    sunBloom: 0.84,
-    sunTint: [1.14, 0.88, 0.70],
-    cloudLitTint: [1.26, 0.76, 0.44],
-    cloudShadowTint: [0.10, 0.04, 0.06],
-    edgeTint: [1.22, 0.82, 0.52],
+    sunBloom: 0.56,
+    sunTint: [1.08, 0.84, 0.66],
+    cloudLitTint: [1.18, 0.72, 0.38],
+    cloudShadowTint: [0.07, 0.05, 0.07],
+    edgeTint: [1.22, 0.86, 0.54],
+    styleShadowStrength: 0.94,
+    styleColorLift: 1.12,
+    styleSaturation: 1.16,
+    styleRimStrength: 2.10,
+    styleSunBleed: 0.70,
+    styleMidLift: 1.08,
+    godRaysEnabled: true,
+    godRayStrength: 1.00,
+    godRayLength: 0.96,
+    godRayFalloff: 1.42,
   },
   5: {
-    sky: [0.46, 0.40, 0.68],
-    sunBloom: 0.72,
-    sunTint: [1.12, 0.94, 0.90],
-    cloudLitTint: [1.20, 0.80, 0.74],
-    cloudShadowTint: [0.54, 0.40, 1.06],
-    edgeTint: [1.12, 0.82, 0.90],
+    sky: [0.56, 0.38, 0.72],
+    sunBloom: 0.58,
+    sunTint: [1.12, 0.80, 0.78],
+    cloudLitTint: [1.34, 0.76, 0.68],
+    cloudShadowTint: [0.36, 0.26, 0.72],
+    edgeTint: [1.24, 0.82, 0.90],
+    styleShadowStrength: 0.76,
+    styleColorLift: 1.36,
+    styleSaturation: 1.34,
+    styleRimStrength: 1.08,
+    styleSunBleed: 0.56,
+    styleMidLift: 1.34,
+    godRaysEnabled: true,
+    godRayStrength: 1.00,
+    godRayLength: 1.02,
+    godRayFalloff: 1.34,
   },
 };
 
@@ -278,6 +358,16 @@ function applyGradePreset(style, syncInputs = true) {
   preview.cloudLitTint = preset.cloudLitTint.slice();
   preview.cloudShadowTint = preset.cloudShadowTint.slice();
   preview.edgeTint = preset.edgeTint.slice();
+  preview.styleShadowStrength = preset.styleShadowStrength ?? preview.styleShadowStrength ?? 0.88;
+  preview.styleColorLift = preset.styleColorLift ?? preview.styleColorLift ?? 1.12;
+  preview.styleSaturation = preset.styleSaturation ?? preview.styleSaturation ?? 1.10;
+  preview.styleRimStrength = preset.styleRimStrength ?? preview.styleRimStrength ?? 1.0;
+  preview.styleSunBleed = preset.styleSunBleed ?? preview.styleSunBleed ?? 0.85;
+  preview.styleMidLift = preset.styleMidLift ?? preview.styleMidLift ?? 1.10;
+  preview.godRaysEnabled = preset.godRaysEnabled ?? preview.godRaysEnabled ?? false;
+  preview.godRayStrength = preset.godRayStrength ?? preview.godRayStrength ?? 0.0;
+  preview.godRayLength = preset.godRayLength ?? preview.godRayLength ?? 1.0;
+  preview.godRayFalloff = preset.godRayFalloff ?? preview.godRayFalloff ?? 1.55;
 
   if (!syncInputs) return;
   setFieldValue("v-grade", preview.gradeStyle);
@@ -285,6 +375,17 @@ function applyGradePreset(style, syncInputs = true) {
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
   setFieldValue("c-bloom", preview.sun.bloom);
+  setFieldValue("v-shadow-strength", preview.styleShadowStrength);
+  setFieldValue("v-color-lift", preview.styleColorLift);
+  setFieldValue("v-saturation", preview.styleSaturation);
+  setFieldValue("v-rim-strength", preview.styleRimStrength);
+  setFieldValue("v-sun-bleed", preview.styleSunBleed);
+  setFieldValue("v-mid-lift", preview.styleMidLift);
+  const godEnabled = $("v-god-rays-enabled");
+  if (godEnabled) godEnabled.checked = !!preview.godRaysEnabled;
+  setFieldValue("v-god-ray-strength", preview.godRayStrength);
+  setFieldValue("v-god-ray-length", preview.godRayLength);
+  setFieldValue("v-god-ray-falloff", preview.godRayFalloff);
   setFieldValue("v-sun-r", preview.sunTint[0]);
   setFieldValue("v-sun-g", preview.sunTint[1]);
   setFieldValue("v-sun-b", preview.sunTint[2]);
@@ -430,7 +531,7 @@ function readTuning() {
     sunSteps: +($("t-sunSteps")?.value || 4) | 0,
     sunStride: +($("t-sunStride")?.value || 6) | 0,
     phaseJitter: +($("t-phaseJitter")?.value || 1.0),
-    stepJitter: +($("t-stepJitter")?.value || 0.08),
+    stepJitter: +($("t-stepJitter")?.value || 0.3),
     baseJitterFrac: +($("t-baseJitter")?.value || 0.15),
     topJitterFrac: +($("t-topJitter")?.value || 0.1),
     lodBiasWeather: +($("t-lodBiasWeather")?.value || 1.5),
@@ -505,7 +606,7 @@ function readCloudParams() {
     globalDensity: num("p-density", 100.0),
     cloudAnvilAmount: num("p-anvil", 0.1),
     cloudBeer: num("p-beer", 6.0),
-    attenuationClamp: num("p-clamp", 0.015),
+    attenuationClamp: num("p-clamp", 0.005),
     inScatterG: num("p-ins", 0.72),
     silverIntensity: num("p-sI", 3.0),
     silverExponent: num("p-sE", 6.0),
@@ -750,6 +851,16 @@ function readPreview() {
   preview.edgeTint[0] = clamp01(num("v-edge-r", preview.edgeTint[0]));
   preview.edgeTint[1] = clamp01(num("v-edge-g", preview.edgeTint[1]));
   preview.edgeTint[2] = clamp01(num("v-edge-b", preview.edgeTint[2]));
+  preview.styleShadowStrength = Math.max(0, Math.min(2.2, num("v-shadow-strength", preview.styleShadowStrength ?? 0.88)));
+  preview.styleColorLift = Math.max(0, Math.min(2.2, num("v-color-lift", preview.styleColorLift ?? 1.12)));
+  preview.styleSaturation = Math.max(0, Math.min(2.2, num("v-saturation", preview.styleSaturation ?? 1.10)));
+  preview.styleRimStrength = Math.max(0, Math.min(2.2, num("v-rim-strength", preview.styleRimStrength ?? 1.0)));
+  preview.styleSunBleed = Math.max(0, Math.min(2.2, num("v-sun-bleed", preview.styleSunBleed ?? 0.85)));
+  preview.styleMidLift = Math.max(0, Math.min(2.2, num("v-mid-lift", preview.styleMidLift ?? 1.10)));
+  preview.godRaysEnabled = !!$("v-god-rays-enabled")?.checked;
+  preview.godRayStrength = Math.max(0, Math.min(3.0, num("v-god-ray-strength", preview.godRayStrength ?? 0.0)));
+  preview.godRayLength = Math.max(0.1, Math.min(2.0, num("v-god-ray-length", preview.godRayLength ?? 1.0)));
+  preview.godRayFalloff = Math.max(0.2, Math.min(4.0, num("v-god-ray-falloff", preview.godRayFalloff ?? 1.55)));
 }
 
 // ---- reproj helpers ----
@@ -765,8 +876,19 @@ function getReprojPayload() {
     enabled,
     scale,
     coarseFactor: computeCoarseFactorFromScale(scale),
-    temporalBlend: enabled ? 0.92 : 0.0,
+    frameIndex: 0,
+    sampleOffset: 0,
+    temporalBlend: enabled ? 0.72 : 0.0,
   };
+}
+
+function getFreshReprojPayload() {
+  const rp = getReprojPayload();
+  rp.frameIndex = 0;
+  rp.sampleOffset = 0;
+  rp.resetHistory = true;
+  rp.temporalBlend = 0.0;
+  return rp;
 }
 
 function ensureCoarseInPayload(payload) {
@@ -1104,7 +1226,7 @@ async function wireUI() {
   reprojBtn?.addEventListener("click", async () => {
     if (!animRunning) {
       reprojEnabled = true;
-      const rp = getReprojPayload();
+      const rp = getFreshReprojPayload();
       try {
         await rpc("setReproj", { reproj: rp, perf: null });
       } catch (e) {
@@ -1130,6 +1252,8 @@ async function wireUI() {
         };
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
+        const loopReproj = getReprojPayload();
+        await rpc("setReproj", { reproj: loopReproj, perf: null });
         await rpc("startLoop", {});
         animRunning = true;
         if (reprojBtn) reprojBtn.textContent = "Stop Anim";
@@ -1142,7 +1266,7 @@ async function wireUI() {
             reproj: {
               enabled: false,
               scale: reprojDefaultScale,
-              coarseFactor: Math.round(1 / reprojDefaultScale),
+              coarseFactor: computeCoarseFactorFromScale(reprojDefaultScale),
             },
             perf: null,
           });
@@ -1164,7 +1288,7 @@ async function wireUI() {
           reproj: {
             enabled: false,
             scale: reprojDefaultScale,
-            coarseFactor: Math.round(1 / reprojDefaultScale),
+            coarseFactor: computeCoarseFactorFromScale(reprojDefaultScale),
           },
           perf: null,
         });
@@ -1502,10 +1626,14 @@ async function wireUI() {
       cloudParams,
       tuning,
     };
-    if (reprojEnabled) payload.reproj = getReprojPayload();
+    if (reprojEnabled) payload.reproj = getFreshReprojPayload();
     ensureCoarseInPayload(payload);
     try {
       await runFrameLatest(payload);
+      if (reprojEnabled) {
+        const rp = getReprojPayload();
+        await rpc("setReproj", { reproj: rp, perf: null });
+      }
       lastTuningSent = cloneTuning(tuning);
     } catch (e) {
       console.warn("runFrame failed (preview)", e);
@@ -1809,7 +1937,7 @@ async function init() {
   setIf("t-sunSteps", 4);
   setIf("t-sunStride", 6);
   setIf("t-phaseJitter", 1.0);
-  setIf("t-stepJitter", 0.08);
+  setIf("t-stepJitter", 0.3);
   setIf("t-baseJitter", 0.15);
   setIf("t-topJitter", 0.1);
   setIf("t-lodBiasWeather", 1.5);

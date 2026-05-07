@@ -42,6 +42,16 @@ const noise = {
   detail32: { view3D: null, size: 32, dirty: false },
 };
 
+const BLUE_NOISE_SHARPNESS = 0.12;
+const BLUE_NOISE_CONTRAST = 0.68;
+let blueBlurPipeline = null;
+let blueBlurSampler = null;
+let blueBlurUniform = null;
+let blueBlurTexture = null;
+let blueBlurView = null;
+let blueBlurW = 0;
+let blueBlurH = 0;
+
 let currentSlice = 0;
 
 // reprojection/history resources
@@ -98,6 +108,10 @@ let shapeAxisScale = [1, 1, 1],
 
 const renderBundleCache = new Map();
 const log = (...a) => postMessage({ type: "log", data: a });
+
+let lastPermSeed = null;
+let cachedEntryPointsRef = null;
+let cachedEntrySet = null;
 
 const LOOP_TARGET_MS = 1000 / 60;
 const LOOP_BACKPRESSURE_EVERY = 4;
@@ -245,9 +259,11 @@ function maybeApplySeedToPermTable(params) {
 
   const s = typeof seedVal === "string" ? Number(seedVal) || 0 : Number(seedVal) || 0;
   if (!Number.isFinite(s) || s === 0) return;
+  if (lastPermSeed === s) return;
 
   try {
     nb.buildPermTable?.(s);
+    lastPermSeed = s;
   } catch (e) {
     console.warn("buildPermTable(seed) failed", e);
   }
@@ -262,7 +278,10 @@ function isEntry4D(ep) {
 
 function getEntrySet() {
   const eps = Array.isArray(nb?.entryPoints) ? nb.entryPoints : [];
-  return new Set(eps.filter((x) => typeof x === "string" && x.length));
+  if (cachedEntryPointsRef === eps && cachedEntrySet) return cachedEntrySet;
+  cachedEntryPointsRef = eps;
+  cachedEntrySet = new Set(eps.filter((x) => typeof x === "string" && x.length));
+  return cachedEntrySet;
 }
 
 function sanitizeEntry(entry, fallback, opts = {}) {
@@ -416,6 +435,148 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
   return { baseMs, gMs, bMs, totalMs };
 }
 
+
+function getBlueBlurPipeline() {
+  if (blueBlurPipeline) return blueBlurPipeline;
+
+  blueBlurSampler = blueBlurSampler || device.createSampler({
+    magFilter: "linear",
+    minFilter: "linear",
+    addressModeU: "repeat",
+    addressModeV: "repeat",
+  });
+
+  blueBlurUniform = blueBlurUniform || device.createBuffer({
+    size: 16,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  const code = `
+struct BlueBlurParams {
+  dim: vec2<f32>,
+  sharpness: f32,
+  contrast: f32,
+};
+
+@group(0) @binding(0) var inTex: texture_2d_array<f32>;
+@group(0) @binding(1) var inSamp: sampler;
+@group(0) @binding(2) var outTex: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var<uniform> P: BlueBlurParams;
+
+fn wrapCoord(p: vec2<i32>) -> vec2<i32> {
+  let d = vec2<i32>(max(i32(P.dim.x), 1), max(i32(P.dim.y), 1));
+  return vec2<i32>(((p.x % d.x) + d.x) % d.x, ((p.y % d.y) + d.y) % d.y);
+}
+
+fn readBlue(p: vec2<i32>) -> f32 {
+  let q = wrapCoord(p);
+  let uv = (vec2<f32>(q) + vec2<f32>(0.5, 0.5)) / max(P.dim, vec2<f32>(1.0, 1.0));
+  return textureSampleLevel(inTex, inSamp, uv, 0i, 0.0).r;
+}
+
+fn blueWeight1D(o: i32) -> f32 {
+  let a = abs(o);
+  if (a == 0) { return 6.0; }
+  if (a == 1) { return 4.0; }
+  return 1.0;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let w = u32(max(P.dim.x, 1.0));
+  let h = u32(max(P.dim.y, 1.0));
+  if (gid.x >= w || gid.y >= h) { return; }
+
+  let p = vec2<i32>(i32(gid.x), i32(gid.y));
+  let c = readBlue(p);
+  var gaussian = 0.0;
+
+  for (var oy = -2; oy <= 2; oy = oy + 1) {
+    for (var ox = -2; ox <= 2; ox = ox + 1) {
+      let w2 = blueWeight1D(ox) * blueWeight1D(oy);
+      gaussian = gaussian + readBlue(p + vec2<i32>(ox, oy)) * w2;
+    }
+  }
+
+  gaussian = gaussian / 256.0;
+  let softened = mix(gaussian, c, clamp(P.sharpness, 0.0, 1.0));
+  let v = clamp((softened - 0.5) * clamp(P.contrast, 0.0, 2.0) + 0.5, 0.0, 1.0);
+  textureStore(outTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(v, v, v, 1.0));
+}
+`;
+
+  blueBlurPipeline = device.createComputePipeline({
+    layout: "auto",
+    compute: {
+      module: device.createShaderModule({ code }),
+      entryPoint: "main",
+    },
+  });
+
+  return blueBlurPipeline;
+}
+
+function blurBlueNoiseView(inputView, width, height, sharpness = BLUE_NOISE_SHARPNESS) {
+  if (!device || !queue || !inputView) return inputView;
+
+  try {
+    const pipeline = getBlueBlurPipeline();
+    const w = Math.max(1, width | 0);
+    const h = Math.max(1, height | 0);
+
+    if (!blueBlurTexture || blueBlurW !== w || blueBlurH !== h) {
+      if (blueBlurTexture) {
+        try { blueBlurTexture.destroy?.(); } catch {}
+      }
+
+      blueBlurTexture = device.createTexture({
+        size: [w, h, 1],
+        format: "rgba16float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      blueBlurW = w;
+      blueBlurH = h;
+      blueBlurView = blueBlurTexture.createView({
+        dimension: "2d-array",
+        baseArrayLayer: 0,
+        arrayLayerCount: 1,
+      });
+    }
+
+    const storageView = blueBlurTexture.createView({ dimension: "2d" });
+
+    const params = new Float32Array([
+      w,
+      h,
+      Math.max(0, Math.min(1, sharpness)),
+      BLUE_NOISE_CONTRAST,
+    ]);
+    queue.writeBuffer(blueBlurUniform, 0, params.buffer, params.byteOffset, params.byteLength);
+
+    const bg = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: inputView },
+        { binding: 1, resource: blueBlurSampler },
+        { binding: 2, resource: storageView },
+        { binding: 3, resource: { buffer: blueBlurUniform } },
+      ],
+    });
+
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bg);
+    pass.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8), 1);
+    pass.end();
+    queue.submit([enc.finish()]);
+    return blueBlurView || inputView;
+  } catch (err) {
+    try { console.warn("blue noise blur preprocess failed", err); } catch {}
+    return inputView;
+  }
+}
+
 async function bakeBlue2D(blueParams = {}, force = false) {
   maybeApplySeedToPermTable(blueParams);
 
@@ -441,11 +602,15 @@ async function bakeBlue2D(blueParams = {}, force = false) {
   });
   const blueMs = performance.now() - t0;
 
-  noise.blue.arrayView = (typeof nb.get2DView === "function" ? nb.get2DView("blue2d") : arrView) || arrView;
+  const rawBlueView = (typeof nb.get2DView === "function" ? nb.get2DView("blue2d") : arrView) || arrView;
+  const blurT0 = performance.now();
+  const filteredBlueView = blurBlueNoiseView(rawBlueView, BN_W, BN_H, BLUE_NOISE_SHARPNESS);
+  const blurMs = performance.now() - blurT0;
+  noise.blue.arrayView = filteredBlueView || rawBlueView;
   noise.blue.dirty = false;
 
   if (dbg.blue) {
-    nb.renderTextureToCanvas(arrView, dbg.blue, {
+    nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
       preserveCanvasSize: true,
       clear: true,
       width: DBG_W,
@@ -454,8 +619,8 @@ async function bakeBlue2D(blueParams = {}, force = false) {
   }
 
   const totalMs = performance.now() - T0;
-  log("[BENCH] blue noise(ms):", blueMs.toFixed(2), " total(ms):", totalMs.toFixed(2));
-  return { blueMs, totalMs };
+  log("[BENCH] blue noise(ms):", blueMs.toFixed(2), " blur(ms):", blurMs.toFixed(2), " total(ms):", totalMs.toFixed(2));
+  return { blueMs, blurMs, totalMs };
 }
 
 async function bakeShape128(shapeParams = {}, force = false) {
@@ -820,6 +985,21 @@ function normalizeReproj(r) {
   return out;
 }
 
+function getReprojCoarseFactor(r, fallback = 1) {
+  const rp = r && typeof r === "object" ? r : null;
+  return Math.max(1, (rp?.coarseFactor || rp?.subsample || fallback || 1) | 0);
+}
+
+function getDispatchReprojSettings(r, coarseFactor = 1) {
+  if (!r) return null;
+  const out = Object.assign({}, r);
+  if (coarseFactor >= 2) {
+    out.subsample = 1;
+    out.sampleOffset = 0;
+  }
+  return out;
+}
+
 // -----------------------------------------------------------------------------
 // render bundle cache
 // -----------------------------------------------------------------------------
@@ -928,6 +1108,11 @@ function roundSig(v, scale = 10000) {
   return Number.isFinite(n) ? Math.round(n * scale) / scale : 0;
 }
 
+function makeColorSignatureArray(arr, fallback = [1, 1, 1]) {
+  const a = Array.isArray(arr) ? arr : fallback;
+  return [roundSig(a[0], 1000), roundSig(a[1], 1000), roundSig(a[2], 1000)];
+}
+
 function makeViewSignature(preview, w, h) {
   const cam = preview?.cam || {};
   const sun = preview?.sun || {};
@@ -940,6 +1125,25 @@ function makeViewSignature(preview, w, h) {
     roundSig(cam.fovYDeg),
     roundSig(sun.azDeg),
     roundSig(sun.elDeg),
+    roundSig(sun.bloom, 1000),
+    roundSig(preview?.exposure, 1000),
+    preview?.renderQuality ?? 1,
+    preview?.gradeStyle ?? 0,
+    ...makeColorSignatureArray(preview?.sky, [0.5, 0.6, 0.8]),
+    ...makeColorSignatureArray(preview?.sunTint, [1, 1, 1]),
+    ...makeColorSignatureArray(preview?.cloudLitTint, [1, 1, 1]),
+    ...makeColorSignatureArray(preview?.cloudShadowTint, [1, 1, 1]),
+    ...makeColorSignatureArray(preview?.edgeTint, [1, 1, 1]),
+    roundSig(preview?.styleShadowStrength ?? 0.88, 1000),
+    roundSig(preview?.styleColorLift ?? 1.12, 1000),
+    roundSig(preview?.styleSaturation ?? 1.10, 1000),
+    roundSig(preview?.styleRimStrength ?? 1.0, 1000),
+    roundSig(preview?.styleSunBleed ?? 0.85, 1000),
+    roundSig(preview?.styleMidLift ?? 1.10, 1000),
+    preview?.godRaysEnabled ? 1 : 0,
+    roundSig(preview?.godRayStrength ?? 0.0, 1000),
+    roundSig(preview?.godRayLength ?? 1.0, 1000),
+    roundSig(preview?.godRayFalloff ?? 1.55, 1000),
     w | 0,
     h | 0,
   ].join('|');
@@ -1004,6 +1208,10 @@ async function runFrame({
   await ensureDevice();
 
   try {
+    const loopSafeReproj =
+      reproj && typeof reproj === "object"
+        ? Object.assign({}, reproj, { resetHistory: false })
+        : reproj;
     lastRunPayload = {
       weatherParams,
       billowParams,
@@ -1014,7 +1222,7 @@ async function runFrame({
       noiseTransforms,
       preview,
       cloudParams,
-      reproj,
+      reproj: loopSafeReproj,
       perf,
       motionImage,
       depthImage,
@@ -1049,7 +1257,15 @@ async function runFrame({
 
   const cameraChanged = updateViewInvalidation(preview);
 
-  if (reproj) workerReproj = normalizeReproj(reproj);
+  if (reproj) {
+    const nextReproj = normalizeReproj(reproj);
+    if (workerReproj && nextReproj && !reproj.resetHistory && nextReproj.enabled && nextReproj.frameIndex === 0 && workerReproj.frameIndex > 0) {
+      nextReproj.frameIndex = workerReproj.frameIndex >>> 0;
+      nextReproj.sampleOffset = workerReproj.sampleOffset >>> 0;
+    }
+    workerReproj = nextReproj;
+    if (reproj.resetHistory) invalidateReprojectionHistory();
+  }
   if (perf) workerPerf = perf;
   const hasTemporalHistory = !!(workerReproj && workerReproj.temporalBlend > 0.0001);
   if (cameraChanged && hasTemporalHistory) invalidateReprojectionHistory();
@@ -1080,11 +1296,12 @@ async function runFrame({
     if (!workerReproj && reproj) workerReproj = normalizeReproj(reproj);
     if (!effectiveReproj) effectiveReproj = workerReproj;
     if (effectiveReproj) {
-      const ss = Math.max(1, effectiveReproj.subsample || 1);
+      const coarseDriven = getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor) >= 2;
+      const ss = coarseDriven ? 1 : Math.max(1, effectiveReproj.subsample || 1);
       const cells = ss * ss;
       if (!(effectiveReproj.frameIndex === 0 && !historyPrevView)) {
         effectiveReproj.frameIndex = ((effectiveReproj.frameIndex || 0) + 1) >>> 0;
-        effectiveReproj.sampleOffset = (effectiveReproj.frameIndex % cells) >>> 0;
+        effectiveReproj.sampleOffset = coarseDriven ? 0 : (effectiveReproj.frameIndex % cells) >>> 0;
         if (workerReproj) {
           workerReproj.frameIndex = effectiveReproj.frameIndex >>> 0;
           workerReproj.sampleOffset = effectiveReproj.sampleOffset >>> 0;
@@ -1139,15 +1356,18 @@ async function runFrame({
     historyOutView = historyUsesAasOut ? historyViewA : historyViewB;
 
     cb.setInputMaps({
-      motionView: motionView || undefined,
-      depthPrevView: depthView || undefined,
-      historyPrevView: historyPrevView || undefined,
+      motionView: motionView || null,
+      depthPrevView: depthView || null,
+      historyPrevView: historyPrevView || null,
     });
 
     cb.setHistoryOutView(historyOutView);
 
     if (workerPerf) cb.setPerfParams(workerPerf);
-    if (effectiveReproj) cb.setReprojSettings(effectiveReproj);
+    if (effectiveReproj) {
+      effectiveCoarseFactor = getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor);
+      cb.setReprojSettings(getDispatchReprojSettings(effectiveReproj, effectiveCoarseFactor));
+    }
   } else {
     cb.setInputMaps({
       motionView: null,
@@ -1212,12 +1432,12 @@ async function runFrame({
     await queue.onSubmittedWorkDone();
   }
 
-  const cf = effectiveCoarseFactor;
+  const cf = Math.max(1, effectiveCoarseFactor | 0);
   const enc = device.createCommandEncoder();
   const tC0 = performance.now();
   const encodedDispatch =
     typeof cb.encodeDispatchPasses === "function"
-      ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, skipUpsampleForPreview: true })
+      ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, skipUpsampleForPreview: false })
       : null;
   if (!encodedDispatch) {
     throw new Error("CloudComputeBuilder.encodeDispatchPasses is required for fused frame submission.");
@@ -1247,6 +1467,16 @@ async function runFrame({
     lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
     shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
     edgeTint: preview?.edgeTint || [1.0, 1.0, 1.0],
+    styleShadowStrength: preview?.styleShadowStrength ?? 0.88,
+    styleColorLift: preview?.styleColorLift ?? 1.12,
+    styleSaturation: preview?.styleSaturation ?? 1.10,
+    styleRimStrength: preview?.styleRimStrength ?? 1.0,
+    styleSunBleed: preview?.styleSunBleed ?? 0.85,
+    styleMidLift: preview?.styleMidLift ?? 1.10,
+    godRaysEnabled: !!preview?.godRaysEnabled,
+    godRayStrength: preview?.godRayStrength ?? 0.0,
+    godRayLength: preview?.godRayLength ?? 1.0,
+    godRayFalloff: preview?.godRayFalloff ?? 1.55,
   });
 
   const tR0 = performance.now();
@@ -1353,6 +1583,11 @@ function startLoop() {
   loopEnabled = true;
   loopRunning = true;
 
+  if (workerReproj && workerReproj.temporalBlend > 0.0001 && !historyPrevView) {
+    invalidateReprojectionHistory();
+    reprojResetFrames = Math.max(reprojResetFrames, 1);
+  }
+
   (async () => {
     log("animation loop started");
 
@@ -1363,7 +1598,8 @@ function startLoop() {
     framesSinceFence = 0;
     if (workerReproj && workerReproj.enabled) {
       workerReproj = normalizeReproj(workerReproj);
-      if (!workerReproj.frameIndex) workerReproj.frameIndex = 0;
+      workerReproj.frameIndex = workerReproj.frameIndex >>> 0;
+      workerReproj.sampleOffset = workerReproj.sampleOffset >>> 0;
     }
 
     while (loopEnabled) {
@@ -1387,17 +1623,7 @@ function startLoop() {
         pushTransformsToCloudBuilder();
 
         if (workerReproj && workerReproj.enabled) {
-          const ss = Math.max(1, workerReproj.subsample || 1);
-          const cells = ss * ss;
-          workerReproj.frameIndex = ((workerReproj.frameIndex || 0) + 1) >>> 0;
-          workerReproj.sampleOffset = (workerReproj.frameIndex % cells) >>> 0;
-
-          try {
-            cb?.setReprojSettings?.(workerReproj);
-            if (workerPerf) cb?.setPerfParams?.(workerPerf);
-          } catch (e) {
-            console.warn("startLoop reproj apply failed", e);
-          }
+          workerReproj = normalizeReproj(workerReproj);
         }
 
         if (workerTuningVersion !== lastAppliedTuningVersion) applyWorkerTuning();
@@ -1406,6 +1632,10 @@ function startLoop() {
           const merged = Object.assign({}, lastRunPayload.tileTransforms || {});
           Object.assign(merged, snapshotTransforms(), { explicit: true });
           lastRunPayload.tileTransforms = merged;
+          if (workerReproj) {
+            lastRunPayload.reproj = Object.assign({}, workerReproj, { resetHistory: false });
+            lastRunPayload.coarseFactor = getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1);
+          }
           lastRunPayload.waitForGpu = false;
           lastRunPayload.logFrame = false;
         }
@@ -1686,22 +1916,30 @@ async function _handleMessage(ev) {
       workerReproj = normalizeReproj(payload.reproj || null);
       workerPerf = payload.perf || workerPerf;
 
-      if (workerReproj && workerReproj.temporalBlend > 0.0001 && (workerReproj.frameIndex === 0 || typeof workerReproj.frameIndex === "undefined")) {
+      if (workerReproj && workerReproj.temporalBlend > 0.0001 && payload?.reproj?.resetHistory) {
         workerReproj.frameIndex = 0;
         workerReproj.sampleOffset = 0;
         invalidateReprojectionHistory();
       }
 
+      if (lastRunPayload) {
+        lastRunPayload.reproj = workerReproj
+          ? Object.assign({}, workerReproj, { resetHistory: false })
+          : workerReproj;
+        if (workerReproj) {
+          lastRunPayload.coarseFactor = getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1);
+        }
+      }
+
       if (cb) {
         if (workerPerf) cb.setPerfParams(workerPerf);
         if (workerReproj) {
-          cb.setReprojSettings(workerReproj);
+          cb.setReprojSettings(getDispatchReprojSettings(workerReproj, getReprojCoarseFactor(workerReproj, 1)));
         }
       }
 
       renderBundleCache.clear();
-      if (workerReproj && workerReproj.enabled) startLoop();
-      else stopLoop();
+      if (!workerReproj || !workerReproj.enabled) stopLoop();
 
       respond(true, { ok: true, reproj: workerReproj, perf: workerPerf });
       return;
