@@ -32,7 +32,7 @@ const preview = {
   cloudLitTint: [1.0, 1.0, 1.0],
   cloudShadowTint: [0.0, 0.0, 0.0],
   edgeTint: [1.0, 1.0, 1.0],
-  sun: { azDeg: 45, elDeg: 22, bloom: 0.55 },
+  sun: { azDeg: 45, elDeg: 7, bloom: 0.55 },
 };
 
 // Weather params (R channel)
@@ -225,8 +225,8 @@ const GRADE_PRESETS = {
     sky: [0.52, 0.42, 0.80],
     sunBloom: 0.72,
     sunTint: [1.16, 0.94, 0.84],
-    cloudLitTint: [1.24, 0.86, 0.66],
-    cloudShadowTint: [1, 1, 1],
+    cloudLitTint: [1.1, 0.86, 0.66],
+    cloudShadowTint: [0.5, 0.5, 0.5],
     edgeTint: [1.18, 0.90, 0.76],
   },
   2: {
@@ -509,8 +509,8 @@ function readCloudParams() {
     inScatterG: num("p-ins", 0.72),
     silverIntensity: num("p-sI", 3.0),
     silverExponent: num("p-sE", 6.0),
-    outScatterG: num("p-outs", 0.0),
-    inVsOut: num("p-ivo", 0.0),
+    outScatterG: num("p-outs", 1.0),
+    inVsOut: num("p-ivo", 0.5),
     outScatterAmbientAmt: num("p-ambOut", 0.12),
     ambientMinimum: num("p-ambMin", 0.055),
     sunColor: baseSunColor.map((v, i) => v * (sunTint[i] ?? 1.0)),
@@ -1794,9 +1794,9 @@ async function init() {
   setIf("p-density", 100.0);
   setIf("p-beer", 6);
   setIf("p-clamp", 0.015);
-  setIf("p-ins", 0.30);
-  setIf("p-outs", 0);
-  setIf("p-ivo", 0);
+  setIf("p-ins", 1.0);
+  setIf("p-outs", 0.1);
+  setIf("p-ivo", 0.5);
   setIf("p-sI", 0.18);
   setIf("p-sE", 6.0);
   setIf("p-ambOut", 0.08);
