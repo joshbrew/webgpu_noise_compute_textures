@@ -30,7 +30,7 @@ const preview = {
   gradeStyle: 1,
   sunTint: [1.0, 1.0, 1.0],
   cloudLitTint: [1.0, 1.0, 1.0],
-  cloudShadowTint: [1.0, 1.0, 1.0],
+  cloudShadowTint: [0.0, 0.0, 0.0],
   edgeTint: [1.0, 1.0, 1.0],
   sun: { azDeg: 45, elDeg: 22, bloom: 0.55 },
 };
@@ -186,9 +186,11 @@ function injectPreviewLookControls() {
         <span>Color Grade</span>
         <select id="v-grade">
           <option value="0">Default Gray</option>
-          <option value="1">Sunset</option>
+          <option value="1">Sunset Punch</option>
           <option value="2">Dusky Purple</option>
           <option value="3">Storm Cool</option>
+          <option value="4">Firestorm</option>
+          <option value="5">Ember Violet</option>
         </select>
       </label>
       <div></div>
@@ -215,33 +217,49 @@ const GRADE_PRESETS = {
     sky: [0.55, 0.70, 0.95],
     sunBloom: 0.35,
     sunTint: [1.0, 1.0, 1.0],
-    cloudLitTint: [1.0, 1.0, 1.0],
-    cloudShadowTint: [1.0, 1.0, 1.0],
+    cloudLitTint: [2.0, 2.0, 2.0],
+    cloudShadowTint: [0.0, 0.0, 0.0],
     edgeTint: [1.0, 1.0, 1.0],
   },
   1: {
-    sky: [0.49, 0.53, 0.78],
-    sunBloom: 0.76,
-    sunTint: [1.14, 0.90, 0.76],
-    cloudLitTint: [1.08, 0.98, 0.92],
-    cloudShadowTint: [0.74, 0.70, 1.08],
-    edgeTint: [1.12, 0.88, 0.74],
+    sky: [0.52, 0.42, 0.80],
+    sunBloom: 0.72,
+    sunTint: [1.16, 0.94, 0.84],
+    cloudLitTint: [1.24, 0.86, 0.66],
+    cloudShadowTint: [1, 1, 1],
+    edgeTint: [1.18, 0.90, 0.76],
   },
   2: {
-    sky: [0.50, 0.52, 0.86],
-    sunBloom: 0.64,
-    sunTint: [1.02, 0.94, 1.08],
-    cloudLitTint: [1.04, 0.96, 1.06],
-    cloudShadowTint: [0.66, 0.62, 1.14],
-    edgeTint: [1.04, 0.88, 1.10],
+    sky: [0.50, 0.44, 0.78],
+    sunBloom: 0.70,
+    sunTint: [1.08, 0.92, 1.10],
+    cloudLitTint: [1.16, 0.82, 0.98],
+    cloudShadowTint: [0.48, 0.38, 1.26],
+    edgeTint: [1.12, 0.82, 1.08],
   },
   3: {
-    sky: [0.50, 0.61, 0.90],
-    sunBloom: 0.28,
-    sunTint: [0.92, 0.98, 1.04],
-    cloudLitTint: [0.96, 0.99, 1.02],
-    cloudShadowTint: [0.78, 0.86, 1.04],
-    edgeTint: [0.92, 0.97, 1.04],
+    sky: [0.46, 0.56, 0.82],
+    sunBloom: 0.34,
+    sunTint: [0.96, 1.00, 1.04],
+    cloudLitTint: [0.98, 1.02, 1.06],
+    cloudShadowTint: [0.70, 0.82, 1.12],
+    edgeTint: [0.94, 1.00, 1.06],
+  },
+  4: {
+    sky: [0.44, 0.34, 0.54],
+    sunBloom: 0.84,
+    sunTint: [1.14, 0.88, 0.70],
+    cloudLitTint: [1.26, 0.76, 0.44],
+    cloudShadowTint: [0.10, 0.04, 0.06],
+    edgeTint: [1.22, 0.82, 0.52],
+  },
+  5: {
+    sky: [0.46, 0.40, 0.68],
+    sunBloom: 0.72,
+    sunTint: [1.12, 0.94, 0.90],
+    cloudLitTint: [1.20, 0.80, 0.74],
+    cloudShadowTint: [0.54, 0.40, 1.06],
+    edgeTint: [1.12, 0.82, 0.90],
   },
 };
 
@@ -409,8 +427,8 @@ function readTuning() {
     maxSteps: +($("t-maxSteps")?.value || 256) | 0,
     minStep: +($("t-minStep")?.value || 0.003),
     maxStep: +($("t-maxStep")?.value || 0.16),
-    sunSteps: +($("t-sunSteps")?.value || 5) | 0,
-    sunStride: +($("t-sunStride")?.value || 5) | 0,
+    sunSteps: +($("t-sunSteps")?.value || 4) | 0,
+    sunStride: +($("t-sunStride")?.value || 6) | 0,
     phaseJitter: +($("t-phaseJitter")?.value || 1.0),
     stepJitter: +($("t-stepJitter")?.value || 0.08),
     baseJitterFrac: +($("t-baseJitter")?.value || 0.15),
@@ -418,11 +436,12 @@ function readTuning() {
     lodBiasWeather: +($("t-lodBiasWeather")?.value || 1.5),
     nearFluffDist: +($("t-nearFluffDist")?.value || 60.0),
     nearDensityMult: +($("t-nearDensityMult")?.value || 2.5),
-    lodBlendThreshold: +($("t-lodBlendThreshold")?.value || 0.38),
+    lodBlendThreshold: +($("t-lodBlendThreshold")?.value || 0.46),
     farStart: +($("t-farStart")?.value || 0.65),
     farFull: +($("t-farFull")?.value || 2.4),
-    raySmoothDens: +($("t-raySmoothDens")?.value || 0.42),
-    raySmoothSun: +($("t-raySmoothSun")?.value || 0.28),
+    farStepMult: +($("t-farStepMult")?.value || 2.65),
+    raySmoothDens: +($("t-raySmoothDens")?.value || 0.46),
+    raySmoothSun: +($("t-raySmoothSun")?.value || 0.34),
   };
 }
 
@@ -469,12 +488,16 @@ function readCloudParams() {
 
   const baseSunColor =
     preview.gradeStyle === 1
-      ? [1.08, 0.76, 0.60]
+      ? [1.06, 0.82, 0.68]
       : preview.gradeStyle === 2
-        ? [0.98, 0.84, 0.96]
+        ? [1.00, 0.80, 1.00]
         : preview.gradeStyle === 3
           ? [0.92, 0.96, 1.0]
-          : [1.0, 0.95, 0.87];
+          : preview.gradeStyle === 4
+            ? [1.12, 0.74, 0.44]
+            : preview.gradeStyle === 5
+              ? [1.06, 0.80, 0.76]
+              : [1.0, 0.95, 0.87];
   const sunTint = preview.sunTint || [1.0, 1.0, 1.0];
 
   return {
@@ -758,10 +781,19 @@ function ensureCoarseInPayload(payload) {
   return payload;
 }
 
+function nextAnimationFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
 let _frameRunActive = false;
 let _frameRunQueued = null;
+let _frameRunRafPending = false;
 
 async function _pumpRunFrameLatest() {
+  if (_frameRunActive || _frameRunRafPending) return;
+  _frameRunRafPending = true;
+  await nextAnimationFrame();
+  _frameRunRafPending = false;
   if (_frameRunActive) return;
   _frameRunActive = true;
   try {
@@ -788,6 +820,10 @@ function runFrameLatest(payload) {
     if (_frameRunQueued) {
       _frameRunQueued.payload = payload;
       _frameRunQueued.waiters.push({ resolve, reject });
+      if (_frameRunQueued.waiters.length > 64) {
+        const dropped = _frameRunQueued.waiters.splice(0, _frameRunQueued.waiters.length - 64);
+        for (const waiter of dropped) waiter.resolve({ skipped: true, coalesced: true });
+      }
     } else {
       _frameRunQueued = { payload, waiters: [{ resolve, reject }] };
     }
@@ -872,7 +908,7 @@ function attachByIds(ids, handler, opts = {}) {
   }
 }
 
-function attachPanelInputs(panel, handler, delayMs = 70) {
+function attachPanelInputs(panel, handler, delayMs = 90) {
   if (!panel) return;
   const onInput = debounceAsync(handler, delayMs);
   const onChange = (ev) => {
@@ -1770,19 +1806,21 @@ async function init() {
   setIf("t-maxSteps", 256);
   setIf("t-minStep", 0.003);
   setIf("t-maxStep", 0.16);
-  setIf("t-sunSteps", 5);
+  setIf("t-sunSteps", 4);
+  setIf("t-sunStride", 6);
   setIf("t-phaseJitter", 1.0);
   setIf("t-stepJitter", 0.08);
   setIf("t-baseJitter", 0.15);
   setIf("t-topJitter", 0.1);
   setIf("t-lodBiasWeather", 1.5);
-  setIf("t-lodBlendThreshold", 0.38);
+  setIf("t-lodBlendThreshold", 0.46);
   setIf("t-nearFluffDist", 60);
   setIf("t-nearDensityMult", 2.5);
   setIf("t-farStart", 0.65);
   setIf("t-farFull", 2.4);
-  setIf("t-raySmoothDens", 0.42);
-  setIf("t-raySmoothSun", 0.28);
+  setIf("t-farStepMult", 2.65);
+  setIf("t-raySmoothDens", 0.46);
+  setIf("t-raySmoothSun", 0.34);
 
   // preview
   setIf("v-cx", preview.cam.x);

@@ -100,7 +100,7 @@ const renderBundleCache = new Map();
 const log = (...a) => postMessage({ type: "log", data: a });
 
 const LOOP_TARGET_MS = 1000 / 60;
-const LOOP_BACKPRESSURE_EVERY = 3;
+const LOOP_BACKPRESSURE_EVERY = 4;
 const FRAME_LOG_EVERY = 60;
 const CAMERA_RESET_FRAMES = 1;
 const CAMERA_SIG_EPS = 1e-4;

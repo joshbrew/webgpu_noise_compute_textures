@@ -1197,7 +1197,7 @@ fn computeCloud(
 
   loop {
     if (iter >= TUNE.maxSteps) { break; }
-    if (t >= t1 || Tr < 0.001) { break; }
+    if (t >= t1 || Tr < 0.0035) { break; }
 
     let p = rayRo + rayRd * t;
     let sampleViewDepth = max(dot(p - V.camPos, camFwd), 0.0);
@@ -1330,7 +1330,8 @@ fn computeCloud(
       let sunStrideSafe = max(TUNE.sunStride + adaptiveStrideAdd, 1);
       if ((iter % sunStrideSafe) == 0) {
         if (densMacroSmoothed * stepLen > TUNE.sunDensityGate) {
-          let sunStepsAdaptive = max(2, TUNE.sunSteps - i32(floor(farF * 2.0)) - i32(floor(shadowInteriorProbe * farF * 1.5)));
+          let lowTransCut = select(0i, 1i, Tr < 0.055);
+          let sunStepsAdaptive = max(2, TUNE.sunSteps - i32(floor(farF * 2.0)) - i32(floor(shadowInteriorProbe * farF * 1.5)) - lowTransCut);
           let sunStepAdaptive = sunStepLen * mix_f(1.0, 1.35, farF);
           Tsun_cached = sunTransmittance(
             p, sunDir, weatherLOD, lodShapeBase, lodDetailBase, sunStepAdaptive,
@@ -1426,7 +1427,7 @@ fn computeCloud(
       runMeanL += lNow;
       runN += 1.0;
 
-      if (Tr < 0.002) { break; }
+      if (Tr < 0.0045) { break; }
     }
 
     prevDens = densSmoothed;

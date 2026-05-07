@@ -84,7 +84,7 @@ fn applyStyleGrade(cIn:vec3<f32>, style:u32, cloudMask:f32)->vec3<f32> {
   let hi = smoothstep(0.42, 0.96, lum);
   let mid = smoothstep(0.10, 0.58, lum) * (1.0 - smoothstep(0.58, 0.90, lum));
   let sh = 1.0 - smoothstep(0.16, 0.48, lum);
-  let gradeAmt = mix(0.24, 0.78, clamp(cloudMask, 0.0, 1.0));
+  let gradeAmt = mix(0.18, 0.66, clamp(cloudMask, 0.0, 1.0));
 
   var shadowTint = vec3<f32>(0.96, 0.96, 1.00);
   var midTint = vec3<f32>(1.0, 1.0, 1.0);
@@ -93,28 +93,40 @@ fn applyStyleGrade(cIn:vec3<f32>, style:u32, cloudMask:f32)->vec3<f32> {
   var saturation = 1.0;
 
   if (style == 1u) {
-    shadowTint = vec3<f32>(0.84, 0.80, 0.98);
-    midTint = vec3<f32>(0.97, 0.92, 0.94);
-    highTint = vec3<f32>(1.08, 0.98, 0.92);
-    contrast = mix(1.03, 1.10, gradeAmt);
-    saturation = mix(1.01, 1.08, gradeAmt);
+    shadowTint = vec3<f32>(0.68, 0.52, 1.18);
+    midTint = vec3<f32>(1.04, 0.84, 0.92);
+    highTint = vec3<f32>(1.18, 0.86, 0.68);
+    contrast = mix(1.06, 1.16, gradeAmt);
+    saturation = mix(1.10, 1.22, gradeAmt);
   } else if (style == 2u) {
-    shadowTint = vec3<f32>(0.78, 0.74, 1.02);
-    midTint = vec3<f32>(0.94, 0.88, 0.98);
-    highTint = vec3<f32>(1.06, 0.94, 1.04);
-    contrast = mix(1.03, 1.10, gradeAmt);
-    saturation = mix(1.02, 1.10, gradeAmt);
+    shadowTint = vec3<f32>(0.70, 0.60, 1.06);
+    midTint = vec3<f32>(0.96, 0.86, 0.98);
+    highTint = vec3<f32>(1.06, 0.92, 1.02);
+    contrast = mix(1.06, 1.16, gradeAmt);
+    saturation = mix(1.04, 1.12, gradeAmt);
   } else if (style == 3u) {
     shadowTint = vec3<f32>(0.84, 0.90, 1.02);
     midTint = vec3<f32>(0.92, 0.96, 1.00);
     highTint = vec3<f32>(1.02, 1.04, 1.06);
-    contrast = mix(1.01, 1.06, gradeAmt);
-    saturation = mix(1.00, 1.03, gradeAmt);
+    contrast = mix(1.02, 1.08, gradeAmt);
+    saturation = mix(1.00, 1.05, gradeAmt);
+  } else if (style == 4u) {
+    shadowTint = vec3<f32>(0.07, 0.028, 0.032);
+    midTint = vec3<f32>(0.96, 0.70, 0.50);
+    highTint = vec3<f32>(1.16, 0.84, 0.50);
+    contrast = mix(1.08, 1.16, gradeAmt);
+    saturation = mix(1.08, 1.18, gradeAmt);
+  } else if (style == 5u) {
+    shadowTint = vec3<f32>(0.66, 0.52, 1.08);
+    midTint = vec3<f32>(0.98, 0.82, 0.88);
+    highTint = vec3<f32>(1.10, 0.88, 0.82);
+    contrast = mix(1.08, 1.16, gradeAmt);
+    saturation = mix(1.08, 1.18, gradeAmt);
   }
 
-  c = mix(c, c * highTint, (0.28 * hi + 0.10 * mid) * gradeAmt);
-  c = mix(c, c * midTint, 0.24 * mid * gradeAmt);
-  c = mix(c, c * shadowTint, (0.34 * sh + 0.10 * mid) * gradeAmt);
+  c = mix(c, c * highTint, (0.24 * hi + 0.08 * mid) * gradeAmt);
+  c = mix(c, c * midTint, 0.18 * mid * gradeAmt);
+  c = mix(c, c * shadowTint, (0.30 * sh + 0.08 * mid) * gradeAmt);
 
   let pivot = vec3<f32>(0.50, 0.50, 0.50);
   c = clamp((c - pivot) * contrast + pivot, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -123,9 +135,13 @@ fn applyStyleGrade(cIn:vec3<f32>, style:u32, cloudMask:f32)->vec3<f32> {
   c = mix(gray, c, saturation);
 
   if (style == 1u) {
-    c += (vec3<f32>(0.016, 0.006, 0.003) * hi + vec3<f32>(0.010, 0.006, 0.018) * sh) * gradeAmt;
+    c += (vec3<f32>(0.020, 0.010, 0.004) * hi + vec3<f32>(0.006, 0.002, 0.026) * sh) * gradeAmt;
   } else if (style == 2u) {
-    c += (vec3<f32>(0.010, 0.004, 0.014) * hi + vec3<f32>(0.004, 0.002, 0.022) * sh) * gradeAmt;
+    c += (vec3<f32>(0.008, 0.004, 0.010) * hi + vec3<f32>(0.004, 0.002, 0.018) * sh) * gradeAmt;
+  } else if (style == 4u) {
+    c += (vec3<f32>(0.018, 0.008, 0.003) * hi + vec3<f32>(0.010, 0.002, 0.014) * sh) * gradeAmt;
+  } else if (style == 5u) {
+    c += (vec3<f32>(0.010, 0.005, 0.006) * hi + vec3<f32>(0.005, 0.003, 0.018) * sh) * gradeAmt;
   }
 
   return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -285,6 +301,12 @@ fn alphaReliefStats(uv:vec2<f32>, layer:i32)->vec2<f32> {
   return vec2<f32>(cavity, ridge);
 }
 
+fn alphaReliefStatsFast(centerAlpha:f32, occ:f32, gradLen:f32)->vec2<f32> {
+  let cavity = clamp(occ - centerAlpha, 0.0, 1.0);
+  let ridge = clamp(centerAlpha - occ + gradLen * 1.75, 0.0, 1.0);
+  return vec2<f32>(cavity, ridge);
+}
+
 fn silverEdgeBand(alpha: f32) -> f32 {
   let enter = smoothstep(0.035, 0.180, alpha);
   let leave = 1.0 - smoothstep(0.30, 0.62, alpha);
@@ -325,14 +347,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   var shadowTintBase = vec3<f32>(0.98, 0.99, 1.0);
 
   if (style == 1u) {
-    zenithSky = mix(R.sky * 0.90 + vec3<f32>(0.016, 0.014, 0.036), vec3<f32>(0.36, 0.28, 0.56), lowSun * 0.56);
-    horizonSky = mix(R.sky * 0.66 + vec3<f32>(0.070, 0.044, 0.082), vec3<f32>(1.12, 0.56, 0.48), lowSun * 0.92);
-    sunWash = mix(vec3<f32>(1.0, 0.94, 0.88), vec3<f32>(1.22, 0.54, 0.44), lowSun * 1.00);
-    sunColor = mix(vec3<f32>(1.0, 0.94, 0.86), vec3<f32>(1.22, 0.58, 0.42), lowSun * 1.00);
-    shadowCool = mix(vec3<f32>(0.92, 0.96, 1.0), vec3<f32>(0.74, 0.66, 0.90), lowSun * 1.00);
-    edgeWarm = mix(vec3<f32>(1.0, 0.97, 0.92), vec3<f32>(1.18, 0.76, 0.62), lowSun * 0.98);
-    litTintBase = mix(vec3<f32>(1.0, 1.0, 1.0), vec3<f32>(1.18, 0.96, 0.86), lowSun * 0.96);
-    shadowTintBase = mix(vec3<f32>(0.98, 0.99, 1.0), vec3<f32>(0.60, 0.54, 0.76), lowSun * 1.00);
+    zenithSky = mix(R.sky * 0.86 + vec3<f32>(0.018, 0.010, 0.048), vec3<f32>(0.32, 0.20, 0.62), lowSun * 0.60);
+    horizonSky = mix(R.sky * 0.60 + vec3<f32>(0.090, 0.038, 0.094), vec3<f32>(1.22, 0.46, 0.32), lowSun * 1.00);
+    sunWash = mix(vec3<f32>(1.0, 0.94, 0.88), vec3<f32>(1.28, 0.46, 0.32), lowSun * 1.00);
+    sunColor = mix(vec3<f32>(1.0, 0.94, 0.86), vec3<f32>(1.26, 0.50, 0.30), lowSun * 1.00);
+    shadowCool = mix(vec3<f32>(0.92, 0.96, 1.0), vec3<f32>(0.60, 0.46, 1.02), lowSun * 1.00);
+    edgeWarm = mix(vec3<f32>(1.0, 0.97, 0.92), vec3<f32>(1.24, 0.72, 0.48), lowSun * 1.00);
+    litTintBase = mix(vec3<f32>(1.0, 1.0, 1.0), vec3<f32>(1.24, 0.88, 0.78), lowSun * 1.00);
+    shadowTintBase = mix(vec3<f32>(0.98, 0.99, 1.0), vec3<f32>(0.42, 0.30, 0.94), lowSun * 1.00);
   } else if (style == 2u) {
     zenithSky = mix(R.sky * 0.88 + vec3<f32>(0.014, 0.012, 0.040), vec3<f32>(0.28, 0.22, 0.52), lowSun * 0.70);
     horizonSky = mix(R.sky * 0.64 + vec3<f32>(0.042, 0.040, 0.076), vec3<f32>(0.84, 0.54, 0.82), lowSun * 0.74);
@@ -351,6 +373,24 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     edgeWarm = mix(vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(0.88, 0.90, 0.96), lowSun * 0.22);
     litTintBase = vec3<f32>(0.98, 0.99, 1.0);
     shadowTintBase = vec3<f32>(0.84, 0.89, 0.97);
+  } else if (style == 4u) {
+    zenithSky = mix(R.sky * 0.78 + vec3<f32>(0.022, 0.012, 0.018), vec3<f32>(0.18, 0.08, 0.14), lowSun * 0.82);
+    horizonSky = mix(R.sky * 0.52 + vec3<f32>(0.098, 0.026, 0.028), vec3<f32>(1.12, 0.48, 0.14), lowSun * 0.94);
+    sunWash = mix(vec3<f32>(1.02, 0.92, 0.84), vec3<f32>(1.20, 0.52, 0.20), lowSun * 0.90);
+    sunColor = mix(vec3<f32>(1.04, 0.92, 0.80), vec3<f32>(1.20, 0.56, 0.18), lowSun * 0.92);
+    shadowCool = mix(vec3<f32>(0.74, 0.68, 0.72), vec3<f32>(0.14, 0.06, 0.10), lowSun * 0.98);
+    edgeWarm = mix(vec3<f32>(1.02, 0.96, 0.90), vec3<f32>(1.24, 0.68, 0.24), lowSun * 0.96);
+    litTintBase = mix(vec3<f32>(1.0, 0.98, 0.94), vec3<f32>(1.22, 0.76, 0.40), lowSun * 0.92);
+    shadowTintBase = mix(vec3<f32>(0.24, 0.12, 0.10), vec3<f32>(0.04, 0.015, 0.022), lowSun * 1.00);
+  } else if (style == 5u) {
+    zenithSky = mix(R.sky * 0.86 + vec3<f32>(0.016, 0.012, 0.034), vec3<f32>(0.30, 0.18, 0.38), lowSun * 0.56);
+    horizonSky = mix(R.sky * 0.64 + vec3<f32>(0.054, 0.030, 0.056), vec3<f32>(0.94, 0.52, 0.50), lowSun * 0.72);
+    sunWash = mix(vec3<f32>(0.98, 0.92, 0.92), vec3<f32>(1.10, 0.66, 0.64), lowSun * 0.76);
+    sunColor = mix(vec3<f32>(1.0, 0.92, 0.90), vec3<f32>(1.10, 0.68, 0.66), lowSun * 0.76);
+    shadowCool = mix(vec3<f32>(0.90, 0.90, 1.0), vec3<f32>(0.58, 0.42, 0.96), lowSun * 0.82);
+    edgeWarm = mix(vec3<f32>(1.0, 0.96, 0.96), vec3<f32>(1.12, 0.78, 0.86), lowSun * 0.76);
+    litTintBase = mix(vec3<f32>(1.0, 0.98, 0.98), vec3<f32>(1.14, 0.84, 0.80), lowSun * 0.78);
+    shadowTintBase = mix(vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(0.46, 0.32, 0.90), lowSun * 0.86);
   }
 
   sunColor *= R.sunColorTint;
@@ -403,10 +443,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   var bodyShadow = 0.0;
   var cavity = 0.0;
   var ridge = 0.0;
+  var surfaceLit = 0.0;
+  var gradLenCached = 0.0;
+  var occCached = cloudA;
 
   if (R.renderQuality >= 1u) {
     let grad = alphaGradLite(in.uv, layer);
     let gradLen = length(grad);
+    gradLenCached = gradLen;
     let towardSun = clamp(dot(rayDir, sunDir), 0.0, 1.0);
     var facing = 0.0;
     var upperExposure = 0.55;
@@ -421,6 +465,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     let edge = smoothstep(0.012, 0.065, gradLen);
     let edgeBand = silverEdgeBand(cloudA);
     let occ = alphaOccLite(in.uv, layer);
+    occCached = occ;
     let powder = 0.34 + 0.66 * pow(clamp(occ * (1.0 - occ) * 4.0, 0.0, 1.0), 0.72);
     let nearSun = stableSunProximity(in.uv, uvSun, towardSun, fwdDot);
     let forwardCone = smoothstep(0.55, 0.985, towardSun);
@@ -428,8 +473,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
 
     let coreMask = cloudCoreMask(cloudA, occ, edge);
     let awayFromSun = 1.0 - towardSun;
-    bodyShadow = coreMask * mix(0.055, 0.18, awayFromSun) * mix(1.0, 0.72, facing);
-    ridge = edge * edgeBand * 0.55;
+    let surfaceFacing = clamp(mix(upperExposure, facing, 0.62), 0.0, 1.0);
+    let fluffySurface = pow(clamp(1.0 - occ * 0.86, 0.0, 1.0), 0.72) * mix(0.64, 1.0, upperExposure);
+    surfaceLit = coreMask * smoothstep(0.18, 0.96, surfaceFacing) * fluffySurface * smoothstep(0.08, 0.92, towardSun);
+    bodyShadow = coreMask * mix(0.055, 0.18, awayFromSun) * mix(1.0, 0.72, facing) * mix(1.0, 0.78, surfaceLit);
+    ridge = edge * edgeBand * (0.42 + 0.22 * surfaceLit);
     cavity = smoothstep(0.55, 0.96, occ) * smoothstep(0.35, 0.98, cloudA) * 0.22;
   } else {
     if (fwdDot > -0.10) {
@@ -437,6 +485,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
       let dSun = distance(in.uv, sunHint);
       let grad = alphaGradAt(in.uv, layer);
       let gradLen = length(grad);
+      gradLenCached = gradLen;
       let towardSun = clamp(dot(rayDir, sunDir), 0.0, 1.0);
 
       var facing = 0.0;
@@ -454,6 +503,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
       let edge = smoothstep(0.016, 0.072, gradLen);
       let edgeBand = silverEdgeBand(cloudA);
       let occ = clamp(alphaGatherFast(in.uv, layer), 0.0, 1.0);
+      occCached = occ;
       let powder = 0.34 + 0.66 * pow(clamp(occ * (1.0 - occ) * 4.0, 0.0, 1.0), 0.72);
       let nearSun = stableSunProximity(in.uv, uvSun, towardSun, fwdDot);
       let forwardCone = smoothstep(0.55, 0.985, towardSun);
@@ -464,20 +514,25 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
       let coreMask = cloudCoreMask(cloudA, occ, edge);
       let sunFacing = smoothstep(0.38, 0.96, towardSun);
       let silhouette = coreMask * sunFacing * nearSun * mix(0.10, 0.32, 1.0 - facing) * smoothstep(0.12, 0.92, 1.0 - openSoft);
+      let surfaceFacing = clamp(mix(upperExposure, facing, 0.58), 0.0, 1.0);
+      let fluffySurface = pow(clamp(1.0 - occ * 0.82, 0.0, 1.0), 0.76) * mix(0.70, 1.0, openSoft) * mix(0.66, 1.0, upperExposure);
+      surfaceLit = coreMask * smoothstep(0.18, 0.94, surfaceFacing) * fluffySurface * sunFacing;
       let awayFromSun = 1.0 - towardSun;
-      bodyShadow = coreMask * mix(0.06, 0.20, awayFromSun) + silhouette;
+      bodyShadow = (coreMask * mix(0.06, 0.20, awayFromSun) + silhouette) * mix(1.0, 0.80, surfaceLit);
     }
 
-    let relief = alphaReliefStats(in.uv, layer);
+    let relief = alphaReliefStatsFast(cloudA, occCached, gradLenCached);
     cavity = smoothstep(0.015, 0.110, relief.x) * smoothstep(0.22, 0.92, cloudA);
     ridge = smoothstep(0.010, 0.080, relief.y) * smoothstep(0.16, 0.86, cloudA);
   }
 
   let bodyMask = smoothstep(0.22, 0.92, cloudA);
-  let bodyCore = smoothstep(0.48, 0.96, cloudA) * (1.0 - smoothstep(0.010, 0.050, length(alphaGradLite(in.uv, layer))));
+  let bodyCore = smoothstep(0.48, 0.96, cloudA) * (1.0 - smoothstep(0.010, 0.050, gradLenCached));
   let cavityShadow = cavity * bodyMask * mix(0.08, 0.22, bodyShadow) * mix(1.0, 0.82, bodyCore);
   let ridgeLift = ridge * (1.0 - cavity) * (0.030 + 0.060 * (1.0 - bodyShadow));
   let finalShadow = clamp(bodyShadow + cavityShadow, 0.0, mix(0.72, 0.62, bodyCore));
+  let fluffyLight = clamp(surfaceLit * (0.62 + 0.38 * bodyMask) + ridgeLift * 0.52, 0.0, 1.0);
+  let softWrap = clamp((1.0 - finalShadow) * (0.28 + 0.72 * fluffyLight) * (0.20 + 0.80 * bodyMask), 0.0, 1.0);
 
   var styleWarmBoost = 1.0;
   var styleShadowBoost = 1.0;
@@ -486,71 +541,142 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   var styleLightColorMix = 0.08;
   var styleShadowDarkness = 0.10;
   var styleShadowSaturation = 0.10;
+  var styleTintStrength = 0.0;
+  var styleShadowLift = 0.0;
+  var styleBaseBlend = 0.76;
   var midTintBase = mix(litTintBase, shadowTintBase, 0.46);
   var shadowAccent = vec3<f32>(0.66, 0.62, 0.86);
   if (style == 1u) {
-    styleWarmBoost = 1.34;
-    styleShadowBoost = 1.34;
+    styleWarmBoost = 1.30;
+    styleShadowBoost = 1.42;
     styleShadowColor = 0.60;
-    styleRimBoost = 1.28;
-    styleLightColorMix = 0.22;
+    styleRimBoost = 1.16;
+    styleLightColorMix = 0.18;
     styleShadowDarkness = 0.30;
-    styleShadowSaturation = 0.40;
-    midTintBase = vec3<f32>(0.82, 0.74, 0.78) * mix(vec3<f32>(1.0, 1.0, 1.0), R.lightTint, 0.22) * mix(vec3<f32>(1.0, 1.0, 1.0), R.shadowTint, 0.28);
-    shadowAccent = vec3<f32>(0.54, 0.50, 0.72);
+    styleShadowSaturation = 0.46;
+    styleTintStrength = 0.38;
+    styleShadowLift = 0.10;
+    styleBaseBlend = 0.78;
+    midTintBase = vec3<f32>(0.94, 0.72, 0.70) * mix(vec3<f32>(1.0, 1.0, 1.0), R.lightTint, 0.28) * mix(vec3<f32>(1.0, 1.0, 1.0), R.shadowTint, 0.28);
+    shadowAccent = vec3<f32>(0.42, 0.28, 0.88);
   } else if (style == 2u) {
-    styleWarmBoost = 1.16;
-    styleShadowBoost = 1.44;
-    styleShadowColor = 0.72;
+    styleWarmBoost = 1.22;
+    styleShadowBoost = 1.52;
+    styleShadowColor = 0.84;
     styleRimBoost = 1.12;
     styleLightColorMix = 0.18;
-    styleShadowDarkness = 0.38;
-    styleShadowSaturation = 0.48;
-    midTintBase = vec3<f32>(0.80, 0.68, 0.86) * mix(vec3<f32>(1.0, 1.0, 1.0), R.lightTint, 0.24) * mix(vec3<f32>(1.0, 1.0, 1.0), R.shadowTint, 0.26);
-    shadowAccent = vec3<f32>(0.44, 0.38, 0.76);
+    styleShadowDarkness = 0.42;
+    styleShadowSaturation = 0.60;
+    styleTintStrength = 0.54;
+    styleShadowLift = 0.28;
+    styleBaseBlend = 0.78;
+    midTintBase = vec3<f32>(0.78, 0.58, 0.82) * mix(vec3<f32>(1.0, 1.0, 1.0), R.lightTint, 0.28) * mix(vec3<f32>(1.0, 1.0, 1.0), R.shadowTint, 0.34);
+    shadowAccent = vec3<f32>(0.34, 0.24, 0.82);
   } else if (style == 3u) {
-    styleWarmBoost = 0.94;
+    styleWarmBoost = 0.96;
     styleShadowBoost = 1.18;
-    styleShadowColor = 0.34;
-    styleRimBoost = 0.92;
-    styleLightColorMix = 0.05;
-    styleShadowDarkness = 0.22;
-    styleShadowSaturation = 0.18;
+    styleShadowColor = 0.40;
+    styleRimBoost = 0.94;
+    styleLightColorMix = 0.07;
+    styleShadowDarkness = 0.30;
+    styleShadowSaturation = 0.22;
+    styleTintStrength = 0.20;
+    styleShadowLift = 0.08;
+    styleBaseBlend = 0.80;
     midTintBase = vec3<f32>(0.82, 0.84, 0.90) * mix(vec3<f32>(1.0, 1.0, 1.0), R.lightTint, 0.16) * mix(vec3<f32>(1.0, 1.0, 1.0), R.shadowTint, 0.18);
     shadowAccent = vec3<f32>(0.58, 0.62, 0.74);
+  } else if (style == 4u) {
+    styleWarmBoost = 1.42;
+    styleShadowBoost = 1.92;
+    styleShadowColor = 1.00;
+    styleRimBoost = 1.32;
+    styleLightColorMix = 0.18;
+    styleShadowDarkness = 0.76;
+    styleShadowSaturation = 0.12;
+    styleTintStrength = 0.34;
+    styleShadowLift = 0.00;
+    styleBaseBlend = 0.92;
+    midTintBase = vec3<f32>(0.58, 0.20, 0.12) * mix(vec3<f32>(1.0, 1.0, 1.0), R.lightTint, 0.18) * mix(vec3<f32>(1.0, 1.0, 1.0), R.shadowTint, 0.10);
+    shadowAccent = vec3<f32>(0.06, 0.01, 0.03);
+  } else if (style == 5u) {
+    styleWarmBoost = 1.42;
+    styleShadowBoost = 1.42;
+    styleShadowColor = 0.72;
+    styleRimBoost = 1.10;
+    styleLightColorMix = 0.18;
+    styleShadowDarkness = 0.32;
+    styleShadowSaturation = 0.54;
+    styleTintStrength = 0.34;
+    styleShadowLift = 0.18;
+    styleBaseBlend = 0.82;
+    midTintBase = vec3<f32>(0.86, 0.66, 0.76) * mix(vec3<f32>(1.0, 1.0, 1.0), R.lightTint, 0.28) * mix(vec3<f32>(1.0, 1.0, 1.0), R.shadowTint, 0.28);
+    shadowAccent = vec3<f32>(0.40, 0.26, 0.80);
   }
 
-  let warmPenetrationBase = clamp(1.0 - finalShadow * 1.12 - cavity * 0.42 + sunEdgeSilver * 0.18 + ridgeLift * 0.10, 0.0, 1.0);
+  let warmPenetrationBase = clamp(1.0 - finalShadow * 1.12 - cavity * 0.42 + sunEdgeSilver * 0.18 + ridgeLift * 0.10 + fluffyLight * 0.18, 0.0, 1.0);
   let warmPenetration = pow(warmPenetrationBase, 1.0 / styleWarmBoost);
   let coolDepth = clamp(bodyCore * 0.34 + finalShadow * 0.88 + cavity * 0.52, 0.0, 1.0);
   let shadowDepth = clamp(finalShadow * styleShadowBoost + cavity * (0.10 + 0.16 * styleShadowColor), 0.0, 1.0);
-  let lightMix = clamp(styleLightColorMix + 0.12 * (1.0 - warmPenetration), 0.0, 0.58);
-  let litCloudTint = mix(litTintBase, litTintBase * sunColor, lightMix);
-  let deepShadowTint = mix(shadowTintBase, shadowAccent * R.shadowTint, styleShadowSaturation);
-  let midCloudTint = mix(midTintBase, mix(litCloudTint, deepShadowTint, 0.58), 0.32 + 0.20 * styleShadowColor);
+  let lightMix = clamp(styleLightColorMix + 0.12 * (1.0 - warmPenetration) + styleTintStrength * 0.08, 0.0, 0.82);
+  let litTintTarget = mix(litTintBase * sunColor, R.lightTint * sunColor, 0.55 + 0.25 * styleTintStrength);
+  let litCloudTint = mix(litTintBase, litTintTarget, clamp(lightMix + styleTintStrength * 0.22, 0.0, 0.94));
+  let deepShadowTint = mix(shadowTintBase, shadowAccent * R.shadowTint, clamp(styleShadowSaturation + styleShadowLift * 0.30, 0.0, 0.96));
+  let midCloudTint = mix(midTintBase, mix(litCloudTint, deepShadowTint, 0.58), 0.32 + 0.20 * styleShadowColor + 0.12 * styleTintStrength);
 
   let rawLum = max(luma(cloudRGB), 1e-4);
   let unpremulCloud = cloudRGB / max(cloudA, 0.10);
   let structureLum = clamp(mix(rawLum * 1.12, luma(unpremulCloud), 0.68), 0.04, 1.35);
   let detailTint = clamp(unpremulCloud / max(vec3<f32>(luma(unpremulCloud)), vec3<f32>(0.001)), vec3<f32>(0.72), vec3<f32>(1.28));
 
-  let lightBand = clamp(warmPenetration * (0.64 + 0.36 * bodyMask) + sunEdgeSilver * 0.34 + ridgeLift * 0.24, 0.0, 1.0);
-  let darkBand = clamp(shadowDepth * (0.78 + 0.22 * bodyCore) + coolDepth * 0.26, 0.0, 1.0);
+  let lightBand = clamp(warmPenetration * (0.54 + 0.46 * bodyMask) + sunEdgeSilver * 0.30 + ridgeLift * 0.20 + fluffyLight * 0.34 + softWrap * 0.16, 0.0, 1.0);
+  let darkBand = clamp(shadowDepth * (0.78 + 0.22 * bodyCore) + coolDepth * 0.26 - fluffyLight * 0.14, 0.0, 1.0);
   let midBand = clamp(1.0 - max(lightBand * 0.88, 0.0) - max(darkBand * 0.82, 0.0), 0.0, 1.0);
   let bandSum = max(lightBand + midBand + darkBand, 1e-4);
   let rampTint = (litCloudTint * lightBand + midCloudTint * midBand + deepShadowTint * darkBand) / bandSum;
   let shadowDarken = mix(1.0, 1.0 - styleShadowDarkness, clamp(darkBand * (0.72 + 0.28 * coolDepth), 0.0, 1.0));
   let rampCloud = rampTint * structureLum * shadowDarken * detailTint;
-  let retainOriginal = cloudRGB * mix(vec3<f32>(0.24), vec3<f32>(0.34), bodyCore);
+  let retainOriginal = cloudRGB * mix(vec3<f32>(0.16), vec3<f32>(0.30), bodyCore);
 
-  var cloudShaded = mix(retainOriginal, rampCloud, 0.76);
-  cloudShaded *= mix(vec3<f32>(1.0, 1.0, 1.0), shadowCool, clamp(darkBand * (0.18 + 0.40 * styleShadowColor) + cavity * 0.10 + coolDepth * (0.14 + 0.32 * styleShadowColor), 0.0, 1.0));
-  cloudShaded += sunColor * ridgeLift * cloudA * (1.04 + 0.44 * styleLightColorMix);
+  var cloudShaded = mix(retainOriginal, rampCloud, styleBaseBlend);
+  cloudShaded *= mix(vec3<f32>(1.0, 1.0, 1.0), shadowCool, clamp(darkBand * (0.24 + 0.56 * styleShadowColor) + cavity * 0.14 + coolDepth * (0.18 + 0.38 * styleShadowColor), 0.0, 1.0));
+  cloudShaded = mix(cloudShaded, cloudShaded * deepShadowTint, clamp(darkBand * (0.10 + 0.20 * styleShadowLift) + coolDepth * (0.06 + 0.16 * styleShadowLift), 0.0, 0.42));
+  cloudShaded += litCloudTint * lightBand * cloudA * (0.05 + 0.10 * styleTintStrength);
+  cloudShaded += mix(litCloudTint, sunColor, 0.30) * fluffyLight * cloudA * (0.04 + 0.06 * styleTintStrength);
+  cloudShaded += sunColor * ridgeLift * cloudA * (0.96 + 0.54 * styleLightColorMix + 0.12 * styleTintStrength);
   cloudShaded += edgeWarm * sunEdgeSilver * (0.56 + 0.48 * R.sunBloom) * styleRimBoost;
-  cloudShaded += sunColor * sunEdgeSilver * (0.08 + 0.12 * R.sunBloom + 0.08 * styleLightColorMix);
-  cloudShaded += midCloudTint * bodyCore * (0.030 + 0.040 * midBand);
-  cloudShaded += deepShadowTint * coolDepth * bodyCore * (0.030 + 0.070 * styleShadowColor);
-  cloudShaded += sunWash * sunGlow * (0.035 + 0.060 * R.sunBloom);
+  cloudShaded += sunColor * sunEdgeSilver * (0.05 + 0.10 * R.sunBloom + 0.12 * styleLightColorMix);
+  cloudShaded += midCloudTint * bodyCore * (0.028 + 0.054 * midBand + 0.020 * styleTintStrength);
+  cloudShaded += deepShadowTint * coolDepth * bodyCore * (0.036 + 0.090 * styleShadowColor + 0.040 * styleShadowLift);
+  if (style == 4u) {
+    let fireShadowMix = clamp((pow(darkBand, 1.16) * 0.98 + coolDepth * 0.62 + cavity * 0.56 + max(bodyCore - 0.30, 0.0) * 0.20) * (1.0 - lightBand * 0.97) * (0.40 + 0.60 * bodyCore), 0.0, 1.0);
+    let fireShadowTint = mix(vec3<f32>(0.026, 0.010, 0.010), deepShadowTint, 0.24);
+    cloudShaded = mix(cloudShaded, cloudShaded * fireShadowTint, fireShadowMix * 0.68);
+    let interiorDepth = clamp(bodyCore * (0.56 + 0.44 * darkBand) + cavity * 0.34 - lightBand * 0.42 - sunEdgeSilver * 0.24, 0.0, 1.0);
+    let charMix = clamp(interiorDepth * (0.62 + 0.38 * coolDepth), 0.0, 1.0);
+    let charTint = mix(vec3<f32>(0.08, 0.02, 0.012), deepShadowTint, 0.16);
+    cloudShaded = mix(cloudShaded, cloudShaded * charTint, charMix * 0.46);
+    let emberRim = vec3<f32>(1.24, 0.40, 0.10) * edgeWarm;
+    let rimHot = clamp(sunEdgeSilver * (0.34 + 0.66 * lightBand) * (1.0 - charMix * 0.50), 0.0, 1.0);
+    cloudShaded += emberRim * rimHot * (0.16 + 0.16 * bodyMask);
+
+    let litRecover = clamp(lightBand * (1.0 - darkBand * 0.82) * (0.46 + 0.54 * bodyMask) + ridgeLift * 0.18, 0.0, 1.0);
+    let emberFace = mix(vec3<f32>(1.00, 0.24, 0.05), vec3<f32>(1.18, 0.56, 0.12), clamp(warmPenetration * 0.76 + ridgeLift * 0.24, 0.0, 1.0));
+    let litSurface = clamp((lightBand * 0.70 + midBand * 0.22 + ridgeLift * 0.90 + max(structureLum - 0.26, 0.0) * 0.18) * (0.30 + 0.70 * bodyMask) * (1.0 - darkBand * 0.82) * (1.0 - charMix * 0.62), 0.0, 1.0);
+    let litSurfaceTint = mix(vec3<f32>(0.94, 0.20, 0.05), vec3<f32>(1.18, 0.60, 0.14), clamp(warmPenetration * 0.78 + ridgeLift * 0.30 + sunEdgeSilver * 0.10, 0.0, 1.0));
+    let litSurfaceBase = max(cloudShaded, rampCloud * 0.96 + emberFace * 0.08 + litCloudTint * 0.06);
+    cloudShaded = mix(cloudShaded, litSurfaceBase + litSurfaceTint * 0.06, litRecover * 0.18 + litSurface * 0.16);
+
+    let surfacePocket = clamp((midBand * 0.56 + cavity * 0.34 + max(0.44 - structureLum, 0.0) * 0.42) * (1.0 - lightBand * 0.64) * (1.0 - charMix * 0.54), 0.0, 1.0);
+    cloudShaded = mix(cloudShaded, cloudShaded * vec3<f32>(0.76, 0.46, 0.30), surfacePocket * 0.10);
+
+    let emberBand = clamp((midBand * 0.70 + lightBand * 0.20 + ridgeLift * 0.22) * (0.28 + 0.72 * bodyMask) * (1.0 - charMix * 0.66), 0.0, 1.0);
+    let emberGlow = mix(vec3<f32>(0.92, 0.20, 0.04), vec3<f32>(1.16, 0.56, 0.10), clamp(warmPenetration * 0.84 + ridgeLift * 0.28, 0.0, 1.0));
+    cloudShaded = mix(cloudShaded, max(cloudShaded, rampCloud * 0.90 + emberGlow * 0.08 + litCloudTint * 0.06), emberBand * 0.18);
+
+    let smokeMid = clamp(midBand * (0.34 + 0.66 * bodyCore) * (0.46 + 0.54 * darkBand) * (1.0 - lightBand * 0.68), 0.0, 1.0);
+    cloudShaded = mix(cloudShaded, cloudShaded * vec3<f32>(0.84, 0.56, 0.40), smokeMid * 0.12);
+  }
+  cloudShaded += sunWash * sunGlow * (0.028 + 0.050 * R.sunBloom);
 
   var linear = sky * (1.0 - cloudA) + cloudShaded;
   linear += sunColor * (1.18 * sunDisk + (0.22 + 0.24 * R.sunBloom) * sunGlow + (1.20 + 0.18 * R.sunBloom) * sunEdgeSilver);

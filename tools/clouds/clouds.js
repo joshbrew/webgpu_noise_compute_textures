@@ -229,8 +229,8 @@ export class CloudComputeBuilder {
         maxSteps: 256,
         minStep: 0.003,
         maxStep: 0.16,
-        sunSteps: 5,
-        sunStride: 5,
+        sunSteps: 4,
+        sunStride: 6,
         sunMinTr: 0.003,
         phaseJitter: 1.0,
         stepJitter: 0.08,
@@ -238,15 +238,15 @@ export class CloudComputeBuilder {
         topJitterFrac: 0.1,
         lodBiasWeather: 1.5,
         aabbFaceOffset: 0.0015,
-        weatherRejectGate: 0.99,
+        weatherRejectGate: 0.985,
         weatherRejectMip: 1.0,
-        emptySkipMult: 3.8,
+        emptySkipMult: 4.25,
         nearFluffDist: 60.0,
         nearStepScale: 0.3,
         nearLodBias: -1.5,
         nearDensityMult: 2.5,
         nearDensityRange: 45.0,
-        lodBlendThreshold: 0.38,
+        lodBlendThreshold: 0.46,
         sunDensityGate: 0.0025,
         fflyRelClamp: 1.6,
         fflyAbsFloor: 0.85,
@@ -256,12 +256,12 @@ export class CloudComputeBuilder {
         farStart: 0.65,
         farFull: 2.4,
         farLodPush: 1.1,
-        farDetailAtten: 0.38,
-        farStepMult: 2.25,
+        farDetailAtten: 0.34,
+        farStepMult: 2.65,
         bnFarScale: 0.28,
         farTaaHistoryBoost: 1.8,
-        raySmoothDens: 0.42,
-        raySmoothSun: 0.28,
+        raySmoothDens: 0.46,
+        raySmoothSun: 0.34,
       },
     };
 
@@ -2337,7 +2337,7 @@ export class CloudComputeBuilder {
     const gradeStyle = (opts.gradeStyle ?? 0) >>> 0;
     const sunColorTint = opts.sunColorTint ?? [1.0, 1.0, 1.0];
     const lightTint = opts.lightTint ?? [1.0, 1.0, 1.0];
-    const shadowTint = opts.shadowTint ?? [1.0, 1.0, 1.0];
+    const shadowTint = opts.shadowTint ?? [0.0, 0.0, 0.0];
     const edgeTint = opts.edgeTint ?? [1.0, 1.0, 1.0];
 
     const rad = (d) => (d * Math.PI) / 180;
