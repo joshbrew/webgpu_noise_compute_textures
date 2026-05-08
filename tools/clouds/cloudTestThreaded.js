@@ -113,7 +113,7 @@ const shapeParams = {
   voroMode: 3,
   edgeK: 0.0,
   warpAmp: 0.0,
-  baseModeA: "computeAntiWorley4D",
+  baseModeA: "computeBillow4D",
   baseModeB: "computeAntiWorley4D",
   bandMode2: "computeAntiWorley4D",
   bandMode3: "computeAntiWorley4D",
