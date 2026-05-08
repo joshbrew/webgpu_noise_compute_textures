@@ -113,7 +113,7 @@ const shapeParams = {
   voroMode: 3,
   edgeK: 0.0,
   warpAmp: 0.0,
-  baseModeA: "computePerlin4D",
+  baseModeA: "computeAntiWorley4D",
   baseModeB: "computeAntiWorley4D",
   bandMode2: "computeAntiWorley4D",
   bandMode3: "computeAntiWorley4D",
@@ -234,19 +234,19 @@ function injectPreviewLookControls() {
 
 const GRADE_PRESETS = {
   0: {
-    sky: [0.55, 0.70, 0.95],
+    sky: [0.55, 0.70, 1.95],
     sunBloom: 0.35,
-    sunTint: [1.0, 1.0, 1.0],
-    cloudLitTint: [2.5, 2.5, 2.5],
-    cloudShadowTint: [0.0, 0.0, 0.0],
+    sunTint: [2.0, 2.0, 1.0],
+    cloudLitTint: [1.5, 1.5, 2.5],
+    cloudShadowTint: [0.0, 0.0, 0.05],
     edgeTint: [1.0, 2.0, 2.0],
-    styleShadowStrength: 1.0,
-    styleColorLift: 2.00,
-    styleSaturation: 1.08,
-    styleRimStrength: 0.95,
+    styleShadowStrength: 2.0,
+    styleColorLift: 0.00,
+    styleSaturation: 0.5,
+    styleRimStrength: 2.00,
     styleSunBleed: 2.00,
-    styleMidLift: 2.00,
-    godRaysEnabled: false,
+    styleMidLift: 1.00,
+    godRaysEnabled: true,
     godRayStrength: 0.0,
     godRayLength: 1.0,
     godRayFalloff: 1.55,
@@ -256,14 +256,14 @@ const GRADE_PRESETS = {
     sunBloom: 0.72,
     sunTint: [1.50, 1.10, 0.36],
     cloudLitTint: [2.35, 1.50, 0.34],
-    cloudShadowTint: [0.06, 0.1, 0.30],
+    cloudShadowTint: [0.03, 0.1, 0.23],
     edgeTint: [2.10, 1.48, 0.40],
-    styleShadowStrength: 1.3,
+    styleShadowStrength: 2.5,
     styleColorLift: 2.00,
     styleSaturation: 2.50,
     styleRimStrength: 2.00,
-    styleSunBleed: 0.26,
-    styleMidLift: 2.00,
+    styleSunBleed: 2.00,
+    styleMidLift: 0.00,
     godRaysEnabled: true,
     godRayStrength: 1.00,
     godRayLength: 1.10,
@@ -1919,7 +1919,7 @@ async function init() {
   setIf("c-bloom", preview.sun.bloom);
 
   setIf("p-coverage", 1.0);
-  setIf("p-density", 100.0);
+  setIf("p-density", 10.0);
   setIf("p-beer", 6);
   setIf("p-clamp", 0.015);
   setIf("p-ins", 1.0);
