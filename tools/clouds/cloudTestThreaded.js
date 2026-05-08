@@ -33,6 +33,8 @@ const preview = {
   cloudShadowTint: [0.0, 0.0, 0.0],
   edgeTint: [1.0, 1.0, 1.0],
   styleShadowStrength: 0.88,
+  styleShadowEdge: 0.0,
+  styleShadowDarkness: 0.0,
   styleColorLift: 1.28,
   styleSaturation: 1.24,
   styleRimStrength: 1.04,
@@ -201,9 +203,17 @@ function injectPreviewLookControls() {
           <option value="3">Storm Cool</option>
           <option value="4">Firestorm</option>
           <option value="5">Ember Violet</option>
+          <option value="6">Solar Copper</option>
+          <option value="7">Moonlit Cyan</option>
+          <option value="8">Aurora Teal</option>
+          <option value="9">Ash Gold</option>
+          <option value="10">Rose Storm</option>
+          <option value="11">Deep Ocean</option>
         </select>
       </label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="5"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Edge</span><input id="v-shadow-edge" type="number" step="0.01" min="0" max="2.2"></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Darkness</span><input id="v-shadow-darkness" type="number" step="0.01" min="0" max="6"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Color Lift</span><input id="v-color-lift" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Saturation</span><input id="v-saturation" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Rim Strength</span><input id="v-rim-strength" type="number" step="0.01" min="0" max="2.2"></label>
@@ -241,6 +251,8 @@ const GRADE_PRESETS = {
     cloudShadowTint: [0.0, 0.0, 0.05],
     edgeTint: [1.0, 2.0, 2.0],
     styleShadowStrength: 2.0,
+    styleShadowEdge: 0.0,
+    styleShadowDarkness: 0.0,
     styleColorLift: 0.00,
     styleSaturation: 0.5,
     styleRimStrength: 2.00,
@@ -259,6 +271,8 @@ const GRADE_PRESETS = {
     cloudShadowTint: [0.03, 0.1, 0.23],
     edgeTint: [2.10, 1.48, 0.40],
     styleShadowStrength: 2.5,
+    styleShadowEdge: 0.16,
+    styleShadowDarkness: 0.0,
     styleColorLift: 2.00,
     styleSaturation: 2.50,
     styleRimStrength: 2.00,
@@ -277,6 +291,8 @@ const GRADE_PRESETS = {
     cloudShadowTint: [0.36, 0.32, 0.72],
     edgeTint: [1.08, 0.86, 1.06],
     styleShadowStrength: 1.82,
+    styleShadowEdge: 0.06,
+    styleShadowDarkness: 0.0,
     styleColorLift: 1.18,
     styleSaturation: 1.18,
     styleRimStrength: 1.02,
@@ -295,6 +311,8 @@ const GRADE_PRESETS = {
     cloudShadowTint: [0.70, 0.82, 1.12],
     edgeTint: [0.94, 1.00, 1.06],
     styleShadowStrength: 1.78,
+    styleShadowEdge: 0.10,
+    styleShadowDarkness: 0.0,
     styleColorLift: 1.12,
     styleSaturation: 1.08,
     styleRimStrength: 0.95,
@@ -312,9 +330,11 @@ const GRADE_PRESETS = {
     cloudLitTint: [1.18, 0.72, 0.38],
     cloudShadowTint: [0.07, 0.05, 0.07],
     edgeTint: [1.22, 0.86, 0.54],
-    styleShadowStrength: 0.94,
+    styleShadowStrength: 1.50,
+    styleShadowEdge: 0.28,
+    styleShadowDarkness: 0.0,
     styleColorLift: 1.12,
-    styleSaturation: 1.16,
+    styleSaturation: 2.00,
     styleRimStrength: 2.10,
     styleSunBleed: 0.70,
     styleMidLift: 1.08,
@@ -331,6 +351,8 @@ const GRADE_PRESETS = {
     cloudShadowTint: [0.36, 0.26, 0.72],
     edgeTint: [1.24, 0.82, 0.90],
     styleShadowStrength: 0.76,
+    styleShadowEdge: 0.04,
+    styleShadowDarkness: 0.0,
     styleColorLift: 1.36,
     styleSaturation: 1.34,
     styleRimStrength: 1.08,
@@ -341,41 +363,142 @@ const GRADE_PRESETS = {
     godRayLength: 1.02,
     godRayFalloff: 1.34,
   },
+  6: {
+    sky: [0.50, 0.42, 0.34],
+    sunBloom: 0.62,
+    sunTint: [1.26, 0.94, 0.58],
+    cloudLitTint: [1.42, 0.94, 0.50],
+    cloudShadowTint: [0.18, 0.12, 0.10],
+    edgeTint: [1.44, 1.02, 0.60],
+    styleShadowStrength: 1.34,
+    styleShadowEdge: 0.22,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 1.26,
+    styleSaturation: 1.64,
+    styleRimStrength: 1.44,
+    styleSunBleed: 0.92,
+    styleMidLift: 0.94,
+    godRaysEnabled: true,
+    godRayStrength: 0.74,
+    godRayLength: 1.06,
+    godRayFalloff: 1.28,
+  },
+  7: {
+    sky: [0.20, 0.34, 0.54],
+    sunBloom: 0.42,
+    sunTint: [0.72, 1.04, 1.22],
+    cloudLitTint: [0.78, 1.16, 1.38],
+    cloudShadowTint: [0.04, 0.12, 0.22],
+    edgeTint: [0.72, 1.34, 1.56],
+    styleShadowStrength: 1.46,
+    styleShadowEdge: 0.34,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 1.08,
+    styleSaturation: 1.58,
+    styleRimStrength: 1.26,
+    styleSunBleed: 0.48,
+    styleMidLift: 1.08,
+    godRaysEnabled: true,
+    godRayStrength: 0.38,
+    godRayLength: 0.92,
+    godRayFalloff: 1.72,
+  },
+  8: {
+    sky: [0.20, 0.54, 0.50],
+    sunBloom: 0.52,
+    sunTint: [0.86, 1.16, 0.98],
+    cloudLitTint: [0.80, 1.34, 1.02],
+    cloudShadowTint: [0.06, 0.22, 0.24],
+    edgeTint: [0.66, 1.56, 1.16],
+    styleShadowStrength: 1.20,
+    styleShadowEdge: 0.18,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 1.42,
+    styleSaturation: 1.72,
+    styleRimStrength: 1.38,
+    styleSunBleed: 0.58,
+    styleMidLift: 1.22,
+    godRaysEnabled: true,
+    godRayStrength: 0.56,
+    godRayLength: 1.18,
+    godRayFalloff: 1.48,
+  },
+  9: {
+    sky: [0.58, 0.50, 0.36],
+    sunBloom: 0.46,
+    sunTint: [1.20, 1.08, 0.72],
+    cloudLitTint: [1.28, 1.06, 0.64],
+    cloudShadowTint: [0.26, 0.22, 0.16],
+    edgeTint: [1.34, 1.12, 0.72],
+    styleShadowStrength: 1.62,
+    styleShadowEdge: 0.46,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 0.98,
+    styleSaturation: 1.12,
+    styleRimStrength: 1.18,
+    styleSunBleed: 0.54,
+    styleMidLift: 0.74,
+    godRaysEnabled: false,
+    godRayStrength: 0.20,
+    godRayLength: 0.86,
+    godRayFalloff: 2.00,
+  },
+  10: {
+    sky: [0.44, 0.28, 0.38],
+    sunBloom: 0.68,
+    sunTint: [1.18, 0.78, 0.86],
+    cloudLitTint: [1.32, 0.82, 0.92],
+    cloudShadowTint: [0.18, 0.10, 0.22],
+    edgeTint: [1.42, 0.90, 1.06],
+    styleShadowStrength: 1.30,
+    styleShadowEdge: 0.24,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 1.24,
+    styleSaturation: 1.52,
+    styleRimStrength: 1.34,
+    styleSunBleed: 0.72,
+    styleMidLift: 1.18,
+    godRaysEnabled: true,
+    godRayStrength: 0.68,
+    godRayLength: 1.00,
+    godRayFalloff: 1.36,
+  },
+  11: {
+    sky: [0.14, 0.22, 0.42],
+    sunBloom: 0.38,
+    sunTint: [0.62, 0.86, 1.30],
+    cloudLitTint: [0.70, 0.94, 1.42],
+    cloudShadowTint: [0.02, 0.04, 0.14],
+    edgeTint: [0.68, 0.96, 1.62],
+    styleShadowStrength: 1.72,
+    styleShadowEdge: 0.52,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 0.92,
+    styleSaturation: 1.40,
+    styleRimStrength: 1.16,
+    styleSunBleed: 0.36,
+    styleMidLift: 0.66,
+    godRaysEnabled: false,
+    godRayStrength: 0.16,
+    godRayLength: 0.82,
+    godRayFalloff: 2.20,
+  },
 };
-
 function setFieldValue(id, val) {
   const el = $(id);
   if (!el) return;
   el.value = `${val}`;
 }
 
-function applyGradePreset(style, syncInputs = true) {
-  const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
-  preview.gradeStyle = style >>> 0;
-  preview.sky = preset.sky.slice();
-  preview.sun.bloom = preset.sunBloom;
-  preview.sunTint = preset.sunTint.slice();
-  preview.cloudLitTint = preset.cloudLitTint.slice();
-  preview.cloudShadowTint = preset.cloudShadowTint.slice();
-  preview.edgeTint = preset.edgeTint.slice();
-  preview.styleShadowStrength = preset.styleShadowStrength ?? preview.styleShadowStrength ?? 0.88;
-  preview.styleColorLift = preset.styleColorLift ?? preview.styleColorLift ?? 1.12;
-  preview.styleSaturation = preset.styleSaturation ?? preview.styleSaturation ?? 1.10;
-  preview.styleRimStrength = preset.styleRimStrength ?? preview.styleRimStrength ?? 1.0;
-  preview.styleSunBleed = preset.styleSunBleed ?? preview.styleSunBleed ?? 0.85;
-  preview.styleMidLift = preset.styleMidLift ?? preview.styleMidLift ?? 1.10;
-  preview.godRaysEnabled = preset.godRaysEnabled ?? preview.godRaysEnabled ?? false;
-  preview.godRayStrength = preset.godRayStrength ?? preview.godRayStrength ?? 0.0;
-  preview.godRayLength = preset.godRayLength ?? preview.godRayLength ?? 1.0;
-  preview.godRayFalloff = preset.godRayFalloff ?? preview.godRayFalloff ?? 1.55;
-
-  if (!syncInputs) return;
+function syncPreviewLookInputs() {
   setFieldValue("v-grade", preview.gradeStyle);
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
   setFieldValue("c-bloom", preview.sun.bloom);
   setFieldValue("v-shadow-strength", preview.styleShadowStrength);
+  setFieldValue("v-shadow-edge", preview.styleShadowEdge ?? 0.0);
+  setFieldValue("v-shadow-darkness", preview.styleShadowDarkness ?? 0.0);
   setFieldValue("v-color-lift", preview.styleColorLift);
   setFieldValue("v-saturation", preview.styleSaturation);
   setFieldValue("v-rim-strength", preview.styleRimStrength);
@@ -400,6 +523,31 @@ function applyGradePreset(style, syncInputs = true) {
   setFieldValue("v-edge-b", preview.edgeTint[2]);
 }
 
+function applyGradePreset(style, syncInputs = true) {
+  const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
+  preview.gradeStyle = style >>> 0;
+  preview.sky = preset.sky.slice();
+  preview.sun.bloom = preset.sunBloom;
+  preview.sunTint = preset.sunTint.slice();
+  preview.cloudLitTint = preset.cloudLitTint.slice();
+  preview.cloudShadowTint = preset.cloudShadowTint.slice();
+  preview.edgeTint = preset.edgeTint.slice();
+  preview.styleShadowStrength = preset.styleShadowStrength ?? preview.styleShadowStrength ?? 0.88;
+  preview.styleShadowEdge = preset.styleShadowEdge ?? preview.styleShadowEdge ?? 0.0;
+  preview.styleShadowDarkness = preset.styleShadowDarkness ?? preview.styleShadowDarkness ?? 0.0;
+  preview.styleColorLift = preset.styleColorLift ?? preview.styleColorLift ?? 1.12;
+  preview.styleSaturation = preset.styleSaturation ?? preview.styleSaturation ?? 1.10;
+  preview.styleRimStrength = preset.styleRimStrength ?? preview.styleRimStrength ?? 1.0;
+  preview.styleSunBleed = preset.styleSunBleed ?? preview.styleSunBleed ?? 0.85;
+  preview.styleMidLift = preset.styleMidLift ?? preview.styleMidLift ?? 1.10;
+  preview.godRaysEnabled = preset.godRaysEnabled ?? preview.godRaysEnabled ?? false;
+  preview.godRayStrength = preset.godRayStrength ?? preview.godRayStrength ?? 0.0;
+  preview.godRayLength = preset.godRayLength ?? preview.godRayLength ?? 1.0;
+  preview.godRayFalloff = preset.godRayFalloff ?? preview.godRayFalloff ?? 1.55;
+
+  if (!syncInputs) return;
+  syncPreviewLookInputs();
+}
 const safeClone = (o) => {
   if (o == null || typeof o !== "object") return o;
   if (typeof structuredClone === "function") {
@@ -587,18 +735,20 @@ function readCloudParams() {
   preview.sun.elDeg = sunEl;
   preview.sun.bloom = sunBloom;
 
-  const baseSunColor =
-    preview.gradeStyle === 1
-      ? [1.06, 0.82, 0.68]
-      : preview.gradeStyle === 2
-        ? [1.00, 0.80, 1.00]
-        : preview.gradeStyle === 3
-          ? [0.92, 0.96, 1.0]
-          : preview.gradeStyle === 4
-            ? [1.12, 0.74, 0.44]
-            : preview.gradeStyle === 5
-              ? [1.06, 0.80, 0.76]
-              : [1.0, 0.95, 0.87];
+  const sunColorByGrade = {
+    1: [1.06, 0.82, 0.68],
+    2: [1.00, 0.80, 1.00],
+    3: [0.92, 0.96, 1.0],
+    4: [1.12, 0.74, 0.44],
+    5: [1.06, 0.80, 0.76],
+    6: [1.18, 0.86, 0.52],
+    7: [0.70, 1.02, 1.18],
+    8: [0.82, 1.12, 0.94],
+    9: [1.12, 1.02, 0.68],
+    10: [1.14, 0.74, 0.82],
+    11: [0.62, 0.84, 1.22],
+  };
+  const baseSunColor = sunColorByGrade[preview.gradeStyle] || [1.0, 0.95, 0.87];
   const sunTint = preview.sunTint || [1.0, 1.0, 1.0];
 
   return {
@@ -851,7 +1001,9 @@ function readPreview() {
   preview.edgeTint[0] = clamp01(num("v-edge-r", preview.edgeTint[0]));
   preview.edgeTint[1] = clamp01(num("v-edge-g", preview.edgeTint[1]));
   preview.edgeTint[2] = clamp01(num("v-edge-b", preview.edgeTint[2]));
-  preview.styleShadowStrength = Math.max(0, Math.min(2.2, num("v-shadow-strength", preview.styleShadowStrength ?? 0.88)));
+  preview.styleShadowStrength = Math.max(0, Math.min(5.0, num("v-shadow-strength", preview.styleShadowStrength ?? 0.88)));
+  preview.styleShadowEdge = Math.max(0, Math.min(2.2, num("v-shadow-edge", preview.styleShadowEdge ?? 0.0)));
+  preview.styleShadowDarkness = Math.max(0, Math.min(6.0, num("v-shadow-darkness", preview.styleShadowDarkness ?? 0.0)));
   preview.styleColorLift = Math.max(0, Math.min(2.2, num("v-color-lift", preview.styleColorLift ?? 1.12)));
   preview.styleSaturation = Math.max(0, Math.min(2.2, num("v-saturation", preview.styleSaturation ?? 1.10)));
   preview.styleRimStrength = Math.max(0, Math.min(2.2, num("v-rim-strength", preview.styleRimStrength ?? 1.0)));
@@ -1803,6 +1955,7 @@ async function wireUI() {
 async function init() {
   document.body.insertAdjacentHTML("beforeend", html);
   injectPreviewLookControls();
+  applyGradePreset(preview.gradeStyle, false);
 
   const setIf = (id, val) => {
     const el = $(id);
@@ -1958,7 +2111,7 @@ async function init() {
   setIf("v-yaw", preview.cam.yawDeg);
   setIf("v-pitch", preview.cam.pitchDeg);
   setIf("v-exposure", preview.exposure);
-  applyGradePreset(preview.gradeStyle, true);
+  syncPreviewLookInputs();
 
   // spawn worker
   worker = new Worker(wrkr, { type: "module" });

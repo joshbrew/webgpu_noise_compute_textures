@@ -2367,6 +2367,8 @@ export class CloudComputeBuilder {
     const shadowTint = opts.shadowTint ?? [0.0, 0.0, 0.0];
     const edgeTint = opts.edgeTint ?? [1.0, 1.0, 1.0];
     const styleShadowStrength = opts.styleShadowStrength ?? 0.88;
+    const styleShadowEdge = opts.styleShadowEdge ?? 0.0;
+    const styleShadowDarkness = opts.styleShadowDarkness ?? 0.0;
     const styleColorLift = opts.styleColorLift ?? 1.12;
     const styleSaturation = opts.styleSaturation ?? 1.10;
     const styleRimStrength = opts.styleRimStrength ?? 1.0;
@@ -2438,8 +2440,8 @@ export class CloudComputeBuilder {
 
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, renderQuality, true);
-    dv.setUint32(8, 0, true);
-    dv.setUint32(12, 0, true);
+    dv.setFloat32(8, styleShadowDarkness, true);
+    dv.setFloat32(12, 0.0, true);
     wv3(16, camPos);
     wv3(32, right);
     wv3(48, up);
@@ -2460,7 +2462,7 @@ export class CloudComputeBuilder {
     wv3(192, edgeTint);
     dv.setFloat32(208, styleRimStrength, true);
     dv.setFloat32(212, styleSunBleed, true);
-    dv.setFloat32(216, 0.0, true);
+    dv.setFloat32(216, styleShadowEdge, true);
     dv.setFloat32(220, styleMidLift, true);
     dv.setFloat32(224, godRaysEnabled ? 1.0 : 0.0, true);
     dv.setFloat32(228, godRayStrength, true);

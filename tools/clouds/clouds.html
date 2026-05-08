@@ -1244,25 +1244,6 @@
 
         <div class="row">
           <div>
-            <label>Sun Az (deg)</label
-            ><input id="c-az" type="number" step="1" class="compact" />
-          </div>
-          <div>
-            <label>Sun El (deg)</label
-            ><input id="c-el" type="number" step="1" class="compact" />
-          </div>
-        </div>
-
-        <div class="row">
-          <div>
-            <label>Sun Bloom</label
-            ><input id="c-bloom" type="number" step="0.05" class="compact" />
-          </div>
-          <div></div>
-        </div>
-
-        <div class="row">
-          <div>
             <label>Coverage</label
             ><input id="p-coverage" type="number" step="0.02" class="compact" />
           </div>
@@ -1286,18 +1267,18 @@
         <div class="row">
           <div>
             <label>In g</label
-            ><input id="p-ins" type="number" step="0.01" class="compact" />
+            ><input id="p-ins" type="number" step="0.01" value="1" class="compact" />
           </div>
           <div>
             <label>Out g</label
-            ><input id="p-outs" type="number" step="0.01" class="compact" />
+            ><input id="p-outs" type="number" step="0.01" value="0.1"  class="compact" />
           </div>
         </div>
 
         <div class="row">
           <div>
             <label>In↔Out</label
-            ><input id="p-ivo" type="number" step="0.01" class="compact" />
+            ><input id="p-ivo" type="number" step="0.01" value="0.5"  class="compact" />
           </div>
           <div>
             <label>Silver I</label
@@ -1499,12 +1480,26 @@
           </div>
         </div>
 
+          <div class="row">
+          <div>
+            <label>Sun Az (deg)</label
+            ><input id="c-az" type="number" step="1" class="compact" />
+          </div>
+          <div>
+            <label>Sun El (deg)</label
+            ><input id="c-el" type="number" step="1" class="compact" />
+          </div>
+        </div>
+
         <div class="row">
+          <div>
+            <label>Sun Bloom</label
+            ><input id="c-bloom" type="number" step="0.05" class="compact" />
+          </div>
           <div>
             <label>Exposure</label
             ><input id="v-exposure" type="number" step="0.05" class="compact" />
           </div>
-          <div></div>
         </div>
 
         <div class="row">
@@ -1522,16 +1517,6 @@
           <div>
             <label>Sky B</label
             ><input id="v-sb" type="number" step="0.01" class="compact" />
-          </div>
-          <div>
-            <label>Sun Bloom</label
-            ><input
-              id="v-sbloom"
-              type="number"
-              step="0.05"
-              class="compact"
-              disabled
-            />
           </div>
         </div>
       </div>
