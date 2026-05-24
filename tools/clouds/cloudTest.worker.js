@@ -81,6 +81,7 @@ let workerReproj = null,
 let workerTuning = null;
 let workerTuningVersion = 0;
 let lastAppliedTuningVersion = -1;
+let lastAppliedTuningSignature = "";
 
 // loop and transform state
 let loopEnabled = false,
@@ -95,12 +96,16 @@ let shapeOffsetWorld = [0, 0, 0],
   weatherOffsetWorld = [0, 0, 0];
 
 let shapeVel = [0.2, 0, 0],
-  detailVel = [-0.02, 0, 0],
-  weatherVel = [0, 0, 0];
+  detailVel = [0.03, 0, 0],
+  weatherVel = [0.01, 0, 0];
 
 let shapeScale = 0.1,
   detailScale = 1.0,
   weatherScale = 1.0;
+
+let shapeBias = 0.0,
+  detailBias = 0.0,
+  weatherBias = 0.0;
 
 let shapeAxisScale = [1, 1, 1],
   detailAxisScale = [1, 1, 1],
@@ -287,7 +292,8 @@ function getEntrySet() {
 function sanitizeEntry(entry, fallback, opts = {}) {
   const { require4D = false } = opts;
   const set = getEntrySet();
-  const s = typeof entry === "string" ? entry : "";
+  let s = typeof entry === "string" ? entry : "";
+  if (s === "computeBillow4D" && !set.has(s) && set.has("computeBillow")) s = "computeBillow";
   if (!s) return fallback;
   if (!set.has(s)) return fallback;
   if (require4D && !isEntry4D(s)) return fallback;
@@ -893,6 +899,10 @@ function applyNoiseTransforms(nt, opts = {}) {
     if (nt.weatherScale !== undefined) weatherScale = readScale(nt.weatherScale, weatherScale);
   }
 
+  if (nt.shapeBias !== undefined) shapeBias = Number(nt.shapeBias) || 0.0;
+  if (nt.detailBias !== undefined) detailBias = Number(nt.detailBias) || 0.0;
+  if (nt.weatherBias !== undefined) weatherBias = Number(nt.weatherBias) || 0.0;
+
   if (allowVel) {
     const sv = toVec3(nt.shapeVel, null);
     if (sv) shapeVel = sv;
@@ -928,6 +938,9 @@ function pushTransformsToCloudBuilder() {
     shapeAxisScale,
     detailAxisScale,
     weatherAxisScale,
+    shapeBias,
+    detailBias,
+    weatherBias,
   };
 
   if (typeof cb.setNoiseTransforms === "function") cb.setNoiseTransforms(t);
@@ -946,6 +959,9 @@ function snapshotTransforms() {
     shapeAxisScale: shapeAxisScale.slice(0, 3),
     detailAxisScale: detailAxisScale.slice(0, 3),
     weatherAxisScale: weatherAxisScale.slice(0, 3),
+    shapeBias,
+    detailBias,
+    weatherBias,
     shapeVel: shapeVel.slice(0, 3),
     detailVel: detailVel.slice(0, 3),
     weatherVel: weatherVel.slice(0, 3),
@@ -988,6 +1004,72 @@ function normalizeReproj(r) {
 function getReprojCoarseFactor(r, fallback = 1) {
   const rp = r && typeof r === "object" ? r : null;
   return Math.max(1, (rp?.coarseFactor || rp?.subsample || fallback || 1) | 0);
+}
+
+function normalizeRenderScaleDivider(value, fallback = 5) {
+  const v = Number.isFinite(+value) ? Math.floor(+value) : fallback;
+  return Math.max(1, Math.min(8, v));
+}
+
+function previewRenderScaleDivider(preview) {
+  return normalizeRenderScaleDivider(preview?.renderScaleDivider, 5);
+}
+
+function renderScaleDividerCoarseFactor(preview, reprojecting = false) {
+  return previewRenderScaleDivider(preview);
+}
+
+function finiteNumber(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function previewCloudBox(preview = {}) {
+  const box = preview.box || {};
+  const center = Array.isArray(box.center) ? box.center : [0, 0, 0];
+  const half = Array.isArray(box.half) ? box.half : [18, 0.3, 18];
+  return {
+    center: [
+      finiteNumber(center[0], 0),
+      finiteNumber(center[1], 0),
+      finiteNumber(center[2], 0),
+    ],
+    half: [
+      Math.max(0.001, finiteNumber(half[0], 18)),
+      Math.max(0.001, finiteNumber(half[1], 0.3)),
+      Math.max(0.001, finiteNumber(half[2], 18)),
+    ],
+    uvScale: Math.max(0.001, finiteNumber(box.uvScale, 1)),
+  };
+}
+
+
+function smoothstep01(edge0, edge1, x) {
+  if (edge0 === edge1) return x >= edge1 ? 1 : 0;
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+function autoThickBoxTuning(box) {
+  const half = Array.isArray(box?.half) ? box.half : [18, 0.3, 18];
+  const hx = Math.max(0.001, finiteNumber(half[0], 18));
+  const hy = Math.max(0.001, finiteNumber(half[1], 0.3));
+  const hz = Math.max(0.001, finiteNumber(half[2], 18));
+  const xz = Math.max(hx, hz, 0.001);
+  const height = Math.max(hy * 2, 0.001);
+
+  const heightF = smoothstep01(0.85, 5.5, height);
+  const aspectF = smoothstep01(0.045, 0.28, height / xz);
+  const horizonF = smoothstep01(24, 120, xz);
+  const thickF = Math.max(heightF, aspectF);
+  const reachF = Math.max(thickF, horizonF * 0.85);
+
+  return {
+    thickBoxPerf: +(0.44 + reachF * 1.10).toFixed(4),
+    thickStepBoost: +(1.22 + reachF * 1.38).toFixed(4),
+    thickDetailSkip: +(0.040 + thickF * 0.10).toFixed(4),
+    thickLightSkip: +(0.40 + reachF * 1.08).toFixed(4),
+  };
 }
 
 function getDispatchReprojSettings(r, coarseFactor = 1) {
@@ -1060,18 +1142,29 @@ function mergeTuningPatch(patch) {
   if (changed) workerTuningVersion = (workerTuningVersion + 1) >>> 0;
 }
 
-function applyWorkerTuning() {
-  if (!workerTuning) return false;
-  if (workerTuningVersion === lastAppliedTuningVersion) return false;
+function applyWorkerTuning(cloudBox = null) {
+  const base = workerTuning && typeof workerTuning === "object" ? workerTuning : {};
+  const autoThick = autoThickBoxTuning(cloudBox || previewCloudBox(lastRunPayload?.preview || {}));
+  const appliedTuning = Object.assign({}, base, autoThick);
+  const tuningSignature = JSON.stringify([
+    workerTuningVersion,
+    autoThick.thickBoxPerf,
+    autoThick.thickStepBoost,
+    autoThick.thickDetailSkip,
+    autoThick.thickLightSkip,
+  ]);
+
+  if (tuningSignature === lastAppliedTuningSignature) return false;
 
   try {
     if (cb && typeof cb.setTuning === "function") {
-      cb.setTuning(Object.assign({}, workerTuning));
+      cb.setTuning(appliedTuning);
       lastAppliedTuningVersion = workerTuningVersion;
+      lastAppliedTuningSignature = tuningSignature;
 
-      if (typeof workerTuning.lodBiasWeather === "number" && typeof cb?.setPerfParams === "function") {
+      if (typeof appliedTuning.lodBiasWeather === "number" && typeof cb?.setPerfParams === "function") {
         cb.setPerfParams({
-          lodBiasMul: workerTuning.lodBiasWeather,
+          lodBiasMul: appliedTuning.lodBiasWeather,
           coarseMipBias: 0.0,
         });
       }
@@ -1127,7 +1220,7 @@ function makeViewSignature(preview, w, h) {
     roundSig(sun.elDeg),
     roundSig(sun.bloom, 1000),
     roundSig(preview?.exposure, 1000),
-    preview?.renderQuality ?? 1,
+    previewRenderScaleDivider(preview, true),
     preview?.gradeStyle ?? 0,
     ...makeColorSignatureArray(preview?.sky, [0.5, 0.6, 0.8]),
     ...makeColorSignatureArray(preview?.sunTint, [1, 1, 1]),
@@ -1236,7 +1329,8 @@ async function runFrame({
   } catch {}
 
   if (tuning && typeof tuning === "object") mergeTuningPatch(tuning);
-  applyWorkerTuning();
+  const cloudBox = previewCloudBox(preview);
+  applyWorkerTuning(cloudBox);
 
   if (tileTransforms && typeof tileTransforms === "object") {
     applyNoiseTransforms(tileTransforms, {
@@ -1288,7 +1382,7 @@ async function runFrame({
   const useTemporalHistory = !!(workerReproj && workerReproj.temporalBlend > 0.0001);
   const resetReprojThisFrame = useTemporalHistory && reprojResetFrames > 0;
   let effectiveReproj = workerReproj;
-  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0);
+  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, renderScaleDividerCoarseFactor(preview, useReproj));
   if (resetReprojThisFrame) {
     effectiveReproj = cloneReprojForReset(workerReproj);
     historyPrevView = null;
@@ -1299,6 +1393,7 @@ async function runFrame({
     if (!effectiveReproj) effectiveReproj = workerReproj;
     if (effectiveReproj) {
       const coarseDriven = getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor) >= 2;
+      effectiveCoarseFactor = Math.max(effectiveCoarseFactor, getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor));
       const ss = coarseDriven ? 1 : Math.max(1, effectiveReproj.subsample || 1);
       const cells = ss * ss;
       if (!(effectiveReproj.frameIndex === 0 && !historyPrevView)) {
@@ -1367,7 +1462,11 @@ async function runFrame({
 
     if (workerPerf) cb.setPerfParams(workerPerf);
     if (effectiveReproj) {
-      effectiveCoarseFactor = getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor);
+      effectiveCoarseFactor = Math.max(effectiveCoarseFactor, getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor));
+      if (effectiveReproj) {
+        effectiveReproj.coarseFactor = effectiveCoarseFactor;
+        effectiveReproj.scale = 1 / Math.max(1, effectiveCoarseFactor * effectiveCoarseFactor);
+      }
       cb.setReprojSettings(getDispatchReprojSettings(effectiveReproj, effectiveCoarseFactor));
     }
   } else {
@@ -1379,7 +1478,7 @@ async function runFrame({
     cb.setHistoryOutView(null);
   }
 
-  cb.setBox({ center: [0, 0, 0], half: [1, 0.3, 1], uvScale: 1 });
+  cb.setBox(cloudBox);
   cb.setParams(cloudParams || {});
 
   const deg2rad = (d) => (d * Math.PI) / 180;
@@ -1411,9 +1510,9 @@ async function runFrame({
     fovYDeg: preview?.cam?.fovYDeg || 60,
     aspect,
     planetRadius: 0.0,
-    cloudBottom: -1.0,
-    cloudTop: 1.0,
-    worldToUV: 1.0,
+    cloudBottom: cloudBox.center[1] - cloudBox.half[1],
+    cloudTop: cloudBox.center[1] + cloudBox.half[1],
+    worldToUV: cloudBox.uvScale,
     stepBase: 0.02,
     stepInc: 0.04,
     volumeLayers: 1,
@@ -1437,9 +1536,10 @@ async function runFrame({
   const cf = Math.max(1, effectiveCoarseFactor | 0);
   const enc = device.createCommandEncoder();
   const tC0 = performance.now();
+  const skipUpsampleForPreview = cf >= 2;
   const encodedDispatch =
     typeof cb.encodeDispatchPasses === "function"
-      ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, skipUpsampleForPreview: false })
+      ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, skipUpsampleForPreview })
       : null;
   if (!encodedDispatch) {
     throw new Error("CloudComputeBuilder.encodeDispatchPasses is required for fused frame submission.");
@@ -1463,7 +1563,7 @@ async function runFrame({
     exposure: preview?.exposure || 1.0,
     skyColor: preview?.sky || [0.5, 0.6, 0.8],
     sunBloom: preview?.sun?.bloom || 0.0,
-    renderQuality: preview?.renderQuality ?? 1,
+    compositeQuality: 2,
     gradeStyle: preview?.gradeStyle ?? 1,
     sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
     lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
@@ -1630,15 +1730,19 @@ function startLoop() {
           workerReproj = normalizeReproj(workerReproj);
         }
 
-        if (workerTuningVersion !== lastAppliedTuningVersion) applyWorkerTuning();
-
         if (lastRunPayload) {
           const merged = Object.assign({}, lastRunPayload.tileTransforms || {});
           Object.assign(merged, snapshotTransforms(), { explicit: true });
           lastRunPayload.tileTransforms = merged;
+          const loopUsesReproj = !!(workerReproj && workerReproj.enabled);
+          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview, loopUsesReproj);
           if (workerReproj) {
             lastRunPayload.reproj = Object.assign({}, workerReproj, { resetHistory: false });
-            lastRunPayload.coarseFactor = getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1);
+            lastRunPayload.coarseFactor = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1));
+            lastRunPayload.reproj.coarseFactor = lastRunPayload.coarseFactor;
+            lastRunPayload.reproj.scale = 1 / Math.max(1, lastRunPayload.coarseFactor * lastRunPayload.coarseFactor);
+          } else {
+            lastRunPayload.coarseFactor = Math.max(qCoarse, lastRunPayload.coarseFactor || 1);
           }
           lastRunPayload.waitForGpu = false;
           lastRunPayload.logFrame = false;
@@ -1930,15 +2034,24 @@ async function _handleMessage(ev) {
         lastRunPayload.reproj = workerReproj
           ? Object.assign({}, workerReproj, { resetHistory: false })
           : workerReproj;
+        const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview, !!(workerReproj && workerReproj.enabled));
         if (workerReproj) {
-          lastRunPayload.coarseFactor = getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1);
+          lastRunPayload.coarseFactor = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1));
+          lastRunPayload.reproj.coarseFactor = lastRunPayload.coarseFactor;
+          lastRunPayload.reproj.scale = 1 / Math.max(1, lastRunPayload.coarseFactor * lastRunPayload.coarseFactor);
+        } else {
+          lastRunPayload.coarseFactor = Math.max(qCoarse, lastRunPayload.coarseFactor || 1);
         }
       }
 
       if (cb) {
         if (workerPerf) cb.setPerfParams(workerPerf);
         if (workerReproj) {
-          cb.setReprojSettings(getDispatchReprojSettings(workerReproj, getReprojCoarseFactor(workerReproj, 1)));
+          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload?.preview, !!workerReproj.enabled);
+          const cf = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, 1));
+          workerReproj.coarseFactor = cf;
+          workerReproj.scale = 1 / Math.max(1, cf * cf);
+          cb.setReprojSettings(getDispatchReprojSettings(workerReproj, cf));
         }
       }
 
@@ -1957,7 +2070,7 @@ async function _handleMessage(ev) {
       } catch (e) {
         console.warn("setTuning apply failed", e);
       }
-      respond(true, { ok: true, tuning: workerTuning, version: workerTuningVersion });
+      respond(true, { ok: true, tuning: workerTuning, version: workerTuningVersion, autoThick: autoThickBoxTuning(previewCloudBox(lastRunPayload?.preview || {})) });
       return;
     }
 

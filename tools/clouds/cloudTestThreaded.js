@@ -22,36 +22,41 @@ let ENTRY_POINTS = [];
 
 // Default preview + noise param blocks (each has seed)
 const preview = {
-  cam: { x: -0.8, y: 0.1, z: -1, yawDeg: 35, pitchDeg: 1, fovYDeg: 60 },
-  exposure: 1.12,
-  sky: [0.55, 0.7, 0.95],
+  cam: { x: -0.75, y: -1.2, z: -0.95, yawDeg: 35, pitchDeg: 28, fovYDeg: 60 },
+  exposure: 1.18,
+  sky: [0.60, 0.75, 0.98],
   layer: 0,
-  renderQuality: 2,
-  gradeStyle: 4,
+  box: {
+    center: [0, 0, 0],
+    half: [18, 0.3, 18],
+    uvScale: 1,
+  },
+  renderScaleDivider: 5,
+  gradeStyle: 3,
   sunTint: [1.0, 1.0, 1.0],
   cloudLitTint: [1.0, 1.0, 1.0],
   cloudShadowTint: [0.0, 0.0, 0.0],
   edgeTint: [1.0, 1.0, 1.0],
-  styleShadowStrength: 0.88,
-  styleShadowEdge: 0.0,
-  styleShadowDarkness: 0.0,
+  styleShadowStrength: 1.00,
+  styleShadowEdge: 1.00,
+  styleShadowDarkness: 0.50,
   styleColorLift: 1.28,
   styleSaturation: 1.24,
   styleRimStrength: 1.04,
   styleSunBleed: 0.66,
   styleMidLift: 1.26,
   godRaysEnabled: true,
-  godRayStrength: 0.35,
+  godRayStrength: 1.00,
   godRayLength: 1.10,
   godRayFalloff: 1.10,
-  sun: { azDeg: 45, elDeg: 7, bloom: 0.55 },
+  sun: { azDeg: 45, elDeg: 41, bloom: 0.18 },
 };
 
 // Weather params (R channel)
 const weatherParams = {
-  mode: "computeFBM",
-  seed: 123456789000,
-  zoom: 2.0,
+  mode: "computeFBM4D",
+  seed: 123456789001,
+  zoom: 4.0,
   freq: 1.0,
   octaves: 5,
   lacunarity: 2.0,
@@ -67,10 +72,10 @@ const weatherParams = {
 // Weather params (G channel)
 const billowParams = {
   enabled: true,
-  mode: "computeBillow",
+  mode: "computeBillow4D",
   seed: 123456789000,
   scale: 1.0,
-  zoom: 2.0,
+  zoom: 4.0,
   freq: 1.5,
   octaves: 4,
   lacunarity: 2.0,
@@ -87,9 +92,9 @@ const billowParams = {
 const weatherBParams = {
   enabled: false,
   mode: "computeBillow",
-  seed: 123456789000,
+  seed: 123456789003,
   scale: 1.0,
-  zoom: 2.0,
+  zoom: 4.0,
   freq: 1.5,
   octaves: 4,
   lacunarity: 2.0,
@@ -112,7 +117,7 @@ const shapeParams = {
   gain: 0.5,
   threshold: 0.0,
   time: 0.0,
-  voroMode: 3,
+  voroMode: 4,
   edgeK: 0.0,
   warpAmp: 0.0,
   baseModeA: "computeAntiWorley4D",
@@ -156,15 +161,39 @@ const tileTransforms = {
   detailAxisScale: [1.0, 1.0, 1.0],
   weatherAxisScale: [1.0, 1.0, 1.0],
 
+  shapeBias: 0.4,
+  detailBias: 0.0,
+  weatherBias: 0.3,
+
   shapeVel: [0.1, 0.0, 0.0],
-  detailVel: [-0.02, 0.0, 0.0],
+  detailVel: [0.03, 0.0, 0.0],
+  weatherVel: [0.01, 0.0, 0.0],
 };
 
+function normalizeRenderScaleDivider(value, fallback = 5) {
+  const v = Number.isFinite(+value) ? Math.floor(+value) : fallback;
+  return Math.max(1, Math.min(8, v));
+}
+
+function previewRenderScaleDivider() {
+  return normalizeRenderScaleDivider(preview.renderScaleDivider, 5);
+}
+
+preview.renderScaleDivider = previewRenderScaleDivider();
+
 let reprojEnabled = false;
-const reprojDefaultScale = 1 / 4;
+const reprojDefaultScale = 1 / 16;
 
 const reprojTemporalBlend = 0.94;
 let animRunning = false;
+
+function currentReprojectionTemporalBlend(enabled = reprojEnabled) {
+  return enabled ? reprojTemporalBlend : 0.0;
+}
+
+function currentPreviewCoarseFactor() {
+  return reprojEnabled ? previewRenderScaleDivider() : 1;
+}
 
 // ---- DOM helpers ----
 const $ = (id) => document.getElementById(id);
@@ -211,6 +240,7 @@ function injectPreviewLookControls() {
           <option value="11">Deep Ocean</option>
         </select>
       </label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Animated render-scale divider. 1 = full resolution, 4 = 1/4 resolution per axis, 5 = 1/5 resolution per axis, then upsampled."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="5"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Edge</span><input id="v-shadow-edge" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Darkness</span><input id="v-shadow-darkness" type="number" step="0.01" min="0" max="6"></label>
@@ -244,22 +274,22 @@ function injectPreviewLookControls() {
 
 const GRADE_PRESETS = {
   0: {
-    sky: [0.55, 0.70, 1.95],
-    sunBloom: 0.35,
-    sunTint: [2.0, 2.0, 1.0],
-    cloudLitTint: [1.5, 1.5, 2.5],
-    cloudShadowTint: [0.0, 0.0, 0.05],
-    edgeTint: [1.0, 2.0, 2.0],
-    styleShadowStrength: 2.0,
-    styleShadowEdge: 0.0,
-    styleShadowDarkness: 0.0,
-    styleColorLift: 0.00,
-    styleSaturation: 0.5,
+    sky: [0.60, 0.75, 0.98],
+    sunBloom: 0.18,
+    sunTint: [1.00, 0.99, 0.97],
+    cloudLitTint: [1.02, 1.02, 1.03],
+    cloudShadowTint: [0.84, 0.90, 1.00],
+    edgeTint: [1.02, 1.01, 0.99],
+    styleShadowStrength: 5.00,
+    styleShadowEdge: 2.00,
+    styleShadowDarkness: 0.50,
+    styleColorLift: 1.26,
+    styleSaturation: 1.02,
     styleRimStrength: 2.00,
-    styleSunBleed: 2.00,
-    styleMidLift: 1.00,
+    styleSunBleed: 0.56,
+    styleMidLift: 1.16,
     godRaysEnabled: true,
-    godRayStrength: 0.0,
+    godRayStrength: 1.00,
     godRayLength: 1.0,
     godRayFalloff: 1.55,
   },
@@ -492,9 +522,20 @@ function setFieldValue(id, val) {
 
 function syncPreviewLookInputs() {
   setFieldValue("v-grade", preview.gradeStyle);
+  setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 5);
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
+  const box = preview.box || (preview.box = { center: [0, 0, 0], half: [18, 0.3, 18], uvScale: 1 });
+  box.center = box.center || [0, 0, 0];
+  box.half = box.half || [18, 0.3, 18];
+  setFieldValue("v-box-cx", box.center[0]);
+  setFieldValue("v-box-cy", box.center[1]);
+  setFieldValue("v-box-cz", box.center[2]);
+  setFieldValue("v-box-hx", box.half[0]);
+  setFieldValue("v-box-hy", box.half[1]);
+  setFieldValue("v-box-hz", box.half[2]);
+  setFieldValue("v-box-uv", box.uvScale ?? 1);
   setFieldValue("c-bloom", preview.sun.bloom);
   setFieldValue("v-shadow-strength", preview.styleShadowStrength);
   setFieldValue("v-shadow-edge", preview.styleShadowEdge ?? 0.0);
@@ -526,6 +567,7 @@ function syncPreviewLookInputs() {
 function applyGradePreset(style, syncInputs = true) {
   const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
   preview.gradeStyle = style >>> 0;
+  preview.renderScaleDivider = normalizeRenderScaleDivider(preset.renderScaleDivider ?? preview.renderScaleDivider ?? 5);
   preview.sky = preset.sky.slice();
   preview.sun.bloom = preset.sunBloom;
   preview.sunTint = preset.sunTint.slice();
@@ -647,7 +689,13 @@ function populateSelect(id, entries, defaultValue, opts = {}) {
   }
 
   const hasDefault = list.includes(defaultValue);
-  el.value = hasDefault ? defaultValue : allowNone ? "" : list[0] || "";
+  if (!hasDefault && defaultValue) {
+    const opt = document.createElement("option");
+    opt.value = defaultValue;
+    opt.textContent = makeNoiseLabel(defaultValue);
+    el.appendChild(opt);
+  }
+  el.value = hasDefault ? defaultValue : defaultValue || (allowNone ? "" : list[0] || "");
 }
 
 function readMode(id, fallback) {
@@ -676,21 +724,24 @@ function readTuning() {
     maxSteps: +($("t-maxSteps")?.value || 256) | 0,
     minStep: +($("t-minStep")?.value || 0.003),
     maxStep: +($("t-maxStep")?.value || 0.16),
-    sunSteps: +($("t-sunSteps")?.value || 4) | 0,
-    sunStride: +($("t-sunStride")?.value || 6) | 0,
+    sunSteps: +($("t-sunSteps")?.value || 6) | 0,
+    sunStride: +($("t-sunStride")?.value || 3) | 0,
     phaseJitter: +($("t-phaseJitter")?.value || 1.0),
     stepJitter: +($("t-stepJitter")?.value || 0.3),
-    baseJitterFrac: +($("t-baseJitter")?.value || 0.15),
+    baseJitterFrac: +($("t-baseJitter")?.value || 0.02),
     topJitterFrac: +($("t-topJitter")?.value || 0.1),
     lodBiasWeather: +($("t-lodBiasWeather")?.value || 1.5),
     nearFluffDist: +($("t-nearFluffDist")?.value || 60.0),
     nearDensityMult: +($("t-nearDensityMult")?.value || 2.5),
     lodBlendThreshold: +($("t-lodBlendThreshold")?.value || 0.46),
-    farStart: +($("t-farStart")?.value || 0.65),
-    farFull: +($("t-farFull")?.value || 2.4),
-    farStepMult: +($("t-farStepMult")?.value || 2.65),
-    raySmoothDens: +($("t-raySmoothDens")?.value || 0.46),
+    farStart: +($("t-farStart")?.value || 1.05),
+    farFull: +($("t-farFull")?.value || 4.2),
+    farStepMult: +($("t-farStepMult")?.value || 2.05),
+    raySmoothDens: +($("t-raySmoothDens")?.value || 0.34),
     raySmoothSun: +($("t-raySmoothSun")?.value || 0.34),
+    fluffFactor: +($("t-fluffFactor")?.value || 4.0),
+    anvilLift: +($("t-anvilLift")?.value || 0.6),
+    alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
   };
 }
 
@@ -758,8 +809,8 @@ function readCloudParams() {
     cloudBeer: num("p-beer", 6.0),
     attenuationClamp: num("p-clamp", 0.005),
     inScatterG: num("p-ins", 0.72),
-    silverIntensity: num("p-sI", 3.0),
-    silverExponent: num("p-sE", 6.0),
+    silverIntensity: num("p-sI", 12.0),
+    silverExponent: num("p-sE", 12.0),
     outScatterG: num("p-outs", 1.0),
     inVsOut: num("p-ivo", 0.5),
     outScatterAmbientAmt: num("p-ambOut", 0.12),
@@ -832,6 +883,7 @@ function readWeatherB() {
 
 function readWeatherTransform() {
   tileTransforms.weatherScale = num("we-scale", tileTransforms.weatherScale);
+  tileTransforms.weatherBias = num("we-bias", tileTransforms.weatherBias ?? 0.3);
 
   tileTransforms.weatherOffset[0] = num(
     "we-pos-x",
@@ -845,6 +897,11 @@ function readWeatherTransform() {
     "we-pos-z",
     tileTransforms.weatherOffset[2],
   );
+
+  tileTransforms.weatherVel = tileTransforms.weatherVel || [0, 0, 0];
+  tileTransforms.weatherVel[0] = num("we-vel-x", tileTransforms.weatherVel[0]);
+  tileTransforms.weatherVel[1] = num("we-vel-y", tileTransforms.weatherVel[1]);
+  tileTransforms.weatherVel[2] = num("we-vel-z", tileTransforms.weatherVel[2]);
 
   tileTransforms.weatherAxisScale = tileTransforms.weatherAxisScale || [
     1, 1, 1,
@@ -890,6 +947,7 @@ function readShape() {
 
 function readShapeTransform() {
   tileTransforms.shapeScale = num("sh-scale", tileTransforms.shapeScale);
+  tileTransforms.shapeBias = num("sh-bias", tileTransforms.shapeBias ?? 0.4);
   tileTransforms.shapeOffset[0] = num(
     "sh-pos-x",
     tileTransforms.shapeOffset[0],
@@ -944,6 +1002,7 @@ function readDetail() {
 
 function readDetailTransform() {
   tileTransforms.detailScale = num("de-scale", tileTransforms.detailScale);
+  tileTransforms.detailBias = num("de-bias", tileTransforms.detailBias ?? 0.0);
   tileTransforms.detailOffset[0] = num(
     "de-pos-x",
     tileTransforms.detailOffset[0],
@@ -988,7 +1047,18 @@ function readPreview() {
   preview.sky[0] = num("v-sr", preview.sky[0]);
   preview.sky[1] = num("v-sg", preview.sky[1]);
   preview.sky[2] = num("v-sb", preview.sky[2]);
+  preview.box = preview.box || { center: [0, 0, 0], half: [18, 0.3, 18], uvScale: 1 };
+  preview.box.center = preview.box.center || [0, 0, 0];
+  preview.box.half = preview.box.half || [18, 0.3, 18];
+  preview.box.center[0] = num("v-box-cx", preview.box.center[0]);
+  preview.box.center[1] = num("v-box-cy", preview.box.center[1]);
+  preview.box.center[2] = num("v-box-cz", preview.box.center[2]);
+  preview.box.half[0] = Math.max(0.001, num("v-box-hx", preview.box.half[0]));
+  preview.box.half[1] = Math.max(0.001, num("v-box-hy", preview.box.half[1]));
+  preview.box.half[2] = Math.max(0.001, num("v-box-hz", preview.box.half[2]));
+  preview.box.uvScale = Math.max(0.001, num("v-box-uv", preview.box.uvScale ?? 1));
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
+  preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 5));
   preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));
   preview.sunTint[1] = clamp01(num("v-sun-g", preview.sunTint[1]));
   preview.sunTint[2] = clamp01(num("v-sun-b", preview.sunTint[2]));
@@ -1023,14 +1093,15 @@ function computeCoarseFactorFromScale(scale) {
 
 function getReprojPayload() {
   const enabled = !!reprojEnabled;
-  const scale = reprojDefaultScale;
+  const coarseFactor = enabled ? previewRenderScaleDivider() : 1;
+  const scale = enabled ? 1 / Math.max(1, coarseFactor * coarseFactor) : reprojDefaultScale;
   return {
     enabled,
     scale,
-    coarseFactor: computeCoarseFactorFromScale(scale),
+    coarseFactor,
     frameIndex: 0,
     sampleOffset: 0,
-    temporalBlend: enabled ? 0.72 : 0.0,
+    temporalBlend: currentReprojectionTemporalBlend(enabled),
   };
 }
 
@@ -1045,13 +1116,18 @@ function getFreshReprojPayload() {
 
 function ensureCoarseInPayload(payload) {
   if (!payload) return payload;
-  if (payload.reproj && typeof payload.reproj.coarseFactor === "number")
-    payload.coarseFactor = payload.reproj.coarseFactor;
-  else if (reprojEnabled) {
+  const qCoarse = currentPreviewCoarseFactor();
+  if (payload.reproj && typeof payload.reproj.coarseFactor === "number") {
+    payload.coarseFactor = Math.max(qCoarse, payload.reproj.coarseFactor | 0);
+    payload.reproj.coarseFactor = payload.coarseFactor;
+    payload.reproj.scale = 1 / Math.max(1, payload.coarseFactor * payload.coarseFactor);
+  } else if (reprojEnabled) {
     const rp = getReprojPayload();
     payload.reproj = payload.reproj || rp;
-    payload.coarseFactor = rp.coarseFactor;
-  } else payload.coarseFactor = payload.coarseFactor || 1;
+    payload.coarseFactor = Math.max(qCoarse, rp.coarseFactor | 0);
+  } else {
+    payload.coarseFactor = Math.max(qCoarse, payload.coarseFactor || 1);
+  }
   return payload;
 }
 
@@ -1372,7 +1448,7 @@ async function wireUI() {
 
   reprojEnabled = false;
   animRunning = false;
-  if (reprojBtn) reprojBtn.textContent = "Start x4 Anim";
+  if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
   if (fpsSpan) fpsSpan.textContent = "-";
 
   reprojBtn?.addEventListener("click", async () => {
@@ -1408,7 +1484,7 @@ async function wireUI() {
         await rpc("setReproj", { reproj: loopReproj, perf: null });
         await rpc("startLoop", {});
         animRunning = true;
-        if (reprojBtn) reprojBtn.textContent = "Stop Anim";
+        if (reprojBtn) reprojBtn.textContent = "Stop Reproject Anim";
       } catch (e) {
         console.warn("start animation failed", e);
         reprojEnabled = false;
@@ -1418,12 +1494,12 @@ async function wireUI() {
             reproj: {
               enabled: false,
               scale: reprojDefaultScale,
-              coarseFactor: computeCoarseFactorFromScale(reprojDefaultScale),
+              coarseFactor: previewRenderScaleDivider(false),
             },
             perf: null,
           });
         } catch {}
-        if (reprojBtn) reprojBtn.textContent = "Start x4 Anim";
+        if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
       } finally {
         setBusy(false);
       }
@@ -1440,14 +1516,14 @@ async function wireUI() {
           reproj: {
             enabled: false,
             scale: reprojDefaultScale,
-            coarseFactor: computeCoarseFactorFromScale(reprojDefaultScale),
+            coarseFactor: previewRenderScaleDivider(false),
           },
           perf: null,
         });
       } catch (e) {
         console.warn("Failed unset reproj", e);
       }
-      if (reprojBtn) reprojBtn.textContent = "Start x4 Anim";
+      if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = "-";
     }
@@ -1551,9 +1627,13 @@ async function wireUI() {
   attachByIds(
     [
       "we-scale",
+      "we-bias",
       "we-pos-x",
       "we-pos-y",
       "we-pos-z",
+      "we-vel-x",
+      "we-vel-y",
+      "we-vel-z",
       "we-axis-x",
       "we-axis-y",
       "we-axis-z",
@@ -1657,6 +1737,7 @@ async function wireUI() {
   attachByIds(
     [
       "sh-scale",
+      "sh-bias",
       "sh-pos-x",
       "sh-pos-y",
       "sh-pos-z",
@@ -1698,6 +1779,7 @@ async function wireUI() {
   attachByIds(
     [
       "de-scale",
+      "de-bias",
       "de-pos-x",
       "de-pos-y",
       "de-pos-z",
@@ -1966,7 +2048,7 @@ async function init() {
 
   // defaults for numeric fields (modes are populated after worker init)
   setIf("we-seed", weatherParams.seed);
-  setIf("we-zoom", weatherParams.zoom);
+  setIf("we-zoom", 4.0);
   setIf("we-freq", weatherParams.freq);
   setIf("we-oct", weatherParams.octaves);
   setIf("we-lac", weatherParams.lacunarity);
@@ -1980,7 +2062,7 @@ async function init() {
 
   setIf("we-billow-enable", billowParams.enabled);
   setIf("we-billow-seed", billowParams.seed);
-  setIf("we-billow-zoom", billowParams.zoom);
+  setIf("we-billow-zoom", 4.0);
   setIf("we-billow-freq", billowParams.freq);
   setIf("we-billow-oct", billowParams.octaves);
   setIf("we-billow-lac", billowParams.lacunarity);
@@ -1993,9 +2075,13 @@ async function init() {
   setIf("we-billow-warpAmp", billowParams.warpAmp);
 
   setIf("we-scale", tileTransforms.weatherScale);
+  setIf("we-bias", tileTransforms.weatherBias ?? 0.3);
   setIf("we-pos-x", tileTransforms.weatherOffset[0]);
   setIf("we-pos-y", tileTransforms.weatherOffset[1]);
   setIf("we-pos-z", tileTransforms.weatherOffset[2]);
+  setIf("we-vel-x", tileTransforms.weatherVel?.[0] ?? 0.01);
+  setIf("we-vel-y", tileTransforms.weatherVel?.[1] ?? 0);
+  setIf("we-vel-z", tileTransforms.weatherVel?.[2] ?? 0);
   setIf("we-axis-x", tileTransforms.weatherAxisScale[0]);
   setIf("we-axis-y", tileTransforms.weatherAxisScale[1]);
   setIf("we-axis-z", tileTransforms.weatherAxisScale[2]);
@@ -2008,9 +2094,9 @@ async function init() {
   setIf("de-axis-y", tileTransforms.detailAxisScale[1]);
   setIf("de-axis-z", tileTransforms.detailAxisScale[2]);
 
-  setIf("we-bandb-enable", weatherBParams.enabled);
+  setIf("we-bandb-enable", false);
   setIf("we-bandb-seed", weatherBParams.seed);
-  setIf("we-bandb-zoom", weatherBParams.zoom);
+  setIf("we-bandb-zoom", 4.0);
   setIf("we-bandb-freq", weatherBParams.freq);
   setIf("we-bandb-oct", weatherBParams.octaves);
   setIf("we-bandb-lac", weatherBParams.lacunarity);
@@ -2038,6 +2124,7 @@ async function init() {
   setIf("sh-warpAmp", shapeParams.warpAmp);
 
   setIf("sh-scale", tileTransforms.shapeScale);
+  setIf("sh-bias", tileTransforms.shapeBias ?? 0.4);
   setIf("sh-pos-x", tileTransforms.shapeOffset[0]);
   setIf("sh-pos-y", tileTransforms.shapeOffset[1]);
   setIf("sh-pos-z", tileTransforms.shapeOffset[2]);
@@ -2059,10 +2146,11 @@ async function init() {
   setIf("de-warpAmp", detailParams.warpAmp);
 
   setIf("de-scale", tileTransforms.detailScale);
+  setIf("de-bias", tileTransforms.detailBias ?? 0.0);
   setIf("de-pos-x", tileTransforms.detailOffset[0]);
   setIf("de-pos-y", tileTransforms.detailOffset[1]);
   setIf("de-pos-z", tileTransforms.detailOffset[2]);
-  setIf("de-vel-x", tileTransforms.detailVel[0]);
+  setIf("de-vel-x", tileTransforms.detailVel[0] ?? 0.03);
   setIf("de-vel-y", tileTransforms.detailVel[1]);
   setIf("de-vel-z", tileTransforms.detailVel[2]);
 
@@ -2078,8 +2166,8 @@ async function init() {
   setIf("p-ins", 1.0);
   setIf("p-outs", 0.1);
   setIf("p-ivo", 0.5);
-  setIf("p-sI", 0.18);
-  setIf("p-sE", 6.0);
+  setIf("p-sI", 12.0);
+  setIf("p-sE", 12.0);
   setIf("p-ambOut", 0.08);
   setIf("p-ambMin", 0.045);
   setIf("p-anvil", 0.1);
@@ -2087,21 +2175,24 @@ async function init() {
   setIf("t-maxSteps", 256);
   setIf("t-minStep", 0.003);
   setIf("t-maxStep", 0.16);
-  setIf("t-sunSteps", 4);
-  setIf("t-sunStride", 6);
+  setIf("t-sunSteps", 6);
+  setIf("t-sunStride", 3);
   setIf("t-phaseJitter", 1.0);
   setIf("t-stepJitter", 0.3);
-  setIf("t-baseJitter", 0.15);
+  setIf("t-baseJitter", 0.02);
   setIf("t-topJitter", 0.1);
   setIf("t-lodBiasWeather", 1.5);
   setIf("t-lodBlendThreshold", 0.46);
   setIf("t-nearFluffDist", 60);
   setIf("t-nearDensityMult", 2.5);
-  setIf("t-farStart", 0.65);
-  setIf("t-farFull", 2.4);
-  setIf("t-farStepMult", 2.65);
-  setIf("t-raySmoothDens", 0.46);
+  setIf("t-farStart", 1.05);
+  setIf("t-farFull", 4.2);
+  setIf("t-farStepMult", 2.05);
+  setIf("t-raySmoothDens", 0.34);
   setIf("t-raySmoothSun", 0.34);
+  setIf("t-fluffFactor", 2.0);
+  setIf("t-anvilLift", 0.6);
+  setIf("t-alphaCutoff", 0.98);
 
   // preview
   setIf("v-cx", preview.cam.x);
@@ -2111,6 +2202,13 @@ async function init() {
   setIf("v-yaw", preview.cam.yawDeg);
   setIf("v-pitch", preview.cam.pitchDeg);
   setIf("v-exposure", preview.exposure);
+  setIf("v-box-cx", preview.box.center[0]);
+  setIf("v-box-cy", preview.box.center[1]);
+  setIf("v-box-cz", preview.box.center[2]);
+  setIf("v-box-hx", preview.box.half[0]);
+  setIf("v-box-hy", preview.box.half[1]);
+  setIf("v-box-hz", preview.box.half[2]);
+  setIf("v-box-uv", preview.box.uvScale);
   syncPreviewLookInputs();
 
   // spawn worker
@@ -2139,7 +2237,7 @@ async function init() {
     if (type === "loop-stopped") {
       animRunning = false;
       const btn = $("reproj-anim-toggle");
-      if (btn) btn.textContent = "Start x4 Anim";
+      if (btn) btn.textContent = "Start Reproject Anim";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = "-";
     }
@@ -2235,6 +2333,7 @@ async function init() {
       tileTransforms: safeClone(tileTransforms),
     });
 
+    readPreview();
     await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
     try {
       await sendTuningNow(true);

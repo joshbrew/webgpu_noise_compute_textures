@@ -222,9 +222,9 @@
         <div style="margin-top: 10px" class="inline">
           <div style="flex: 1">
             <label style="margin-bottom: 6px">Reproject &amp; Animate</label>
-            <button id="reproj-anim-toggle">Start x4 Anim</button>
+            <button id="reproj-anim-toggle">Start Reproject Anim</button>
             <small class="hint"
-              >Click to enable coarse x4 reprojection and start/stop the
+              >Click to enable quality-aware reprojection and start/stop the
               animation loop.</small
             >
           </div>
@@ -662,7 +662,16 @@
                 class="compact"
               />
             </div>
-            <div></div>
+            <div>
+              <label>Weather Bias</label
+              ><input
+                id="we-bias"
+                type="number"
+                step="0.01"
+                value="0"
+                class="compact"
+              />
+            </div>
           </div>
 
           <div class="triple" style="margin-top: 8px">
@@ -692,6 +701,39 @@
                 id="we-pos-z"
                 type="number"
                 step="0.001"
+                value="0"
+                class="compact"
+              />
+            </div>
+          </div>
+
+          <div class="triple" style="margin-top: 8px">
+            <div>
+              <label>Weather Vel X</label
+              ><input
+                id="we-vel-x"
+                type="number"
+                step="0.0001"
+                value="0.01"
+                class="compact"
+              />
+            </div>
+            <div>
+              <label>Weather Vel Y</label
+              ><input
+                id="we-vel-y"
+                type="number"
+                step="0.0001"
+                value="0"
+                class="compact"
+              />
+            </div>
+            <div>
+              <label>Weather Vel Z</label
+              ><input
+                id="we-vel-z"
+                type="number"
+                step="0.0001"
                 value="0"
                 class="compact"
               />
@@ -895,7 +937,16 @@
                 class="compact"
               />
             </div>
-            <div></div>
+            <div>
+              <label>Shape Bias</label
+              ><input
+                id="sh-bias"
+                type="number"
+                step="0.01"
+                value="0"
+                class="compact"
+              />
+            </div>
           </div>
 
           <div class="triple" style="margin-top: 8px">
@@ -1129,7 +1180,16 @@
                 class="compact"
               />
             </div>
-            <div></div>
+            <div>
+              <label>Detail Bias</label
+              ><input
+                id="de-bias"
+                type="number"
+                step="0.01"
+                value="0"
+                class="compact"
+              />
+            </div>
           </div>
 
           <div class="triple" style="margin-top: 8px">
@@ -1409,14 +1469,14 @@
           </div>
           <div>
             <label>Far Start</label
-            ><input id="t-farStart" type="number" step="10" class="compact" />
+            ><input id="t-farStart" type="number" step="0.05" class="compact" />
           </div>
         </div>
 
         <div class="row">
           <div>
             <label>Far Full</label
-            ><input id="t-farFull" type="number" step="10" class="compact" />
+            ><input id="t-farFull" type="number" step="0.1" class="compact" />
           </div>
           <div>
             <label>Ray Smooth Dens</label
@@ -1439,8 +1499,43 @@
               class="compact"
             />
           </div>
-          <div></div>
+          <div>
+            <label>Fluff Factor</label
+            ><input
+              id="t-fluffFactor"
+              type="number"
+              step="0.05"
+              class="compact"
+            />
+          </div>
         </div>
+
+        <div class="row">
+          <div>
+            <label>Anvil Exaggeration</label
+            ><input
+              id="t-anvilLift"
+              type="number"
+              step="0.05"
+              class="compact"
+            />
+          </div>
+          <div>
+            <label>Alpha Cutoff</label
+            ><input
+              id="t-alphaCutoff"
+              type="number"
+              step="0.01"
+              min="0"
+              max="0.999"
+              class="compact"
+            />
+          </div>
+        </div>
+
+        <p class="muted" style="margin:8px 0 0; font-size:12px; line-height:1.35;">
+          Thick cloud-box performance is tuned automatically from the active Cloud Box size.
+        </p>
       </div>
 
       <!-- Preview -->
@@ -1517,6 +1612,49 @@
           <div>
             <label>Sky B</label
             ><input id="v-sb" type="number" step="0.01" class="compact" />
+          </div>
+        </div>
+
+        <h3 style="margin:16px 0 8px; font-size:13px; letter-spacing:0.04em; text-transform:uppercase; opacity:0.82;">Cloud Box</h3>
+        <small>Controls the world-space raymarch volume. Half extents are distances from the box center.</small>
+
+        <div class="row" style="margin-top:10px;">
+          <div>
+            <label>Box Center X</label
+            ><input id="v-box-cx" type="number" step="0.05" class="compact" />
+          </div>
+          <div>
+            <label>Box Center Y</label
+            ><input id="v-box-cy" type="number" step="0.05" class="compact" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Box Center Z</label
+            ><input id="v-box-cz" type="number" step="0.05" class="compact" />
+          </div>
+          <div>
+            <label>Box Half X</label
+            ><input id="v-box-hx" type="number" step="0.05" min="0.001" class="compact" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Box Half Y</label
+            ><input id="v-box-hy" type="number" step="0.01" min="0.001" class="compact" />
+          </div>
+          <div>
+            <label>Box Half Z</label
+            ><input id="v-box-hz" type="number" step="0.05" min="0.001" class="compact" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Box UV Scale</label
+            ><input id="v-box-uv" type="number" step="0.05" min="0.001" class="compact" />
           </div>
         </div>
       </div>

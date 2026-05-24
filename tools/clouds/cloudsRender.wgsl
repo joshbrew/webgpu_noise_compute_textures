@@ -11,7 +11,7 @@ const SUN_EDGE_GLOW_RADIUS : f32 = 0.42;
 // ---------- I/O ----------
 struct RenderParams {
   layerIndex:u32,
-  renderQuality:u32,
+  compositeQuality:u32,
   shadowDarkness:f32,
   _pad2:f32,
 
@@ -397,18 +397,19 @@ fn godRayShaft(
   let edgeBand = smoothstep(0.035, 0.22, cloudA) * (1.0 - smoothstep(0.24, 0.62, cloudA));
   let localFade = mix(localFadeA, localFadeB, smoothstep(0.22, 0.82, cloudA)) * (1.0 - 0.62 * edgeBand);
 
-  var samples: u32 = 16u;
-  if (R.renderQuality >= 1u) {
-    samples = 24u;
+  var samples: u32 = 20u;
+  if (R.compositeQuality >= 1u) {
+    samples = 28u;
   }
-  if (R.renderQuality >= 2u) {
-    samples = 36u;
+  if (R.compositeQuality >= 2u) {
+    samples = 40u;
   }
 
   let dims = vec2<f32>(textureDimensions(tex, 0));
   let pix = 1.0 / max(min(dims.x, dims.y), 1.0);
-  let jitterCell = floor(uv * dims * 0.35);
-  let baseRand = hash12(jitterCell + sunHint * 19.1);
+  let pixelCell = floor(uv * dims);
+  let coarseCell = floor(uv * dims * 0.18);
+  let baseRand = mix(hash12(coarseCell + sunHint * 19.1), hash12(pixelCell + sunHint * 7.7), 0.35);
   let stepBase = reach / max(f32(samples), 1.0);
   let windowPre = radialGate * angularGate * screenGate * fogDensity * strength;
   if (windowPre <= 0.00001) {
@@ -439,16 +440,16 @@ fn godRayShaft(
     let along = reach * t;
 
     let beamWidth = max(
-      mix(0.0048, 0.026, sqrt(t)) *
-      mix(0.90, 1.30, lowSun) *
-      mix(0.96, 1.20, clamp(dist / max(span, 0.001), 0.0, 1.0)),
-      pix * mix(2.0, 5.0, sqrt(t))
+      mix(0.0065, 0.034, sqrt(t)) *
+      mix(0.92, 1.34, lowSun) *
+      mix(1.00, 1.26, clamp(dist / max(span, 0.001), 0.0, 1.0)),
+      pix * mix(3.5, 7.5, sqrt(t))
     );
 
     let jitter =
-      (hash12(jitterCell + vec2<f32>(f32(i) * 7.13, f32(i) * 3.17)) * 2.0 - 1.0) *
+      (hash12(pixelCell + vec2<f32>(f32(i) * 7.13, f32(i) * 3.17)) * 2.0 - 1.0) *
       beamWidth *
-      0.18;
+      0.10;
 
     let suv = clamp(
       sunHint + dir * along + perp * jitter,
@@ -456,9 +457,11 @@ fn godRayShaft(
       vec2<f32>(0.999, 0.999)
     );
 
-    let lod = mix(3.0, 1.0, t);
-    let occ = sampleAlphaWide(suv, layer, lod, beamWidth, dir, perp);
-    let edge = abs(occ - prevOcc);
+    let lod = mix(3.5, 1.85, t);
+    let occRaw = sampleAlphaWide(suv, layer, lod, beamWidth, dir, perp);
+    let occWide = textureSampleLevel(tex, samp, suv, layer, min(lod + 1.25, 4.0)).a;
+    let occ = mix(occRaw, clamp(occWide, 0.0, 1.0), 0.28);
+    let edge = abs(occ - prevOcc) * 0.72;
 
     let stepLen = max(stepBase * mix(0.88, 1.12, t), 1e-4);
     let extinction =
@@ -487,11 +490,11 @@ fn godRayShaft(
     }
   }
 
-  let brightBase = brightAccum / max(weightAccum * 0.085, 0.0001);
-  let blocker = blockerAccum / max(weightAccum * 0.16, 0.0001);
-  let edgeLift = smoothstep(0.016, 0.120, edgeAccum / max(weightAccum, 1.0));
+  let brightBase = brightAccum / max(weightAccum * 0.110, 0.0001);
+  let blocker = blockerAccum / max(weightAccum * 0.18, 0.0001);
+  let edgeLift = smoothstep(0.024, 0.160, edgeAccum / max(weightAccum, 1.0));
 
-  let shaft = brightBase * mix(0.92, 1.06, edgeLift) * pow(max(transmittance, 0.0), 0.34);
+  let shaft = brightBase * mix(0.88, 1.02, edgeLift) * pow(max(transmittance, 0.0), 0.38);
   let shadow = clamp(blocker * mix(0.68, 1.08, edgeLift), 0.0, 1.0);
 
   return vec2<f32>(
@@ -518,14 +521,14 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let towardSunSky = clamp(dot(rayDir, sunDir), 0.0, 1.0);
 
   let style = R.gradeStyle;
-  var zenithSky = mix(R.sky * 1.00 + vec3<f32>(0.012, 0.018, 0.032), vec3<f32>(0.58, 0.60, 0.82), lowSun * 0.22);
-  var horizonSky = mix(R.sky * 0.70 + vec3<f32>(0.050, 0.060, 0.080), vec3<f32>(0.88, 0.76, 0.82), lowSun * 0.26);
-  var sunWash = mix(vec3<f32>(1.0, 0.94, 0.88), vec3<f32>(1.0, 0.86, 0.90), lowSun);
-  var sunColor = mix(vec3<f32>(1.0, 0.92, 0.80), vec3<f32>(1.0, 0.86, 0.88), lowSun * 0.35);
-  var shadowCool = mix(vec3<f32>(0.92, 0.96, 1.0), vec3<f32>(0.88, 0.90, 0.99), lowSun * 0.30);
-  var edgeWarm = mix(vec3<f32>(1.0, 0.97, 0.92), vec3<f32>(1.0, 0.89, 0.91), lowSun * 0.40);
-  var litTintBase = vec3<f32>(1.0, 1.0, 1.0);
-  var shadowTintBase = vec3<f32>(0.98, 0.99, 1.0);
+  var zenithSky = mix(R.sky * 0.98 + vec3<f32>(0.010, 0.018, 0.034), vec3<f32>(0.56, 0.66, 0.86), lowSun * 0.18);
+  var horizonSky = mix(R.sky * 0.78 + vec3<f32>(0.040, 0.056, 0.078), vec3<f32>(0.90, 0.84, 0.88), lowSun * 0.22);
+  var sunWash = mix(vec3<f32>(1.02, 0.98, 0.94), vec3<f32>(1.06, 0.90, 0.84), lowSun * 0.42);
+  var sunColor = mix(vec3<f32>(1.02, 0.98, 0.94), vec3<f32>(1.08, 0.90, 0.82), lowSun * 0.34);
+  var shadowCool = mix(vec3<f32>(0.84, 0.90, 0.98), vec3<f32>(0.76, 0.82, 0.96), lowSun * 0.26);
+  var edgeWarm = mix(vec3<f32>(1.02, 1.00, 0.98), vec3<f32>(1.08, 0.96, 0.90), lowSun * 0.34);
+  var litTintBase = vec3<f32>(0.99, 1.0, 1.0);
+  var shadowTintBase = vec3<f32>(0.84, 0.90, 0.98);
 
   if (style == 1u) {
     zenithSky = mix(R.sky * 0.92 + vec3<f32>(0.018, 0.012, 0.044), vec3<f32>(0.58, 0.40, 0.74), lowSun * 0.62);
@@ -691,7 +694,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   var gradLenCached = 0.0;
   var occCached = cloudA;
 
-  if (R.renderQuality >= 1u) {
+  if (R.compositeQuality >= 1u) {
     let grad = alphaGradLite(in.uv, layer);
     let gradLen = length(grad);
     gradLenCached = gradLen;
@@ -787,13 +790,13 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let userMidLift = clamp(R.styleControls.w, 0.0, 2.20);
   let userShadowDarkness = clamp(R.shadowDarkness, 0.0, 6.00);
 
-  var styleLightBoost = 1.00;
-  var styleShadowDarkness = 0.22;
-  var styleRimBoost = 1.00;
-  var styleShadowColorAmt = 0.82;
-  var styleBaseMix = 0.86;
-  var styleMidLift = 0.10;
-  var styleSunInfluence = 0.22;
+  var styleLightBoost = 1.10;
+  var styleShadowDarkness = 0.14;
+  var styleRimBoost = 1.16;
+  var styleShadowColorAmt = 0.68;
+  var styleBaseMix = 0.82;
+  var styleMidLift = 0.18;
+  var styleSunInfluence = 0.10;
   if (style == 1u) {
     styleLightBoost = 1.22;
     styleShadowDarkness = 0.26;
@@ -887,7 +890,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let shadowTintTarget = max(mix(shadowTintBase, userShadowTint, styleShadowColorAmt), vec3<f32>(0.015, 0.015, 0.015));
   let litTintTarget = max(mix(litTintBase, userLightTint, 0.86), vec3<f32>(0.02, 0.02, 0.02));
   let litCloudTint = litTintTarget * mix(vec3<f32>(1.0, 1.0, 1.0), sunColor, styleSunInfluence);
-  let coolAmbientTint = mix(shadowTintTarget, shadowTintTarget * max(R.sky + vec3<f32>(0.10, 0.11, 0.16), vec3<f32>(0.20, 0.20, 0.24)), 0.28);
+  let coolAmbientTint = mix(shadowTintTarget, shadowTintTarget * max(R.sky + vec3<f32>(0.08, 0.10, 0.14), vec3<f32>(0.18, 0.18, 0.22)), 0.18);
   let sunsetMidMix = select(mix(0.58, 0.76, bodyCore), mix(0.70, 0.84, bodyCore), style == 1u);
   let midCloudTint = mix(litCloudTint, coolAmbientTint, sunsetMidMix);
   let rimTint = max(mix(edgeWarm, userEdgeTint, 0.82), vec3<f32>(0.02, 0.02, 0.02)) * mix(vec3<f32>(1.0, 1.0, 1.0), sunColor, 0.10);
@@ -904,30 +907,31 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let rimBand = clamp(sunEdgeSilver * (0.62 + 0.38 * (1.0 - bodyCore)), 0.0, 1.0);
   let lightBand = clamp(directSurface * (1.0 - cavity * 0.42) + ridgeLift * 0.48 + rimBand * 0.16, 0.0, 1.0);
   let lightBlock = clamp(1.0 - lightBand * 0.88 - rimBand * 0.36, 0.0, 1.0);
-  let shadowRaw = (finalShadow * 0.76 + cavity * 0.30 + imageCavity * 0.40 + opticalDepth * lightBlock * 0.34) * (0.66 + 0.20 * bodyCore);
+  let shadowRaw = (finalShadow * 0.68 + cavity * 0.24 + imageCavity * 0.30 + opticalDepth * lightBlock * 0.26) * (0.60 + 0.16 * bodyCore);
   let shadowSoftBand = clamp(shadowRaw * userShadowStrength, 0.0, 1.0);
   let shadowEdgeAmt = clamp(userShadowEdge / 2.20, 0.0, 1.0);
   let shadowHardLo = mix(0.04, 0.30, shadowEdgeAmt);
   let shadowHardHi = mix(0.96, 0.58, shadowEdgeAmt);
   let shadowHardBand = smoothstep(shadowHardLo, max(shadowHardLo + 0.05, shadowHardHi), shadowSoftBand);
   let shadowBand = mix(shadowSoftBand, shadowHardBand, shadowEdgeAmt);
-  let midBand = clamp((1.0 - lightBand * 0.66) * (1.0 - shadowBand * 0.44) * (0.50 + 0.50 * opticalDepth), 0.0, 1.0);
+  let midBand = clamp((1.0 - lightBand * 0.62) * (1.0 - shadowBand * 0.36) * (0.46 + 0.54 * opticalDepth), 0.0, 1.0);
   let highlightBand = clamp(lightBand * (1.0 - shadowBand * 0.42) + rimBand * 0.24, 0.0, 1.0);
 
   let paletteBody = mix(midCloudTint, litCloudTint, highlightBand);
   let shadowBodyDarkness = clamp(styleShadowDarkness + userShadowDarkness * 0.16, 0.0, 1.35);
-  let shadowBody = coolAmbientTint * (0.64 + 0.34 * baseBodyLum) * max(0.0, 1.0 - shadowBodyDarkness * clamp(shadowBand, 0.0, 1.0));
+  let shadowBody = coolAmbientTint * (0.72 + 0.24 * baseBodyLum) * max(0.0, 1.0 - shadowBodyDarkness * 0.82 * clamp(shadowBand, 0.0, 1.0));
   let bodyTint = mix(paletteBody, shadowBody, clamp(shadowBand * 0.70, 0.0, 0.88));
-  let retainedShape = vec3<f32>(baseBodyLum) * mix(0.68, 0.96, highlightBand) * mix(1.0, 0.82, shadowBand);
+  let retainedShape = vec3<f32>(baseBodyLum) * mix(0.80, 1.08, highlightBand) * mix(1.0, 0.88, shadowBand);
 
-  var cloudShaded = mix(cloudRGB * vec3<f32>(0.18), bodyTint * retainedShape * detailTint, styleBaseMix);
-  cloudShaded += litCloudTint * cloudA * highlightBand * (0.060 + 0.080 * styleLightBoost) * (1.0 - shadowBand * 0.62);
-  cloudShaded += midCloudTint * cloudA * midBand * styleMidLift * userMidLift * select(1.0, 0.78, style == 1u);
+  var cloudShaded = mix(cloudRGB * vec3<f32>(0.10), bodyTint * retainedShape * detailTint, min(styleBaseMix + 0.03, 0.98));
+  cloudShaded += litCloudTint * cloudA * highlightBand * (0.085 + 0.095 * styleLightBoost) * (1.0 - shadowBand * 0.52);
+  cloudShaded += midCloudTint * cloudA * midBand * styleMidLift * userMidLift * 0.82 * select(1.0, 0.78, style == 1u);
   cloudShaded += rimTint * rimBand * (0.40 + 0.30 * R.sunBloom) * styleRimBoost * userRimStrength;
   cloudShaded += sunColor * cloudA * (fluffyLight * 0.026 + ridgeLift * 0.034 + softWrap * 0.014) * (1.0 - shadowBand * 0.90) * userSunBleed;
-  cloudShaded = mix(cloudShaded, shadowBody * baseBodyLum, clamp(shadowBand * 0.22 + imageCavity * 0.10, 0.0, 0.48));
+  cloudShaded = mix(cloudShaded, shadowBody * baseBodyLum, clamp(shadowBand * 0.14 + imageCavity * 0.06, 0.0, 0.28));
 
   let liftBand = clamp(midBand * 0.60 + highlightBand * 0.36 + (1.0 - shadowBand) * 0.12, 0.0, 1.0);
+  cloudShaded = mix(cloudShaded, max(cloudShaded, vec3<f32>(baseBodyLum) * vec3<f32>(0.98, 0.99, 1.0)), highlightBand * 0.10 + rimBand * 0.06);
   let liftTint = mix(midCloudTint, litCloudTint, clamp(highlightBand * 0.58 + softWrap * 0.20, 0.0, 1.0));
   cloudShaded += liftTint * cloudA * liftBand * (0.040 + 0.075 * userColorLift);
   let shadedLum = luma(cloudShaded);

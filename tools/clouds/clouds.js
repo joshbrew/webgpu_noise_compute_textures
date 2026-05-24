@@ -64,8 +64,8 @@ export class CloudComputeBuilder {
     this._abParams = new ArrayBuffer(80);
     this._dvParams = new DataView(this._abParams);
 
-    // NoiseTransforms (updated shader): 112 bytes
-    this._abNTransform = new ArrayBuffer(112);
+    // NoiseTransforms (updated shader): 128 bytes
+    this._abNTransform = new ArrayBuffer(128);
     this._dvNTransform = new DataView(this._abNTransform);
 
     // Frame: 64 bytes
@@ -181,12 +181,12 @@ export class CloudComputeBuilder {
         attenuationClamp: 0.015,
         inScatterG: 0.55,
         silverIntensity: 12.0,
-        silverExponent: 5.0,
+        silverExponent: 12.0,
         outScatterG: 0.08,
         inVsOut: 0.55,
-        outScatterAmbientAmt: 0.12,
-        ambientMinimum: 0.075,
-        sunColor: [1.0, 0.96, 0.90],
+        outScatterAmbientAmt: 0.08,
+        ambientMinimum: 0.04,
+        sunColor: [1.0, 0.985, 0.95],
         densityDivMin: 0.001,
         silverDirectionBias: 0.9,
         silverHorizonBoost: 0.35,
@@ -201,6 +201,9 @@ export class CloudComputeBuilder {
         detailAxisScale: [1, 1, 1],
         weatherOffsetWorld: [0, 0, 0],
         weatherAxisScale: [1, 1, 1],
+        shapeBias: 0.0,
+        detailBias: 0.0,
+        weatherBias: 0.0,
       },
       reproj: {
         enabled: 0,
@@ -224,19 +227,19 @@ export class CloudComputeBuilder {
       },
       box: {
         center: [0, 0, 0],
-        half: [1, 0.6, 1],
-        uvScale: 1.5,
+        half: [18, 0.6, 18],
+        uvScale: 1.0,
       },
       tuning: {
         maxSteps: 256,
         minStep: 0.003,
         maxStep: 0.16,
-        sunSteps: 4,
-        sunStride: 6,
+        sunSteps: 6,
+        sunStride: 3,
         sunMinTr: 0.003,
         phaseJitter: 1.0,
         stepJitter: 0.3,
-        baseJitterFrac: 0.15,
+        baseJitterFrac: 0.02,
         topJitterFrac: 0.1,
         lodBiasWeather: 1.5,
         aabbFaceOffset: 0.0015,
@@ -255,15 +258,22 @@ export class CloudComputeBuilder {
         taaRelMin: 0.22,
         taaRelMax: 1.1,
         taaAbsEps: 0.02,
-        farStart: 0.65,
-        farFull: 2.4,
-        farLodPush: 1.1,
-        farDetailAtten: 0.34,
-        farStepMult: 2.65,
+        farStart: 1.05,
+        farFull: 4.2,
+        farLodPush: 0.55,
+        farDetailAtten: 0.72,
+        farStepMult: 2.05,
         bnFarScale: 0.28,
         farTaaHistoryBoost: 1.8,
-        raySmoothDens: 0.46,
+        raySmoothDens: 0.34,
         raySmoothSun: 0.34,
+        fluffFactor: 2.0,
+        anvilLift: 0.6,
+        alphaCutoff: 0.98,
+        thickBoxPerf: 0.65,
+        thickStepBoost: 1.28,
+        thickDetailSkip: 0.18,
+        thickLightSkip: 0.42,
       },
     };
 
@@ -575,12 +585,14 @@ export class CloudComputeBuilder {
     this._samp2D = d.createSampler({
       magFilter: "linear",
       minFilter: "linear",
+      mipmapFilter: "linear",
       addressModeU: "repeat",
       addressModeV: "repeat",
     });
     this._sampShape = d.createSampler({
       magFilter: "linear",
       minFilter: "linear",
+      mipmapFilter: "linear",
       addressModeU: "repeat",
       addressModeV: "repeat",
       addressModeW: "repeat",
@@ -588,6 +600,7 @@ export class CloudComputeBuilder {
     this._sampDetail = d.createSampler({
       magFilter: "linear",
       minFilter: "linear",
+      mipmapFilter: "linear",
       addressModeU: "repeat",
       addressModeV: "repeat",
       addressModeW: "repeat",
@@ -595,6 +608,7 @@ export class CloudComputeBuilder {
     this._sampBN = d.createSampler({
       magFilter: "linear",
       minFilter: "linear",
+      mipmapFilter: "linear",
       addressModeU: "repeat",
       addressModeV: "repeat",
     });
@@ -647,7 +661,7 @@ export class CloudComputeBuilder {
     });
 
     this.nTransformBuffer = d.createBuffer({
-      size: 112,
+      size: 128,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -872,6 +886,9 @@ export class CloudComputeBuilder {
       s.weatherOffsetWorld = v3(v.weatherOffsetWorld, 0, 0, 0);
     if (_has(v, "weatherAxisScale"))
       s.weatherAxisScale = v3(v.weatherAxisScale, 1, 1, 1);
+    if (_has(v, "shapeBias")) s.shapeBias = +v.shapeBias;
+    if (_has(v, "detailBias")) s.detailBias = +v.detailBias;
+    if (_has(v, "weatherBias")) s.weatherBias = +v.weatherBias;
 
     const dv = this._dvNTransform;
 
@@ -916,6 +933,12 @@ export class CloudComputeBuilder {
     dv.setFloat32(100, s.weatherAxisScale[1] || 1.0, true);
     dv.setFloat32(104, s.weatherAxisScale[2] || 1.0, true);
     dv.setFloat32(108, 0.0, true);
+
+    // shapeBias, detailBias, weatherBias, pad (112..127)
+    dv.setFloat32(112, +s.shapeBias || 0.0, true);
+    dv.setFloat32(116, +s.detailBias || 0.0, true);
+    dv.setFloat32(120, +s.weatherBias || 0.0, true);
+    dv.setFloat32(124, 0.0, true);
 
     this._writeIfChanged(
       "ntransform",
@@ -1272,11 +1295,16 @@ export class CloudComputeBuilder {
     putF(140, s.raySmoothDens);
 
     putF(144, s.raySmoothSun);
-    putF(148, 0.0);
-    putF(152, 0.0);
-    putF(156, 0.0);
+    putF(148, s.fluffFactor);
+    putF(152, s.anvilLift);
+    putF(156, s.alphaCutoff);
 
-    for (let i = 160; i < this._abTuning.byteLength; i += 4)
+    putF(160, s.thickBoxPerf);
+    putF(164, s.thickStepBoost);
+    putF(168, s.thickDetailSkip);
+    putF(172, s.thickLightSkip);
+
+    for (let i = 176; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
@@ -2105,7 +2133,18 @@ export class CloudComputeBuilder {
         if (x >= P.dstW || y >= P.dstH) { return; }
 
         let uv = (vec2<f32>(f32(x) + 0.5, f32(y) + 0.5)) / vec2<f32>(max(f32(P.dstW), 1.0), max(f32(P.dstH), 1.0));
-        let c = textureSampleLevel(srcTex, samp, uv, i32(P.layer), 0.0);
+        let srcDim = vec2<f32>(max(f32(P.srcW), 1.0), max(f32(P.srcH), 1.0));
+        let dstDim = vec2<f32>(max(f32(P.dstW), 1.0), max(f32(P.dstH), 1.0));
+        let texel = 1.0 / srcDim;
+        let c0 = textureSampleLevel(srcTex, samp, uv, i32(P.layer), 0.0);
+        let c1 = textureSampleLevel(srcTex, samp, uv + vec2<f32>( texel.x, 0.0), i32(P.layer), 0.0);
+        let c2 = textureSampleLevel(srcTex, samp, uv + vec2<f32>(-texel.x, 0.0), i32(P.layer), 0.0);
+        let c3 = textureSampleLevel(srcTex, samp, uv + vec2<f32>(0.0,  texel.y), i32(P.layer), 0.0);
+        let c4 = textureSampleLevel(srcTex, samp, uv + vec2<f32>(0.0, -texel.y), i32(P.layer), 0.0);
+        let crossAvg = c0 * 0.40 + (c1 + c2 + c3 + c4) * 0.15;
+        let divider = max(dstDim.x / srcDim.x, dstDim.y / srcDim.y);
+        let resolveF = smoothstep(2.0, 4.5, divider) * smoothstep(0.015, 0.35, c0.a);
+        let c = mix(c0, crossAvg, resolveF * 0.38);
 
         let outX = i32(P.dstX + x);
         let outY = i32(P.dstY + y);
@@ -2152,6 +2191,7 @@ export class CloudComputeBuilder {
     const samp = this.device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
+      mipmapFilter: "linear",
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });
@@ -2279,6 +2319,7 @@ export class CloudComputeBuilder {
     const samp = this.device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
+      mipmapFilter: "linear",
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });
@@ -2358,7 +2399,7 @@ export class CloudComputeBuilder {
   _writeRenderUniforms(opts = {}) {
     const dv = this._dvRender;
     const layerIndex = (opts.layerIndex ?? 0) >>> 0;
-    const exposure = opts.exposure ?? 1.2;
+    const exposure = opts.exposure ?? 1.28;
     const sunBloom = opts.sunBloom ?? 0.0;
     const skyColor = opts.skyColor ?? [0.55, 0.7, 0.95];
     const gradeStyle = (opts.gradeStyle ?? 0) >>> 0;
@@ -2366,14 +2407,14 @@ export class CloudComputeBuilder {
     const lightTint = opts.lightTint ?? [1.0, 1.0, 1.0];
     const shadowTint = opts.shadowTint ?? [0.0, 0.0, 0.0];
     const edgeTint = opts.edgeTint ?? [1.0, 1.0, 1.0];
-    const styleShadowStrength = opts.styleShadowStrength ?? 0.88;
+    const styleShadowStrength = opts.styleShadowStrength ?? 0.74;
     const styleShadowEdge = opts.styleShadowEdge ?? 0.0;
     const styleShadowDarkness = opts.styleShadowDarkness ?? 0.0;
-    const styleColorLift = opts.styleColorLift ?? 1.12;
-    const styleSaturation = opts.styleSaturation ?? 1.10;
-    const styleRimStrength = opts.styleRimStrength ?? 1.0;
-    const styleSunBleed = opts.styleSunBleed ?? 0.85;
-    const styleMidLift = opts.styleMidLift ?? 1.10;
+    const styleColorLift = opts.styleColorLift ?? 1.18;
+    const styleSaturation = opts.styleSaturation ?? 1.04;
+    const styleRimStrength = opts.styleRimStrength ?? 1.08;
+    const styleSunBleed = opts.styleSunBleed ?? 0.96;
+    const styleMidLift = opts.styleMidLift ?? 0.94;
     const godRaysEnabled = opts.godRaysEnabled ?? false;
     const godRayStrength = opts.godRayStrength ?? 0.0;
     const godRayLength = opts.godRayLength ?? 1.0;
@@ -2436,10 +2477,10 @@ export class CloudComputeBuilder {
       sunDir = norm([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
     }
 
-    const renderQuality = Math.max(0, Math.min(2, opts.renderQuality ?? 1)) >>> 0;
+    const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
 
     dv.setUint32(0, layerIndex, true);
-    dv.setUint32(4, renderQuality, true);
+    dv.setUint32(4, compositeQuality, true);
     dv.setFloat32(8, styleShadowDarkness, true);
     dv.setFloat32(12, 0.0, true);
     wv3(16, camPos);
