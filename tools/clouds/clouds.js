@@ -1399,8 +1399,10 @@ export class CloudComputeBuilder {
     putF(212, s.directLightBoost ?? 0.58);
     putF(216, s.alphaBoostThreshold ?? 0.22);
     putF(220, s.alphaBoostAmount ?? 0.16);
+    putF(224, s.alphaMinCutoff ?? 0.04);
+    putF(228, s.alphaMinSoftness ?? 0.035);
 
-    for (let i = 224; i < this._abTuning.byteLength; i += 4)
+    for (let i = 232; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
@@ -2044,6 +2046,8 @@ export class CloudComputeBuilder {
       (s.frameIndex >>> 0) > 0 &&
       this.historyPrevView &&
       this.historyOutView &&
+      this.outView &&
+      this._getResId(this.historyOutView) !== this._getResId(this.outView) &&
       this.width > 0 &&
       this.height > 0
     );
@@ -2080,7 +2084,8 @@ export class CloudComputeBuilder {
   }
 
   _ensureHistoryCopyPipeline() {
-    if (this._historyCopy && this._historyCopy.format === "rgba16float") return this._historyCopy;
+    const outFormat = this.outFormat || "rgba16float";
+    if (this._historyCopy && this._historyCopy.format === outFormat) return this._historyCopy;
 
     const wgsl = `
       struct Frame {
@@ -2113,9 +2118,10 @@ export class CloudComputeBuilder {
       };
 
       @group(0) @binding(0) var srcTex: texture_2d_array<f32>;
-      @group(0) @binding(1) var dstTex: texture_storage_2d_array<rgba16float, write>;
+      @group(0) @binding(1) var historyDstTex: texture_storage_2d_array<rgba16float, write>;
       @group(0) @binding(2) var<uniform> frame: Frame;
       @group(0) @binding(3) var<uniform> reproj: ReprojSettings;
+      @group(0) @binding(4) var outputDstTex: texture_storage_2d_array<${outFormat}, write>;
 
       @compute @workgroup_size(16, 16, 1)
       fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -2125,7 +2131,8 @@ export class CloudComputeBuilder {
         let p = vec2<i32>(i32(gid.x), i32(gid.y));
         let layer = frame.layerIndex;
         let c = textureLoad(srcTex, p, layer, 0);
-        textureStore(dstTex, p, layer, c);
+        textureStore(historyDstTex, p, layer, c);
+        textureStore(outputDstTex, p, layer, c);
       }
     `;
 
@@ -2136,24 +2143,26 @@ export class CloudComputeBuilder {
         { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "2d-array" } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: outFormat, viewDimension: "2d-array" } },
       ],
     });
     const pipe = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
       compute: { module, entryPoint: "main" },
     });
-    this._historyCopy = { format: "rgba16float", bgl, pipe };
+    this._historyCopy = { format: outFormat, bgl, pipe };
     this._historyCopyBgCache.clear();
     this._historyCopyBgKeys.length = 0;
     return this._historyCopy;
   }
 
   _getHistoryCopyBindGroup() {
-    if (!this.historyPrevView || !this.historyOutView) return null;
+    if (!this.historyPrevView || !this.historyOutView || !this.outView) return null;
     const h = this._ensureHistoryCopyPipeline();
     const key = [
       this._getResId(this.historyPrevView),
       this._getResId(this.historyOutView),
+      this._getResId(this.outView),
       this._getResId(this.frameBuffer),
       this._getResId(this.reprojBuffer),
     ].join("|");
@@ -2166,6 +2175,7 @@ export class CloudComputeBuilder {
         { binding: 1, resource: this.historyOutView },
         { binding: 2, resource: { buffer: this.frameBuffer } },
         { binding: 3, resource: { buffer: this.reprojBuffer } },
+        { binding: 4, resource: this.outView },
       ],
     });
     this._historyCopyBgCache.set(key, bg);

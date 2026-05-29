@@ -2520,7 +2520,7 @@ async function _handleMessage(ev) {
 
         if (incomingTransforms && typeof incomingTransforms === "object") {
           applyNoiseTransforms(incomingTransforms, {
-            allowPositions: true,
+            allowPositions: !!incomingTransforms.explicitPositions || !!incomingTransforms.explicit,
             allowScale: true,
             allowVel: true,
             additive: !!incomingTransforms.additive,
@@ -2565,6 +2565,19 @@ async function _handleMessage(ev) {
         console.warn("setLiveFrameState failed", err);
         respond(false, err);
       }
+      return;
+    }
+
+    if (type === "getFrameState") {
+      respond(true, {
+        ok: true,
+        loopRunning,
+        loopEnabled,
+        frame: submittedFrameCount,
+        transforms: snapshotTransforms(),
+        reproj: workerReproj ? Object.assign({}, workerReproj) : null,
+        coarseFactor: lastRunPayload?.coarseFactor || 1,
+      });
       return;
     }
 

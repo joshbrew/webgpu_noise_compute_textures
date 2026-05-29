@@ -645,7 +645,7 @@ function injectPreviewLookControls() {
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider / Coarse Factor</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Compute coarse factor for still and animated renders. 1 = full resolution, 4 is the default coarse compute scale, then upsampled to the full presentation canvas."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Composite Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Step Boost</span><input id="t-frontOcclusionStepBoost" type="number" step="0.05" min="1" max="8" title="Maximum behind-front-cloud step multiplier."></label>
@@ -655,6 +655,7 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Direct Light Boost</span><input id="t-directLightBoost" type="number" step="0.01" min="0" max="2" title="Brightness boost for the direct-light profile used when looking at sunlit cloud tops and faces."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Min</span><input id="t-alphaBoostThreshold" type="number" step="0.01" min="0" max="1" title="Only cloud pixels with final alpha above this threshold receive the additive end-stage alpha boost."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Add</span><input id="t-alphaBoostAmount" type="number" step="0.01" min="0" max="1" title="Additive alpha applied after cloud lighting and transmission, ramped from the Alpha Boost Min threshold upward."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Min Cutoff</span><input id="t-alphaMinCutoff" type="number" step="0.005" min="0" max="0.5" title="Final cloud alpha below this threshold is faded out inside the cloud buffer itself before temporal history and sky compositing. Use this to remove barely translucent wisps and horizontal haze cuts."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="5"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Edge</span><input id="v-shadow-edge" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Darkness</span><input id="v-shadow-darkness" type="number" step="0.01" min="0" max="6"></label>
@@ -1350,6 +1351,39 @@ async function setTileTransformsRPC(tt) {
   return rpc("setTileTransforms", { tileTransforms: safeClone(tt) });
 }
 
+async function getWorkerFrameState() {
+  try {
+    return await rpc("getFrameState", {});
+  } catch {
+    return null;
+  }
+}
+
+function mergeAnimatedOffsetsForPayload(workerFrameState = null) {
+  const out = safeClone(tileTransforms);
+  const src = workerFrameState?.transforms || null;
+  const copyOffset = (dstKey, srcKey) => {
+    const v = src?.[srcKey];
+    if (!Array.isArray(v) || v.length < 3) return;
+    const a = [Number(v[0]) || 0, Number(v[1]) || 0, Number(v[2]) || 0];
+    out[dstKey] = a;
+    out[`${dstKey}World`] = a.slice(0, 3);
+  };
+
+  copyOffset("weatherOffset", "weatherOffsetWorld");
+  copyOffset("shapeOffset", "shapeOffsetWorld");
+  copyOffset("detailOffset", "detailOffsetWorld");
+
+  out.explicit = true;
+  out.explicitPositions = true;
+  return out;
+}
+
+function isPositionControlEvent(ev) {
+  const id = ev?.target?.id || "";
+  return /-pos-[xyz]$/.test(id);
+}
+
 // ---- entry-point helpers ----
 function isEntry4D(ep) {
   return typeof ep === "string" && /4D/.test(ep);
@@ -1472,6 +1506,7 @@ function readTuning() {
     directLightBoost: +($("t-directLightBoost")?.value || preview.directLightBoost || 0.58),
     alphaBoostThreshold: +($("t-alphaBoostThreshold")?.value || 0.22),
     alphaBoostAmount: +($("t-alphaBoostAmount")?.value || 0.16),
+    alphaMinCutoff: +($("t-alphaMinCutoff")?.value || 0.04),
   };
 }
 
@@ -1974,23 +2009,28 @@ function buildLiveAnimationPayload(options = {}) {
   };
 
   if (options.includeTransforms) {
-    payload.tileTransforms = Object.assign(safeClone(tileTransforms), { explicit: true });
+    payload.tileTransforms = Object.assign(safeClone(tileTransforms), {
+      explicit: !!options.explicitPositions,
+      explicitPositions: !!options.explicitPositions,
+    });
   }
 
   return payload;
 }
 
 let _liveAnimationUpdateIncludeTransforms = false;
+let _liveAnimationUpdateExplicitPositions = false;
 
-function queueLiveAnimationUpdate(delayMs = 90, options = {}) {
+function queueLiveAnimationUpdate(_delayMs = 90, options = {}) {
   if (!animRunning) return false;
   _liveAnimationUpdateQueued = true;
   _liveAnimationUpdateIncludeTransforms = _liveAnimationUpdateIncludeTransforms || !!options.includeTransforms;
-  if (_liveAnimationUpdateTimer) clearTimeout(_liveAnimationUpdateTimer);
-  _liveAnimationUpdateTimer = setTimeout(() => {
+  _liveAnimationUpdateExplicitPositions = _liveAnimationUpdateExplicitPositions || !!options.explicitPositions;
+  if (_liveAnimationUpdateTimer) return true;
+  _liveAnimationUpdateTimer = requestAnimationFrame(() => {
     _liveAnimationUpdateTimer = 0;
     flushLiveAnimationUpdate().catch((err) => console.warn("live animation update failed", err));
-  }, delayMs);
+  });
   return true;
 }
 
@@ -2005,8 +2045,10 @@ async function flushLiveAnimationUpdate() {
     do {
       _liveAnimationUpdateQueued = false;
       const includeTransforms = _liveAnimationUpdateIncludeTransforms;
+      const explicitPositions = _liveAnimationUpdateExplicitPositions;
       _liveAnimationUpdateIncludeTransforms = false;
-      const payload = buildLiveAnimationPayload({ includeTransforms });
+      _liveAnimationUpdateExplicitPositions = false;
+      const payload = buildLiveAnimationPayload({ includeTransforms, explicitPositions });
       await rpc("setLiveFrameState", payload);
       lastTuningSent = cloneTuning(payload.tuning);
     } while (_liveAnimationUpdateQueued && animRunning);
@@ -2080,6 +2122,51 @@ function debounceAsync(fn, delayMs = 90) {
   return wrapped;
 }
 
+function frameCoalescedAsync(fn) {
+  let frame = 0;
+  let running = false;
+  let rerun = false;
+  let lastArgs = [];
+
+  const run = async () => {
+    frame = 0;
+    if (running) {
+      rerun = true;
+      return;
+    }
+    running = true;
+    try {
+      do {
+        rerun = false;
+        await fn(...lastArgs);
+      } while (rerun);
+    } finally {
+      running = false;
+    }
+  };
+
+  const wrapped = (...args) => {
+    lastArgs = args;
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      run().catch((err) => console.warn("live UI task failed", err));
+    });
+  };
+
+  wrapped.cancel = () => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+  };
+
+  wrapped.flush = (...args) => {
+    lastArgs = args;
+    wrapped.cancel();
+    return run();
+  };
+
+  return wrapped;
+}
+
 function attachByIds(ids, handler, opts = {}) {
   const delayMs = opts.delayMs ?? 90;
   const onInput = debounceAsync(handler, delayMs);
@@ -2097,10 +2184,24 @@ function attachByIds(ids, handler, opts = {}) {
 
 function attachPanelInputs(panel, handler, delayMs = 90) {
   if (!panel) return;
-  const onInput = debounceAsync(handler, delayMs);
-  const onChange = (ev) => {
-    onInput.flush(ev).catch((err) => console.warn("panel change handler failed", err));
+  const debouncedInput = debounceAsync(handler, delayMs);
+  const liveInput = frameCoalescedAsync(handler);
+
+  const onInput = (ev) => {
+    if (animRunning) {
+      debouncedInput.cancel();
+      liveInput(ev);
+      return;
+    }
+    liveInput.cancel();
+    debouncedInput(ev);
   };
+
+  const onChange = (ev) => {
+    const runner = animRunning ? liveInput : debouncedInput;
+    runner.flush(ev).catch((err) => console.warn("panel change handler failed", err));
+  };
+
   panel.querySelectorAll("input,select,textarea").forEach((inp) => {
     inp.addEventListener("input", onInput);
     inp.addEventListener("change", onChange);
@@ -2406,11 +2507,19 @@ async function wireUI() {
         console.warn("Failed setReproj", e);
       }
 
+      readWeather();
+      readWeatherG();
+      readWeatherB();
+      readShape();
+      readShapeTransform();
+      readDetail();
+      readDetailTransform();
       readPreview();
       const cloudParams = readCloudParams();
 
       setBusy(true, "Seeding animation...");
       try {
+        const workerFrameState = await getWorkerFrameState();
         await sendTuningNow();
         const payload = {
           weatherParams: safeClone(weatherParams),
@@ -2418,10 +2527,10 @@ async function wireUI() {
           weatherBParams: safeClone(weatherBParams),
           shapeParams: safeClone(shapeParams),
           detailParams: safeClone(detailParams),
-          tileTransforms: safeClone(tileTransforms),
+          tileTransforms: mergeAnimatedOffsetsForPayload(workerFrameState),
           preview: safeClone(preview),
           cloudParams,
-          reproj: rp,
+          reproj: getFreshFullFrameReprojPayload(),
         };
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
@@ -2483,6 +2592,7 @@ async function wireUI() {
       readPreview();
       const cloudParams = readCloudParams();
       await sendTuningNow();
+      const workerFrameState = await getWorkerFrameState();
 
       const payload = {
         weatherParams: safeClone(weatherParams),
@@ -2490,7 +2600,7 @@ async function wireUI() {
         weatherBParams: safeClone(weatherBParams),
         shapeParams: safeClone(shapeParams),
         detailParams: safeClone(detailParams),
-        tileTransforms: safeClone(tileTransforms),
+        tileTransforms: mergeAnimatedOffsetsForPayload(workerFrameState),
         preview: safeClone(preview),
         cloudParams,
       };
@@ -2586,10 +2696,10 @@ async function wireUI() {
       "we-axis-y",
       "we-axis-z",
     ],
-    async () => {
+    async (ev) => {
       try {
         readWeatherTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -2697,10 +2807,10 @@ async function wireUI() {
       "sh-axis-y",
       "sh-axis-z",
     ],
-    async () => {
+    async (ev) => {
       try {
         readShapeTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -2740,10 +2850,10 @@ async function wireUI() {
       "de-axis-y",
       "de-axis-z",
     ],
-    async () => {
+    async (ev) => {
       try {
         readDetailTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -3165,6 +3275,7 @@ async function init() {
   setIf("t-directLightBoost", preview.directLightBoost ?? 0.58);
   setIf("t-alphaBoostThreshold", 0.22);
   setIf("t-alphaBoostAmount", 0.16);
+  setIf("t-alphaMinCutoff", 0.04);
 
   const anvilInput = $("p-anvil");
   if (anvilInput) {
