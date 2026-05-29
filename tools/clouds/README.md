@@ -22,13 +22,15 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 
 # Screenshots
 
-<img width="1721" height="1695" alt="image" src="https://github.com/user-attachments/assets/52a1366b-5a81-4e0c-9fe9-1c5f00676911" />
-<img width="1709" height="1627" alt="image" src="https://github.com/user-attachments/assets/14edd013-c56c-4cb4-8d60-d8a474a2b356" />
-<img width="1285" height="1013" alt="image" src="https://github.com/user-attachments/assets/d043386e-a4e3-4c38-9b6f-1b9e8f0eb76e" />
-<img width="2125" height="908" alt="Screenshot 2026-05-07 180853" src="https://github.com/user-attachments/assets/99f87b1f-0159-414a-93d2-d9a071f82448" />
-<img width="1601" height="1035" alt="image" src="https://github.com/user-attachments/assets/e7b3e377-1c31-45d8-b200-42e2a2b0da93" />
-<img width="1598" height="839" alt="image" src="https://github.com/user-attachments/assets/ef959ab5-070b-4fc1-bf39-444d091674c6" />
-<img width="2600" height="1402" alt="Screenshot 2026-05-07 223522" src="https://github.com/user-attachments/assets/939b4692-5aea-4238-93ba-84015ded4231" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/a926c419-e17f-46c3-a9c5-4ce5a9c38733" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/1325f126-dd80-43f9-a52f-9680cae36d24" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/52a1366b-5a81-4e0c-9fe9-1c5f00676911" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/14edd013-c56c-4cb4-8d60-d8a474a2b356" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/d043386e-a4e3-4c38-9b6f-1b9e8f0eb76e" />
+<img width="800" alt="Screenshot 2026-05-07 180853" src="https://github.com/user-attachments/assets/99f87b1f-0159-414a-93d2-d9a071f82448" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/e7b3e377-1c31-45d8-b200-42e2a2b0da93" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/ef959ab5-070b-4fc1-bf39-444d091674c6" />
+<img width="800" alt="Screenshot 2026-05-07 223522" src="https://github.com/user-attachments/assets/939b4692-5aea-4238-93ba-84015ded4231" />
 
 
 ---
@@ -103,13 +105,17 @@ The renderer is a compute-based volumetric cloud pass.
 6. Optionally reuse temporal history for animated/reprojected rendering.
 7. Optionally composite the output through `cloudsRender.wgsl`.
 
-The current v43 path includes performance-oriented shader logic for large and tall boxes:
+The renderer includes performance-oriented shader logic for large and tall boxes:
 
 - Weather-column empty skipping.
 - Column-style Y-bounds acceleration derived from the weather field.
+- Active-Y ray clipping plus a global active-Y early-out for rays that cross the tall AABB but never cross the actual cloud profile band.
 - Protected near/edge lighting so close silhouettes do not smear or card out.
 - Far proxy sampling for safe horizon/interior cloud samples.
 - Adaptive thick-box stepping and lighting skip.
+
+- Original-style cloud body sampling is preserved by default. The experimental Y-domain compensation remains opt-in through `verticalTextureHomogeneity`.
+- Compact temporal interleave dispatch when history is available. Skipped pixels are not launched as cloud rays. The previous history is copied forward before the owned subset overwrites it.
 
 The far proxy path is intentionally conservative. It keeps the same weather and shape style but avoids some full 3D/detail work where the cloud is far, screen-small, and visually safe.
 
@@ -254,13 +260,21 @@ clouds.setTuning({
   sunSteps: 6,
   sunStride: 3,
   fluffFactor: 2.0,
-  anvilLift: 0.6,
   alphaCutoff: 0.98,
+  frontOcclusionStrength: 0.72,
+  frontOcclusionAlpha: 0.66,
+  frontOcclusionStepBoost: 3.0,
+  sliceJitterStrength: 0.18,
+  verticalLayerDecorrelation: 0.35,
+  directLightBlend: 0.78,
+  directLightBoost: 0.58,
+  alphaBoostThreshold: 0.22,
+  alphaBoostAmount: 0.16,
 });
 
 clouds.setReprojSettings({
   enabled: 1,
-  subsample: 5,
+  subsample: 4,
   temporalBlend: 0.94,
   frameIndex,
   fullWidth: width,
@@ -283,7 +297,7 @@ Reduced resolution, upsampled to the output size:
 
 ```js
 await clouds.dispatch({
-  coarseFactor: 5,
+  coarseFactor: 4,
   wait: true,
 });
 ```
@@ -369,6 +383,8 @@ clouds.setParams({
   ambientMinimum: 0.04,
   outScatterAmbientAmt: 0.08,
   sunColor: [1.0, 0.985, 0.95],
+  frontLightColor: [1.10, 1.12, 1.16],
+  shadowLightColor: [0.62, 0.68, 0.78],
 });
 
 clouds.setNoiseTransforms({
@@ -391,8 +407,16 @@ clouds.setTuning({
   raySmoothDens: 0.34,
   raySmoothSun: 0.34,
   fluffFactor: 2.0,
-  anvilLift: 0.6,
   alphaCutoff: 0.98,
+  frontOcclusionStrength: 0.72,
+  frontOcclusionAlpha: 0.66,
+  frontOcclusionStepBoost: 3.0,
+  sliceJitterStrength: 0.18,
+  verticalLayerDecorrelation: 0.35,
+  directLightBlend: 0.78,
+  directLightBoost: 0.58,
+  alphaBoostThreshold: 0.22,
+  alphaBoostAmount: 0.16,
 });
 
 function frame(frameIndex) {
@@ -420,7 +444,7 @@ function frame(frameIndex) {
     fullHeight: height,
   });
 
-  clouds.dispatch({ coarseFactor: 5 });
+  clouds.dispatch({ coarseFactor: 4 });
 }
 ```
 
@@ -587,7 +611,7 @@ const rawBlueView = await noise.computeToTexture(256, 256, {
 });
 ```
 
-The worker then binds the filtered view as `blueView`.
+The worker then binds the filtered view as `blueView`. The cloud shader uses blue noise for screen-space ray jitter, slice jitter, local lighting jitter, sun-transmittance jitter, and a tiny lighting-noise lift. Do not remove it globally unless you also retune the near-edge and far-cloud stability path.
 
 ## Binding noise output to the cloud renderer
 
@@ -606,7 +630,7 @@ Use `setNoiseTransforms()` for animation and style adjustment. Do not re-bake 3D
 
 # Playground baseline settings
 
-These are the current tuned starting points in `cloudTestThreaded.js`.
+These are the tuned starting points in `cloudTestThreaded.js`.
 
 ## Preview
 
@@ -621,7 +645,10 @@ These are the current tuned starting points in `cloudTestThreaded.js`.
 | Cloud box center | `[0, 0, 0]` | World-space AABB center. |
 | Cloud box half | `[18, 0.3, 18]` | World-space AABB half extents. |
 | Cloud box uvScale | `1` | Weather mapping scale over the box. |
-| Render Scale Divider | `5` | `1` full res, `5` one fifth res per axis. |
+| Render Scale Divider / Coarse Factor | `4` | `1` full res, `4` default coarse compute per axis, then upsampled to the full presentation canvas. |
+| Alpha Floor | `0.085` | Composite alpha floor. Faint alpha below the threshold fades out before sky compositing to remove low-alpha glow haze. |
+| Temporal Interleave | `1 / 4` | Compact temporal update rate. `1` updates all pixels, `4` updates one quarter of the 8x8 temporal cell pattern per frame after the history seed. |
+| Layer Preset | `rain_shelf` | Startup coordinated weather, shape, detail, density, anvil, and vertical-tuning preset. |
 | Grade Style | `3` | Preview color grade preset. |
 | Shadow Strength | `1.00` | Composite shadow weight. |
 | Shadow Edge | `1.00` | Edge shadow emphasis. |
@@ -636,8 +663,17 @@ These are the current tuned starting points in `cloudTestThreaded.js`.
 | God Ray Length | `1.10` | God-ray sample length. |
 | God Ray Falloff | `1.10` | God-ray falloff. |
 | Sun azimuth | `45` | Sun azimuth in degrees. |
-| Sun elevation | `41` | Sun elevation in degrees. |
+| Sun elevation | `21` | Sun elevation in degrees. |
 | Sun bloom | `0.18` | Preview bloom around sun direction. |
+| Sun Tint | `[1.0, 1.0, 1.0]` | Sun color tint passed into the preview/composite profile. |
+| Transmissive Light Tint | `[0.94, 1.00, 1.08]` | Backlit/transmissive volume lighting tint. |
+| Front Light Tint | `[1.18, 1.24, 1.32]` | Direct/front-lit cloud-top and sun-facing cloud-face lighting tint. |
+| Volume Shadow Tint | `[0.60, 0.68, 0.82]` | Internal volumetric shadow tint. |
+| Direct Light Blend | `0.90` | Blend amount from transmissive lighting toward the direct/front-lit profile. |
+| Direct Light Boost | `0.72` | Brightness boost for directly lit surfaces. |
+| Cloud Lit Tint | `[1.0, 1.0, 1.0]` | Preview lit-cloud color tint. |
+| Cloud Shadow Tint | `[0.0, 0.0, 0.0]` | Preview shadow color tint. |
+| Edge Tint | `[1.0, 1.0, 1.0]` | Rim and edge color tint. |
 
 ## Weather R channel
 
@@ -771,7 +807,7 @@ Cloud appearance and lighting parameters. Builder defaults are shown.
 |---|---:|---|
 | globalCoverage | `1.0` | Overall cloud coverage multiplier. |
 | globalDensity | `1000.0` | Density/extinction scale. |
-| cloudAnvilAmount | `0.0` | Horizontal anvil spreading amount. |
+| cloudAnvilAmount | `0.0` | Single anvil/cumulonimbus amount. Higher values continue to overdrive tower height, lift/headroom, soft cap taper, and anvil spread. |
 | cloudBeer | `6.0` | Beer/Powder style density response. |
 | attenuationClamp | `0.015` | Minimum light transmittance clamp. |
 | inScatterG | `0.55` | Forward/in-scatter phase anisotropy. |
@@ -782,6 +818,8 @@ Cloud appearance and lighting parameters. Builder defaults are shown.
 | outScatterAmbientAmt | `0.08` | Ambient contribution from out-scatter side. |
 | ambientMinimum | `0.04` | Minimum ambient light. |
 | sunColor | `[1.0, 0.985, 0.95]` | Sun light color. |
+| frontLightColor | `[1.10, 1.12, 1.16]` | Direct/front-lit cloud profile color. |
+| shadowLightColor | `[0.62, 0.68, 0.78]` | Volumetric shadow lighting color. |
 | densityDivMin | `0.001` | Small denominator guard for density response. |
 | silverDirectionBias | `0.9` | Directional bias for silver highlight. |
 | silverHorizonBoost | `0.35` | Extra silver boost near horizon angles. |
@@ -807,7 +845,7 @@ World-space texture sampling and bias parameters. `setTileScaling()` is an alias
 
 ## `setTuning(tuning)`
 
-Raymarch and visual stability parameters. These control quality, performance, LOD, near/far behavior, and the v43 thick-box/far-proxy path.
+Raymarch and visual stability parameters. These control quality, performance, LOD, near/far behavior, and the thick-box/far-proxy path.
 
 | Parameter | Default | Meaning |
 |---|---:|---|
@@ -848,12 +886,24 @@ Raymarch and visual stability parameters. These control quality, performance, LO
 | raySmoothDens | `0.34` | Density smoothing along the ray. |
 | raySmoothSun | `0.34` | Sun lighting smoothing along the ray. |
 | fluffFactor | `2.0` | Edge erosion/scallop strength. |
-| anvilLift | `0.6` | Height influence for anvil shaping. |
-| alphaCutoff | `0.98` | Early ray termination alpha. Higher marches deeper. |
+| anvilLift | `0.6` | Internal anvil lift/headroom helper used by the cumulonimbus/anvil profile. |
+| alphaCutoff | `0.98` | Early ray termination alpha. When accumulated opacity reaches this cutoff, output alpha is clamped to `1.0` and the ray stops. Higher values march deeper. |
 | thickBoxPerf | `0.65` | Internal strength of thick-box acceleration. |
 | thickStepBoost | `1.28` | Internal step boost for thick boxes. |
 | thickDetailSkip | `0.18` | Internal detail-skip strength in safe interiors. |
 | thickLightSkip | `0.42` | Internal light-skip strength in safe interiors. |
+| verticalStepBoost | `3.0` | Extra primary ray step budget for tall boxes. Keeps Y expansion closer to X/Z cost. |
+| verticalTextureHomogeneity | `0.0` | Enables homogeneous tall-Y behavior. Tall boxes use repeated warped Y phases and tiled shape/detail sampling instead of stretching one 3D texture slab through the whole raw AABB. `0` keeps raw box-height profiling. |
+| verticalLightingStepBoost | `1.35` | Mild sun-step boost for tall boxes after vertical texture normalization. |
+| frontOcclusionStrength | `0.72` | Close-cloud behind-body acceleration. `0` disables it; higher values cut hidden rays sooner after front opacity builds. |
+| frontOcclusionAlpha | `0.66` | Accumulated alpha where front-occlusion acceleration starts. |
+| frontOcclusionStepBoost | `3.0` | Maximum step multiplier used behind an already opaque close cloud front. |
+| sliceJitterStrength | `0.08` | Stable per-step ray jitter that breaks up horizontal slice bands in tall boxes. |
+| verticalLayerDecorrelation | `0.35` | Subtle non-planar Y perturbation for shape/detail sampling so tall boxes do not produce horizontal sheets. |
+| directLightBlend | `0.78` | Blend amount for the direct/front-lit cloud-lighting profile. |
+| directLightBoost | `0.58` | Brightness boost for the direct/front-lit cloud-lighting profile. |
+| alphaBoostThreshold | `0.22` | Final alpha threshold before post-light alpha boost is applied. |
+| alphaBoostAmount | `0.16` | Post-light alpha boost amount above `alphaBoostThreshold`. |
 
 ## `setReprojSettings(reprojection)`
 
@@ -871,6 +921,9 @@ Temporal and reduced-resolution rendering parameters.
 | frameIndex | `0` | Frame counter for jitter/reprojection. |
 | fullWidth | `0` | Full output width for reprojection math. |
 | fullHeight | `0` | Full output height for reprojection math. |
+| temporalCellRate | `4` | Interleaved update rate. Use `1`, `2`, `4`, `8`, `16`, `32`, or `64`. `1` means full march. `4` means one quarter of the compact 8x8 cell pattern is updated per frame after history is seeded. |
+| temporalCellPhase | `0` | Current phase for the interleaved cell update pattern. The worker advances this per frame. |
+| compactInterleave | `0` | Enables compact 8x8 temporal interleave dispatch when the worker has valid history. The worker manages this internally for animation. |
 
 ## `setPerfParams(perf)`
 
@@ -942,6 +995,7 @@ Preview/composite parameters.
 | styleRimStrength | `1.08` | Rim highlight strength. |
 | styleSunBleed | `0.96` | Sun bleed strength. |
 | styleMidLift | `0.94` | Midtone lift. |
+| alphaFloor | `0.085` | Composite alpha floor used to fade out faint low-alpha haze before sky compositing. |
 | godRaysEnabled | `false` | Enables god-ray composite. |
 | godRayStrength | `0.0` | God-ray strength. |
 | godRayLength | `1.0` | God-ray length. |
@@ -972,13 +1026,31 @@ Common commands:
 | `setNoiseTransforms` | Update offsets, scales, biases, axis scales, and velocities. |
 | `setTileTransforms` | Compatibility alias for `setNoiseTransforms`. |
 | `setTuning` | Update cloud raymarch tuning. |
+| `setSlice` | Update debug slice index for shape/detail preview canvases. |
 | `setReproj` | Update reprojection settings. |
+| `setLiveFrameState` | Coalesced live preview, cloud, tuning, transform, and reprojection updates consumed by the animation loop. |
 | `runFrame` | Dispatch one cloud frame and composite. |
 | `startLoop` | Start animated rendering. |
 | `stopLoop` | Stop animated rendering. |
 | `shutdown` | Dispose resources. |
 
 ---
+
+# Animation loop, visual FPS, and live editing
+
+The playground animation loop is worker-owned. The main thread sends state, and the worker advances the cloud offsets, updates temporal phases, dispatches the cloud pass, and composites the result.
+
+Key runtime rules:
+
+- `Render Scale Divider` is the active cloud compute coarse factor for both still renders and animation. The final presentation canvas stays full size.
+- Coarse animation computes the current reduced-resolution cloud buffer every frame, then upsamples it to the full presentation canvas.
+- Temporal Interleave is a full-resolution history mode. It is automatically bypassed when `Render Scale Divider` is greater than `1`, because stacking interleave on top of coarse rendering can leave stale coarse texels that upsample into vertical or horizontal streaks.
+- The worker keeps a small non-blocking GPU in-flight window for backpressure. The default window is `2` GPU frames in flight. The hot animation loop does not use a fixed every-N-frame `queue.onSubmittedWorkDone()` stall.
+- Resize requests are coalesced and applied at frame boundaries so the WebGPU context and history textures are not reallocated repeatedly during a drag.
+- Preview, cloud parameter, tuning, and transform edits are coalesced through `setLiveFrameState` while animation is running. Noise edits that require rebaking textures are still expensive.
+- Camera edits do not reset the evolved `shapeOffsetWorld`, `detailOffsetWorld`, or `weatherOffsetWorld`. Transform controls update offsets explicitly; camera/tuning edits do not overwrite animated cloud time.
+- The visible FPS ticker reports browser visual `requestAnimationFrame` cadence only. Worker timing, GPU completion observation, and present-scale details are internal diagnostics.
+
 
 # Performance notes
 
@@ -993,16 +1065,54 @@ Common commands:
 5 = one fifth resolution per axis
 ```
 
-The v43 playground default is `5`. This is usually the right place to start while animating.
+The playground default is `4`. This computes one quarter resolution per axis and upsamples the current cloud buffer to the full presentation canvas. Coarse rendering does not sample temporal history by default, so it avoids stale coarse-cell reprojection streaks.
+
+
+## Mobile and first-load behavior
+
+The playground chooses a lighter startup profile on mobile-like devices. It keeps the same renderer and visual controls, but caps canvas pixel count, limits DPR, uses smaller startup procedural textures, and disables debug texture previews on mobile. Desktop defaults remain uncapped for performance testing.
+
+Startup baking is also staged through the worker with small yields between weather, blue-noise, shape, and detail texture creation. This lets the loading overlay paint before large GPU work starts and reduces the apparent browser freeze on first load.
+
+Mobile startup defaults:
+
+- Shape volume: `96³` instead of `128³`.
+- Weather map: `384²` instead of `512²`.
+- Blue noise: `128²` instead of `256²`.
+- Main canvas cap: about `900k` pixels and max side `1280`.
+- DPR cap: `1.35`.
+- Render Scale Divider: `4`.
+- Temporal Interleave: `1 / 4 rays per frame`.
+
+Desktop startup defaults keep the `128³` shape volume, `512²` weather map, `256²` blue noise, Render Scale Divider `4`, Temporal Interleave `1 / 4 rays per frame`, and use the full browser canvas size at the browser/device DPR.
+
+Use `?mobile=1` or `?profile=mobile` to force the mobile profile for testing. Use `?desktop=1` or `?profile=desktop` to force the uncapped desktop profile.
+
+## Screen interleave
+
+Screen Interleave is a full-resolution temporal sampling mode. When `Render Scale Divider` is `1`, temporal history can compact-dispatch only the owned 8x8-cell subset for the current phase, so `1 / 4 rays per frame` launches roughly one quarter of the cloud ray work instead of launching all pixels and branching inside the shader.
+
+When `Render Scale Divider` is greater than `1`, the divider already reduces the ray grid. In that mode the renderer bypasses both temporal cell interleave and reprojection history sampling inside the coarse pass. The entire coarse cloud grid is refreshed every frame before upsampling. This avoids stale coarse texels being stretched into vertical, horizontal, or blocky reprojection streaks.
+
+The first full-resolution history-seeding frame always renders all active pixels.
 
 ## Tall boxes
 
-Increasing `Box Half Y` is expensive because rays can spend more time inside the vertical cloud slab. v43 reduces this cost with weather-derived column bounds, empty weather skipping, adaptive thick-box stepping, and far-proxy sampling. Still, very tall boxes should use:
+Increasing `Box Half Y` is expensive because rays can spend more time inside the vertical cloud slab. The renderer reduces this cost with active-Y ray clipping, a global active-Y early-out, weather-derived column bounds, empty weather skipping, adaptive thick-box stepping, and far-proxy sampling. Still, very tall boxes should use:
 
 - Render Scale Divider `4` or `5`.
 - Reprojection enabled while animating.
+- Temporal Interleave `1 / 2` or `1 / 4` when animating and history is stable. `1 / 32` and `1 / 64` are included as stress-test modes for evaluating the compact dispatch path.
 - Conservative `maxSteps`.
 - Protected near detail, but cheaper far interiors.
+
+The default path preserves the original cloud sampling style. `verticalTextureHomogeneity` defaults to `0`, so the extra Y-domain compensation is opt-in.
+
+If you see horizontal layer bands in very tall volumes, keep `verticalTextureHomogeneity` at `0` first to confirm the original look. The slice and Y-decorrelation controls are still available as experimental visual tools, but they are no longer part of the default look.
+
+## Close opaque clouds
+
+When cloud coverage fills the screen, front opacity should save work instead of fully marching hidden material behind it. `frontOcclusionStrength` starts a conservative behind-front acceleration once the accumulated alpha passes `frontOcclusionAlpha`; it also allows a stronger transmittance cutoff and larger steps behind dense close bodies. Lower it toward `0` for exact full-depth marching, or raise `frontOcclusionStepBoost` for heavier close-up scenes where the foreground cloud mass is already opaque.
 
 ## Horizon boxes
 
@@ -1045,7 +1155,7 @@ If distant clouds disappear:
 
 If lighting cards or flat planes appear:
 
-1. Keep the v43 protected near/edge lighting behavior.
+1. Keep the protected near/edge lighting behavior.
 2. Do not apply far/interior lighting shortcuts near silhouettes.
 3. Increase `sunSteps` or reduce `sunStride` for debugging.
 4. Reduce `thickLightSkip` temporarily if testing thick boxes.
@@ -1054,9 +1164,13 @@ If lighting cards or flat planes appear:
 
 
 ---
+## Coarse rendering and temporal interleave
+
+`Render Scale Divider` controls the internal cloud compute resolution. Values above `1` render to a coarse cloud buffer, then upsample to the full presentation canvas. Temporal interleave is allowed in coarse mode, but coarse updated pixels do not use TAA color blending. This keeps the performance benefit of updating a subset of coarse rays without letting stale color history smear into long vertical or horizontal blocks.
+
+For stable animation, start with Render Scale Divider `4` and Temporal Interleave `1 / 4`. Set Temporal Interleave to `Off / full quality` to test the raw coarse upsample path. If an artifact is unchanged by the interleave selector, it is coming from coarse rendering, upsampling, or the raymarch itself rather than the interleave owner pattern.
 
 # Credits
-
 WebGPU implementation by Joshua Brewster (MIT License)
 
 Inspired by Fredrik Häggström's [Real-time rendering of volumetric clouds](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420).

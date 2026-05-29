@@ -5,6 +5,16 @@ import cloudWGSL from "./clouds.wgsl";
 import previewWGSL from "./cloudsRender.wgsl";
 
 const _has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
+const normalizeTemporalRate = (value) => {
+  const n = Math.max(1, Number(value) | 0);
+  if (n >= 64) return 64;
+  if (n >= 32) return 32;
+  if (n >= 16) return 16;
+  if (n >= 8) return 8;
+  if (n >= 4) return 4;
+  if (n >= 2) return 2;
+  return 1;
+};
 
 export class CloudComputeBuilder {
   constructor(device, queue) {
@@ -47,6 +57,9 @@ export class CloudComputeBuilder {
     // GPU objects filled in _init*
     this.module = null;
     this.pipeline = null;
+    this._historyCopy = null;
+    this._historyCopyBgCache = new Map();
+    this._historyCopyBgKeys = [];
     this.bgl0 = null;
     this.bgl1 = null;
 
@@ -60,8 +73,8 @@ export class CloudComputeBuilder {
     this._abOptions = new ArrayBuffer(32);
     this._dvOptions = new DataView(this._abOptions);
 
-    // CloudParams (updated shader): 80 bytes
-    this._abParams = new ArrayBuffer(80);
+    // CloudParams (updated shader): 112 bytes
+    this._abParams = new ArrayBuffer(112);
     this._dvParams = new DataView(this._abParams);
 
     // NoiseTransforms (updated shader): 128 bytes
@@ -84,8 +97,8 @@ export class CloudComputeBuilder {
     this._abBox = new ArrayBuffer(32);
     this._dvBox = new DataView(this._abBox);
 
-    // Reproj: 48 bytes (40 used, 8 padding)
-    this._abReproj = new ArrayBuffer(48);
+    // Reproj: 64 bytes
+    this._abReproj = new ArrayBuffer(64);
     this._dvReproj = new DataView(this._abReproj);
 
     // Perf: 16 bytes
@@ -96,8 +109,9 @@ export class CloudComputeBuilder {
     this._abTuning = new ArrayBuffer(256);
     this._dvTuning = new DataView(this._abTuning);
 
-    // Preview render params: 240 bytes
-    this._abRender = new ArrayBuffer(240);
+
+    // Preview render params: 256 bytes
+    this._abRender = new ArrayBuffer(256);
     this._dvRender = new DataView(this._abRender);
 
     // Upsample params: 32 bytes
@@ -138,6 +152,7 @@ export class CloudComputeBuilder {
     this._bg1Dirty = true;
     this._currentBg0 = null;
     this._currentBg1 = null;
+    this._lastInterleaveStats = null;
 
     this._render = null;
     this._renderSourceView = null;
@@ -187,6 +202,8 @@ export class CloudComputeBuilder {
         outScatterAmbientAmt: 0.08,
         ambientMinimum: 0.04,
         sunColor: [1.0, 0.985, 0.95],
+        frontLightColor: [1.10, 1.12, 1.16],
+        shadowLightColor: [0.62, 0.68, 0.78],
         densityDivMin: 0.001,
         silverDirectionBias: 0.9,
         silverHorizonBoost: 0.35,
@@ -216,6 +233,9 @@ export class CloudComputeBuilder {
         frameIndex: 0,
         fullWidth: 0,
         fullHeight: 0,
+        temporalCellRate: 4,
+        temporalCellPhase: 0,
+        compactInterleave: 0,
       },
       perf: {
         lodBiasMul: 1.0,
@@ -274,6 +294,14 @@ export class CloudComputeBuilder {
         thickStepBoost: 1.28,
         thickDetailSkip: 0.18,
         thickLightSkip: 0.42,
+        verticalStepBoost: 3.0,
+        verticalTextureHomogeneity: 0.0,
+        verticalLightingStepBoost: 1.35,
+        frontOcclusionStrength: 0.72,
+        frontOcclusionAlpha: 0.66,
+        frontOcclusionStepBoost: 3.0,
+        sliceJitterStrength: 0.08,
+        verticalLayerDecorrelation: 0.35,
       },
     };
 
@@ -298,6 +326,27 @@ export class CloudComputeBuilder {
     const id = `r${this._nextResId++}`;
     this._resId.set(obj, id);
     return id;
+  }
+
+  _ensureBindGroupCaches() {
+    if (!this._bg0Cache) this._bg0Cache = new Map();
+    if (!this._bg0Keys) this._bg0Keys = [];
+    if (!this._bg1Cache) this._bg1Cache = new Map();
+    if (!this._bg1Keys) this._bg1Keys = [];
+  }
+
+  _clearBindGroupCaches() {
+    this._ensureBindGroupCaches();
+    this._bg0Cache.clear();
+    this._bg1Cache.clear();
+    this._bg0Keys.length = 0;
+    this._bg1Keys.length = 0;
+    if (this._historyCopyBgCache) this._historyCopyBgCache.clear();
+    if (this._historyCopyBgKeys) this._historyCopyBgKeys.length = 0;
+    this._bg0Dirty = true;
+    this._bg1Dirty = true;
+    this._currentBg0 = null;
+    this._currentBg1 = null;
   }
 
   _u8(ab) {
@@ -421,13 +470,11 @@ export class CloudComputeBuilder {
       compute: { module: this.module, entryPoint: "computeCloud" },
     });
 
+
     this._destroyDummyHistory();
     this._createDummyHistory();
 
-    this._bg0Cache.clear();
-    this._bg0Keys.length = 0;
-    this._bg0Dirty = true;
-    this._currentBg0 = null;
+    this._clearBindGroupCaches();
 
     this._ensureUpsamplePipeline(this.outFormat);
   }
@@ -581,6 +628,7 @@ export class CloudComputeBuilder {
       ],
     });
 
+
     // samplers (shader uses manual wrap helpers anyway, keep repeat for maps)
     this._samp2D = d.createSampler({
       magFilter: "linear",
@@ -653,7 +701,7 @@ export class CloudComputeBuilder {
     });
 
     this.paramsBuffer = d.createBuffer({
-      size: 80,
+      size: this._abParams.byteLength,
       usage:
         GPUBufferUsage.UNIFORM |
         GPUBufferUsage.COPY_DST |
@@ -699,7 +747,7 @@ export class CloudComputeBuilder {
     });
 
     this.reprojBuffer = d.createBuffer({
-      size: 48,
+      size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -713,8 +761,9 @@ export class CloudComputeBuilder {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
+
     this.renderParams = d.createBuffer({
-      size: 240,
+      size: this._abRender.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -788,6 +837,14 @@ export class CloudComputeBuilder {
       const sc = p.sunColor || [1, 1, 1];
       s.sunColor = [+(sc[0] ?? 1), +(sc[1] ?? 1), +(sc[2] ?? 1)];
     }
+    if (_has(p, "frontLightColor")) {
+      const fc = p.frontLightColor || [1, 1, 1];
+      s.frontLightColor = [+(fc[0] ?? 1), +(fc[1] ?? 1), +(fc[2] ?? 1)];
+    }
+    if (_has(p, "shadowLightColor")) {
+      const sh = p.shadowLightColor || [0.62, 0.68, 0.78];
+      s.shadowLightColor = [+(sh[0] ?? 0.62), +(sh[1] ?? 0.68), +(sh[2] ?? 0.78)];
+    }
 
     if (_has(p, "densityDivMin")) s.densityDivMin = +p.densityDivMin;
     if (_has(p, "silverDirectionBias"))
@@ -819,11 +876,21 @@ export class CloudComputeBuilder {
     dv.setFloat32(56, s.sunColor[2], true);
     dv.setFloat32(60, 0.0, true);
 
-    // tail (16 bytes)
+    // tail
     dv.setFloat32(64, s.densityDivMin, true);
     dv.setFloat32(68, s.silverDirectionBias, true);
     dv.setFloat32(72, s.silverHorizonBoost, true);
     dv.setFloat32(76, 0.0, true);
+
+    dv.setFloat32(80, s.frontLightColor[0], true);
+    dv.setFloat32(84, s.frontLightColor[1], true);
+    dv.setFloat32(88, s.frontLightColor[2], true);
+    dv.setFloat32(92, 0.0, true);
+
+    dv.setFloat32(96, s.shadowLightColor[0], true);
+    dv.setFloat32(100, s.shadowLightColor[1], true);
+    dv.setFloat32(104, s.shadowLightColor[2], true);
+    dv.setFloat32(108, 0.0, true);
 
     this._writeIfChanged("params", this.paramsBuffer, this._abParams);
   }
@@ -966,6 +1033,13 @@ export class CloudComputeBuilder {
     if (_has(v, "frameIndex")) s.frameIndex = v.frameIndex >>> 0;
     if (_has(v, "fullWidth")) s.fullWidth = v.fullWidth >>> 0;
     if (_has(v, "fullHeight")) s.fullHeight = v.fullHeight >>> 0;
+    if (_has(v, "temporalCellRate")) s.temporalCellRate = normalizeTemporalRate(v.temporalCellRate);
+    if (_has(v, "temporalCellPhase")) s.temporalCellPhase = Math.max(0, v.temporalCellPhase | 0);
+    if (_has(v, "compactInterleave")) s.compactInterleave = v.compactInterleave ? 1 : 0;
+
+    s.temporalCellRate = normalizeTemporalRate(s.temporalCellRate);
+    if (s.temporalCellRate <= 1) s.temporalCellPhase = 0;
+    else s.temporalCellPhase = s.temporalCellPhase % s.temporalCellRate;
 
     const dv = this._dvReproj;
     dv.setUint32(0, s.enabled >>> 0, true);
@@ -978,14 +1052,19 @@ export class CloudComputeBuilder {
     dv.setUint32(28, s.frameIndex >>> 0, true);
     dv.setUint32(32, s.fullWidth >>> 0, true);
     dv.setUint32(36, s.fullHeight >>> 0, true);
-    dv.setUint32(40, 0, true);
-    dv.setUint32(44, 0, true);
+    dv.setUint32(40, s.temporalCellRate >>> 0, true);
+    dv.setUint32(44, s.temporalCellPhase >>> 0, true);
+    dv.setUint32(48, s.compactInterleave ? 1 : 0, true);
+    dv.setUint32(52, 0, true);
+    dv.setUint32(56, 0, true);
+    dv.setUint32(60, 0, true);
 
     this._reprojFullW = s.fullWidth | 0;
     this._reprojFullH = s.fullHeight | 0;
 
     this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
   }
+
 
   setPerfParams(v = {}) {
     const s = this._state.perf;
@@ -1042,6 +1121,7 @@ export class CloudComputeBuilder {
 
   setBox(v = {}) {
     const s = this._state.box;
+    const prevKey = `${s.center[0]},${s.center[1]},${s.center[2]}|${s.half[0]},${s.half[1]},${s.half[2]}|${s.uvScale}`;
     if (_has(v, "center")) {
       const a = v.center || [0, 0, 0];
       s.center = [+(a[0] ?? 0), +(a[1] ?? 0), +(a[2] ?? 0)];
@@ -1063,6 +1143,7 @@ export class CloudComputeBuilder {
     dv.setFloat32(28, s.uvScale, true);
 
     this._writeIfChanged("box", this.boxBuffer, this._abBox);
+    const nextKey = `${s.center[0]},${s.center[1]},${s.center[2]}|${s.half[0]},${s.half[1]},${s.half[2]}|${s.uvScale}`;
   }
 
   setFrame(v = {}) {
@@ -1304,7 +1385,22 @@ export class CloudComputeBuilder {
     putF(168, s.thickDetailSkip);
     putF(172, s.thickLightSkip);
 
-    for (let i = 176; i < this._abTuning.byteLength; i += 4)
+    putF(176, s.verticalStepBoost ?? 3.0);
+    putF(180, s.verticalTextureHomogeneity ?? 0.0);
+    putF(184, s.verticalLightingStepBoost ?? 1.35);
+    putF(188, s.frontOcclusionStrength ?? 0.72);
+
+    putF(192, s.frontOcclusionAlpha ?? 0.66);
+    putF(196, s.frontOcclusionStepBoost ?? 3.0);
+    putF(200, s.sliceJitterStrength ?? 0.08);
+    putF(204, s.verticalLayerDecorrelation ?? 0.35);
+
+    putF(208, s.directLightBlend ?? 0.78);
+    putF(212, s.directLightBoost ?? 0.58);
+    putF(216, s.alphaBoostThreshold ?? 0.22);
+    putF(220, s.alphaBoostAmount ?? 0.16);
+
+    for (let i = 224; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
@@ -1420,33 +1516,6 @@ export class CloudComputeBuilder {
       this.layers === layers &&
       this.outFormat === format
     ) {
-      this.setFrame({
-        fullWidth: width,
-        fullHeight: height,
-        tileWidth: width,
-        tileHeight: height,
-        originX: 0,
-        originY: 0,
-        originZ: 0,
-        layerIndex: 0,
-        originXf: 0.0,
-        originYf: 0.0,
-      });
-
-      this._reprojFullW = width;
-      this._reprojFullH = height;
-
-      const curFW = this._dvReproj.getUint32(32, true) || 0;
-      const curFH = this._dvReproj.getUint32(36, true) || 0;
-      if (
-        curFW !== this._reprojFullW >>> 0 ||
-        curFH !== this._reprojFullH >>> 0
-      ) {
-        this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
-        this._dvReproj.setUint32(36, this._reprojFullH >>> 0, true);
-        this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
-        this._bg0Dirty = true;
-      }
       return this.outView;
     }
 
@@ -1594,6 +1663,7 @@ export class CloudComputeBuilder {
     return ids.join("|");
   }
 
+
   _ensureBlueView() {
     if (this.blueView) return this.blueView;
     if (!this.blueTex) {
@@ -1694,6 +1764,8 @@ export class CloudComputeBuilder {
   }
 
   _makeBindGroups() {
+    this._ensureBindGroupCaches();
+
     if (this._bg0Dirty || !this._currentBg0) {
       const k0 = this._buildBg0Key();
       if (this._bg0Cache.has(k0)) {
@@ -1753,8 +1825,8 @@ export class CloudComputeBuilder {
     const cH = Math.max(1, Math.ceil(th / cf));
     this._ensureCoarseTexture(cW, cH, this.layers);
 
-    const savedFullW = this._reprojFullW || this.width;
-    const savedFullH = this._reprojFullH || this.height;
+    const savedFullW = cW;
+    const savedFullH = cH;
 
     const savedOutTexture = this.outTexture;
     const savedOutView = this.outView;
@@ -1792,7 +1864,31 @@ export class CloudComputeBuilder {
     }
 
     const enc = this.device.createCommandEncoder();
+    const savedReprojStateForCoarse = Object.assign({}, this._state.reproj || {});
+    const savedReprojBytesForCoarse = new Uint8Array(this._abReproj).slice();
+    const savedReprojFullWForCoarse = this._reprojFullW;
+    const savedReprojFullHForCoarse = this._reprojFullH;
+    this.setReprojSettings({
+      enabled: 0,
+      subsample: 1,
+      sampleOffset: 0,
+      motionIsNormalized: 0,
+      temporalBlend: 0.0,
+      depthTest: 0,
+      depthTolerance: 0.0,
+      frameIndex: 0,
+      fullWidth: cW,
+      fullHeight: cH,
+      temporalCellRate: 1,
+      temporalCellPhase: 0,
+      compactInterleave: 0,
+    });
     this._encodeCurrentComputePass(enc);
+    this._state.reproj = savedReprojStateForCoarse;
+    new Uint8Array(this._abReproj).set(savedReprojBytesForCoarse);
+    this._reprojFullW = savedReprojFullWForCoarse;
+    this._reprojFullH = savedReprojFullHForCoarse;
+    this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
 
     this.outTexture = savedOutTexture;
     this.outView = savedOutView;
@@ -1910,7 +2006,7 @@ export class CloudComputeBuilder {
       pass.setPipeline(this.pipeline);
       pass.setBindGroup(0, this._currentBg0);
       pass.setBindGroup(1, this._currentBg1);
-      pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
+        pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
       pass.end();
     }
     this.queue.submit([enc.finish()]);
@@ -1934,15 +2030,189 @@ export class CloudComputeBuilder {
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
   }
 
+
+  _temporalRateForDispatch() {
+    const r = normalizeTemporalRate(this._state?.reproj?.temporalCellRate ?? 1);
+    return r > 1 ? r : 1;
+  }
+
+  _canUseCompactInterleave() {
+    const r = this._temporalRateForDispatch();
+    const s = this._state?.reproj || {};
+    return !!(
+      r > 1 &&
+      (s.frameIndex >>> 0) > 0 &&
+      this.historyPrevView &&
+      this.historyOutView &&
+      this.width > 0 &&
+      this.height > 0
+    );
+  }
+
+  _setCompactInterleaveUniform(enabled) {
+    const s = this._state.reproj;
+    const next = enabled ? 1 : 0;
+    if ((s.compactInterleave ? 1 : 0) === next) return;
+    s.compactInterleave = next;
+    this._dvReproj.setUint32(48, next >>> 0, true);
+    this._dvReproj.setUint32(52, 0, true);
+    this._dvReproj.setUint32(56, 0, true);
+    this._dvReproj.setUint32(60, 0, true);
+    this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
+  }
+
+  _compactInterleaveDispatchShape() {
+    const rate = this._temporalRateForDispatch();
+    const fullW = Math.max(1, this.width || 1);
+    const fullH = Math.max(1, this.height || 1);
+    const ownersPerBlock = Math.max(1, Math.floor(64 / Math.max(1, rate)));
+    const blocksX = Math.max(1, Math.ceil(fullW / 8));
+    const blocksY = Math.max(1, Math.ceil(fullH / 8));
+    return {
+      w: blocksX * ownersPerBlock,
+      h: blocksY,
+      wgX: Math.max(1, Math.ceil((blocksX * ownersPerBlock) / 8)),
+      wgY: Math.max(1, Math.ceil(blocksY / 8)),
+      updatedPixels: blocksX * blocksY * ownersPerBlock,
+      totalPixels: fullW * fullH,
+      tile: 8,
+    };
+  }
+
+  _ensureHistoryCopyPipeline() {
+    if (this._historyCopy && this._historyCopy.format === "rgba16float") return this._historyCopy;
+
+    const wgsl = `
+      struct Frame {
+        fullWidth: u32, fullHeight: u32,
+        tileWidth: u32, tileHeight: u32,
+        originX: i32, originY: i32, originZ: i32,
+        fullDepth: u32, tileDepth: u32,
+        layerIndex: i32, layers: u32,
+        _pad0: u32,
+        originXf: f32, originYf: f32, _pad1: f32, _pad2: f32
+      };
+
+      struct ReprojSettings {
+        enabled: u32,
+        subsample: u32,
+        sampleOffset: u32,
+        motionIsNormalized: u32,
+        temporalBlend: f32,
+        depthTest: u32,
+        depthTolerance: f32,
+        frameIndex: u32,
+        fullWidth: u32,
+        fullHeight: u32,
+        temporalCellRate: u32,
+        temporalCellPhase: u32,
+        compactInterleave: u32,
+        _pad0: u32,
+        _pad1: u32,
+        _pad2: u32
+      };
+
+      @group(0) @binding(0) var srcTex: texture_2d_array<f32>;
+      @group(0) @binding(1) var dstTex: texture_storage_2d_array<rgba16float, write>;
+      @group(0) @binding(2) var<uniform> frame: Frame;
+      @group(0) @binding(3) var<uniform> reproj: ReprojSettings;
+
+      @compute @workgroup_size(16, 16, 1)
+      fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+        let fullW = max(reproj.fullWidth, frame.fullWidth);
+        let fullH = max(reproj.fullHeight, frame.fullHeight);
+        if (gid.x >= fullW || gid.y >= fullH) { return; }
+        let p = vec2<i32>(i32(gid.x), i32(gid.y));
+        let layer = frame.layerIndex;
+        let c = textureLoad(srcTex, p, layer, 0);
+        textureStore(dstTex, p, layer, c);
+      }
+    `;
+
+    const module = this.device.createShaderModule({ code: wgsl });
+    const bgl = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "2d-array" } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "2d-array" } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      ],
+    });
+    const pipe = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+      compute: { module, entryPoint: "main" },
+    });
+    this._historyCopy = { format: "rgba16float", bgl, pipe };
+    this._historyCopyBgCache.clear();
+    this._historyCopyBgKeys.length = 0;
+    return this._historyCopy;
+  }
+
+  _getHistoryCopyBindGroup() {
+    if (!this.historyPrevView || !this.historyOutView) return null;
+    const h = this._ensureHistoryCopyPipeline();
+    const key = [
+      this._getResId(this.historyPrevView),
+      this._getResId(this.historyOutView),
+      this._getResId(this.frameBuffer),
+      this._getResId(this.reprojBuffer),
+    ].join("|");
+    if (this._historyCopyBgCache.has(key)) return this._historyCopyBgCache.get(key);
+
+    const bg = this.device.createBindGroup({
+      layout: h.bgl,
+      entries: [
+        { binding: 0, resource: this.historyPrevView },
+        { binding: 1, resource: this.historyOutView },
+        { binding: 2, resource: { buffer: this.frameBuffer } },
+        { binding: 3, resource: { buffer: this.reprojBuffer } },
+      ],
+    });
+    this._historyCopyBgCache.set(key, bg);
+    this._historyCopyBgKeys.push(key);
+    while (this._historyCopyBgKeys.length > 8) {
+      const oldest = this._historyCopyBgKeys.shift();
+      this._historyCopyBgCache.delete(oldest);
+    }
+    return bg;
+  }
+
+  _encodeHistoryCopyPass(enc) {
+    const h = this._ensureHistoryCopyPipeline();
+    const bg = this._getHistoryCopyBindGroup();
+    if (!bg) return;
+    const pass = enc.beginComputePass();
+    pass.setPipeline(h.pipe);
+    pass.setBindGroup(0, bg);
+    const fullW = Math.max(1, this.width || 1);
+    const fullH = Math.max(1, this.height || 1);
+    pass.dispatchWorkgroups(Math.max(1, Math.ceil(fullW / 16)), Math.max(1, Math.ceil(fullH / 16)), 1);
+    pass.end();
+  }
+
   _encodeCurrentComputePass(enc) {
+    const compactInterleave = this._canUseCompactInterleave();
+    this._setCompactInterleaveUniform(compactInterleave);
     this._writeCommonComputeUniforms();
+    if (compactInterleave) this._encodeHistoryCopyPass(enc);
     this._makeBindGroups();
 
+    const compactShape = compactInterleave ? this._compactInterleaveDispatchShape() : null;
+    const fullPixels = Math.max(1, (this.width || 1) * (this.height || 1));
+    this._lastInterleaveStats = {
+      enabled: !!compactInterleave,
+      rate: this._temporalRateForDispatch(),
+      phase: this._state?.reproj?.temporalCellPhase >>> 0,
+      updatedPixels: compactShape ? compactShape.updatedPixels : fullPixels,
+      totalPixels: fullPixels,
+      fraction: compactShape ? Math.min(1, compactShape.updatedPixels / fullPixels) : 1,
+      tile: compactShape ? compactShape.tile : 1,
+    };
     const pass = enc.beginComputePass();
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this._currentBg0);
     pass.setBindGroup(1, this._currentBg1);
-    pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
+    pass.dispatchWorkgroups(compactShape ? compactShape.wgX : this._wgX, compactShape ? compactShape.wgY : this._wgY, 1);
     pass.end();
   }
 
@@ -1953,13 +2223,30 @@ export class CloudComputeBuilder {
 
     const cf = Math.max(1, coarseFactor | 0);
     this._renderSourceView = this.outView;
+    if (cf < 2) {
+      const layer = this._dvFrame.getInt32(36, true) | 0;
+      this.setFrame({
+        fullWidth: this.width,
+        fullHeight: this.height,
+        tileWidth: this.width,
+        tileHeight: this.height,
+        originX: 0,
+        originY: 0,
+        originZ: 0,
+        layerIndex: layer,
+        originXf: 0.0,
+        originYf: 0.0,
+      });
+    }
     if (cf >= 2 && this.outTexture) {
       const cW = Math.max(1, Math.ceil(this.width / cf));
       const cH = Math.max(1, Math.ceil(this.height / cf));
       this._ensureCoarseTexture(cW, cH, this.layers);
 
-      const savedFullW = this._reprojFullW || this.width;
-      const savedFullH = this._reprojFullH || this.height;
+      // Coarse compute keeps temporal history in coarse space, then upsamples
+      // the finished cloud buffer to the full presentation target.
+      const savedFullW = cW;
+      const savedFullH = cH;
       const savedOutTexture = this.outTexture;
       const savedOutView = this.outView;
       const savedWidth = this.width;
@@ -2005,7 +2292,7 @@ export class CloudComputeBuilder {
       this._bg0Dirty = true;
 
       var usedDirectPreview = false;
-      if (skipUpsampleForPreview) {
+      if (false && skipUpsampleForPreview) {
         this._renderSourceView = this._coarseView;
         usedDirectPreview = true;
       } else {
@@ -2026,19 +2313,8 @@ export class CloudComputeBuilder {
         coarseFactor: cf,
         directPreview: usedDirectPreview,
         previewView: this._renderSourceView,
+        interleaveStats: this._lastInterleaveStats,
         restoreAfterSubmit: () => {
-          this.setFrame({
-            fullWidth: savedWidth,
-            fullHeight: savedHeight,
-            tileWidth: savedWidth,
-            tileHeight: savedHeight,
-            originX: 0,
-            originY: 0,
-            originZ: 0,
-            layerIndex: savedLayer,
-            originXf: 0.0,
-            originYf: 0.0,
-          });
           this._bg0Dirty = true;
         },
       };
@@ -2046,7 +2322,11 @@ export class CloudComputeBuilder {
 
     this._encodeCurrentComputePass(enc);
     this._lastHadWork = true;
-    return { coarseFactor: 1, restoreAfterSubmit: null };
+    return {
+      coarseFactor: 1,
+      restoreAfterSubmit: null,
+      interleaveStats: this._lastInterleaveStats,
+    };
   }
 
   async _dispatchComputeInternal({ wait = false } = {}) {
@@ -2141,10 +2421,17 @@ export class CloudComputeBuilder {
         let c2 = textureSampleLevel(srcTex, samp, uv + vec2<f32>(-texel.x, 0.0), i32(P.layer), 0.0);
         let c3 = textureSampleLevel(srcTex, samp, uv + vec2<f32>(0.0,  texel.y), i32(P.layer), 0.0);
         let c4 = textureSampleLevel(srcTex, samp, uv + vec2<f32>(0.0, -texel.y), i32(P.layer), 0.0);
-        let crossAvg = c0 * 0.40 + (c1 + c2 + c3 + c4) * 0.15;
+        let a0 = clamp(c0.a, 0.0, 1.0);
+        let w0 = 0.48;
+        let w1 = 0.13 / (1.0 + abs(clamp(c1.a, 0.0, 1.0) - a0) * 16.0);
+        let w2 = 0.13 / (1.0 + abs(clamp(c2.a, 0.0, 1.0) - a0) * 16.0);
+        let w3 = 0.13 / (1.0 + abs(clamp(c3.a, 0.0, 1.0) - a0) * 16.0);
+        let w4 = 0.13 / (1.0 + abs(clamp(c4.a, 0.0, 1.0) - a0) * 16.0);
+        let wSum = max(w0 + w1 + w2 + w3 + w4, 1e-5);
+        let crossAvg = (c0 * w0 + c1 * w1 + c2 * w2 + c3 * w3 + c4 * w4) / wSum;
         let divider = max(dstDim.x / srcDim.x, dstDim.y / srcDim.y);
-        let resolveF = smoothstep(2.0, 4.5, divider) * smoothstep(0.015, 0.35, c0.a);
-        let c = mix(c0, crossAvg, resolveF * 0.38);
+        let resolveF = smoothstep(2.0, 4.5, divider) * smoothstep(0.02, 0.40, a0);
+        let c = mix(c0, crossAvg, resolveF * 0.22);
 
         let outX = i32(P.dstX + x);
         let outY = i32(P.dstY + y);
@@ -2352,7 +2639,7 @@ export class CloudComputeBuilder {
         { binding: 1, resource: sourceView },
         {
           binding: 2,
-          resource: { buffer: this.renderParams, offset: 0, size: 240 },
+          resource: { buffer: this.renderParams, offset: 0, size: this._abRender.byteLength },
         },
       ],
     });
@@ -2478,6 +2765,7 @@ export class CloudComputeBuilder {
     }
 
     const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
+    const alphaFloor = Math.max(0, Math.min(0.24, opts.alphaFloor ?? 0.085));
 
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, compositeQuality, true);
@@ -2509,6 +2797,10 @@ export class CloudComputeBuilder {
     dv.setFloat32(228, godRayStrength, true);
     dv.setFloat32(232, godRayLength, true);
     dv.setFloat32(236, godRayFalloff, true);
+    dv.setFloat32(240, alphaFloor, true);
+    dv.setFloat32(244, 0.0, true);
+    dv.setFloat32(248, 0.0, true);
+    dv.setFloat32(252, 0.0, true);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }

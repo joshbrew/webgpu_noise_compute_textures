@@ -24,6 +24,8 @@ const dbg = {
 // sizes (mirrored from UI)
 let MAIN_W = 1,
   MAIN_H = 1,
+  PRESENT_W = 1,
+  PRESENT_H = 1,
   DBG_W = 1,
   DBG_H = 1;
 
@@ -33,6 +35,10 @@ let SHAPE_SIZE = 128,
   WEATHER_H = 512,
   BN_W = 256,
   BN_H = 256;
+
+let debugPreviewEnabled = true;
+let mobileProfileEnabled = false;
+let lastResizeProfile = null;
 
 // baked noise resources
 const noise = {
@@ -88,7 +94,11 @@ let loopEnabled = false,
   loopRunning = false,
   lastRunPayload = null,
   emaSubmitFps = null,
-  emaGpuFps = null;
+  emaLoopFps = null,
+  emaMaxRoundTripFps = null;
+
+let pendingResizePayload = null;
+let pendingResizeSerial = 0;
 
 // NoiseTransforms (world-space offsets/scales + per-axis scaling)
 let shapeOffsetWorld = [0, 0, 0],
@@ -119,17 +129,53 @@ let cachedEntryPointsRef = null;
 let cachedEntrySet = null;
 
 const LOOP_TARGET_MS = 1000 / 60;
-const LOOP_BACKPRESSURE_EVERY = 4;
-const FRAME_LOG_EVERY = 60;
+const FRAME_LOG_EVERY = 240;
+const LOOP_MAX_GPU_FRAMES_IN_FLIGHT = 3;
 const CAMERA_RESET_FRAMES = 1;
 const CAMERA_SIG_EPS = 1e-4;
 let submittedFrameCount = 0;
-let completedFrameCount = 0;
-let lastFenceTime = 0;
-let framesSinceFence = 0;
+let loopGpuFences = [];
 let lastViewSignature = null;
+let lastCloudSceneSignature = "";
+let lastCloudViewSignature = "";
+let lastRenderUniformSignature = "";
+let lastNoiseTransformSignature = "";
+let lastBaseWeatherView = null;
+let lastBaseBlueView = null;
+let lastBaseShapeView = null;
+let lastBaseDetailView = null;
 let reprojResetFrames = 0;
-let lastGpuFrameMs = 0;
+
+// -----------------------------------------------------------------------------
+// startup deferral helpers
+// -----------------------------------------------------------------------------
+const STARTUP_DEFER_MS = 0;
+
+function deferToBrowser(ms = STARTUP_DEFER_MS) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function progressiveYield(enabled, message = "Working...") {
+  if (!enabled) return;
+  try {
+    postMessage({ type: "progress", data: { message } });
+  } catch {}
+  await deferToBrowser();
+}
+
+function renderDebugIfEnabled(kind = "all") {
+  if (!debugPreviewEnabled) return;
+  if (kind === "weather") {
+    renderWeatherDebug();
+    return;
+  }
+  if (kind === "slices") {
+    renderDebugSlices();
+    return;
+  }
+  renderWeatherDebug();
+  renderDebugSlices();
+}
 
 // -----------------------------------------------------------------------------
 // device and builders
@@ -137,20 +183,23 @@ let lastGpuFrameMs = 0;
 async function ensureDevice() {
   if (device) return;
 
-  const adapter = await navigator.gpu.requestAdapter();
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: mobileProfileEnabled ? "low-power" : "high-performance" });
   if (!adapter) throw new Error("No suitable GPU adapter (worker)");
 
-   const max = adapter.limits.maxBufferSize;
+  const maxBufferSize = adapter.limits?.maxBufferSize || 0;
+  const defaultSafeBufferSize = 256 * 1024 * 1024;
+  const wantedBufferSize = Math.min(maxBufferSize || defaultSafeBufferSize, mobileProfileEnabled ? defaultSafeBufferSize : 1024 * 1024 * 1024);
 
-  // Pick something comfortably above your worst-case staging upload.
-  // 512 MiB is usually enough for 5K-ish float uploads, or go higher if supported.
-  const wantMaxBufferSize = Math.min(max, 1024 * 1024 * 1024); // 1 GiB cap
-
-  device = await adapter.requestDevice({
-    requiredLimits: {
-      maxBufferSize: wantMaxBufferSize,
-    },
-  });
+  try {
+    device = await adapter.requestDevice(
+      wantedBufferSize > defaultSafeBufferSize
+        ? { requiredLimits: { maxBufferSize: wantedBufferSize } }
+        : {},
+    );
+  } catch (err) {
+    console.warn("requestDevice with custom limits failed; retrying with defaults", err);
+    device = await adapter.requestDevice();
+  }
   queue = device.queue;
 
   nb = new NoiseComputeBuilder(device, queue);
@@ -171,21 +220,126 @@ async function ensureDevice() {
   }
 }
 
-function configureMainContext() {
+function configureMainContext(width = MAIN_W, height = MAIN_H) {
   if (!canvasMain) return;
+
+  const w = Math.max(1, width | 0);
+  const h = Math.max(1, height | 0);
 
   ctxMain = canvasMain.getContext("webgpu");
   if (!ctxMain) throw new Error("Failed to get webgpu context for main canvas");
+
+  if (canvasMain.width !== w) canvasMain.width = w;
+  if (canvasMain.height !== h) canvasMain.height = h;
 
   const fmt = cb?._ensureRenderPipeline?.("bgra8unorm")?.format ?? "bgra8unorm";
   ctxMain.configure({
     device,
     format: fmt,
     alphaMode: "opaque",
-    size: [MAIN_W, MAIN_H],
+    size: [w, h],
   });
 
+  PRESENT_W = w;
+  PRESENT_H = h;
+  renderBundleCache.clear();
   return ctxMain;
+}
+
+function normalizeResizePayload(payload = {}) {
+  const main = payload.main || {};
+  const dbgSize = payload.dbg || {};
+  return {
+    main: {
+      width: Math.max(1, main.width | 0),
+      height: Math.max(1, main.height | 0),
+    },
+    dbg: {
+      width: Math.max(1, dbgSize.width | 0),
+      height: Math.max(1, dbgSize.height | 0),
+    },
+    profile: payload.profile || null,
+    serial: payload.serial || 0,
+  };
+}
+
+function resizePayloadSignature(payload = {}) {
+  const p = normalizeResizePayload(payload);
+  const dpr = Number(p.profile?.dpr || 0).toFixed(4);
+  const cssW = p.profile?.cssWidth | 0;
+  const cssH = p.profile?.cssHeight | 0;
+  return [p.main.width, p.main.height, p.dbg.width, p.dbg.height, dpr, cssW, cssH].join("x");
+}
+
+async function applyResizePayloadNow(payload = {}) {
+  const p = normalizeResizePayload(payload);
+  const sameSize =
+    MAIN_W === p.main.width &&
+    MAIN_H === p.main.height &&
+    DBG_W === p.dbg.width &&
+    DBG_H === p.dbg.height &&
+    canvasMain?.width === p.main.width &&
+    canvasMain?.height === p.main.height &&
+    PRESENT_W === p.main.width &&
+    PRESENT_H === p.main.height;
+
+  lastResizeProfile = p.profile;
+  if (sameSize) {
+    return { ok: true, unchanged: true, serial: p.serial };
+  }
+
+  MAIN_W = p.main.width;
+  MAIN_H = p.main.height;
+  DBG_W = p.dbg.width;
+  DBG_H = p.dbg.height;
+
+  if (canvasMain) {
+    canvasMain.width = MAIN_W;
+    canvasMain.height = MAIN_H;
+    PRESENT_W = MAIN_W;
+    PRESENT_H = MAIN_H;
+  }
+
+  Object.values(dbg).forEach((c) => {
+    if (c) {
+      c.width = DBG_W;
+      c.height = DBG_H;
+    }
+  });
+
+  if (ctxMain) {
+    configureMainContext(MAIN_W, MAIN_H);
+  }
+
+  renderBundleCache.clear();
+  resetFrameStateCaches();
+  if (cb) cb._bg0Dirty = cb._bg1Dirty = true;
+  invalidateReprojectionHistory();
+
+  return { ok: true, resized: true, serial: p.serial, width: MAIN_W, height: MAIN_H };
+}
+
+async function applyPendingResizeIfAny() {
+  if (!pendingResizePayload) return null;
+  const payload = pendingResizePayload;
+  pendingResizePayload = null;
+  return applyResizePayloadNow(payload);
+}
+
+function ensureMainPresentSize(width = MAIN_W, height = MAIN_H) {
+  const w = Math.max(1, width | 0);
+  const h = Math.max(1, height | 0);
+  if (!ctxMain || PRESENT_W !== w || PRESENT_H !== h || canvasMain?.width !== w || canvasMain?.height !== h) {
+    configureMainContext(w, h);
+  }
+  return ctxMain;
+}
+
+function previewPresentDivider(preview, coarseFactor, fastPreview) {
+  if (!fastPreview) return 1;
+  const cf = Math.max(1, coarseFactor | 0);
+  if (cf < 2) return 1;
+  return Math.max(1, Math.min(cf, 6));
 }
 
 // -----------------------------------------------------------------------------
@@ -321,7 +475,7 @@ function withToroidalFromMode(params, mode) {
 // -----------------------------------------------------------------------------
 async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {}, weatherBParams = null) {
   if (noise.weather.arrayView && !force && !noise.weather.dirty) {
-    renderWeatherDebug();
+    renderDebugIfEnabled("weather");
     noise.weather.dirty = false;
     return { baseMs: 0, gMs: 0, bMs: 0, totalMs: 0 };
   }
@@ -419,7 +573,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
     (typeof nb.get2DView === "function" ? nb.get2DView("weather2d", { dimension: "2d-array" }) : baseView) || baseView;
   noise.weather.dirty = false;
 
-  renderWeatherDebug();
+  renderDebugIfEnabled("weather");
 
   const totalMs = performance.now() - T0;
   log(
@@ -588,7 +742,7 @@ async function bakeBlue2D(blueParams = {}, force = false) {
 
   if (noise.blue.arrayView && !force && !noise.blue.dirty) {
     noise.blue.dirty = false;
-    if (dbg.blue) {
+    if (debugPreviewEnabled && dbg.blue) {
       nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
         preserveCanvasSize: true,
         clear: true,
@@ -615,7 +769,7 @@ async function bakeBlue2D(blueParams = {}, force = false) {
   noise.blue.arrayView = filteredBlueView || rawBlueView;
   noise.blue.dirty = false;
 
-  if (dbg.blue) {
+  if (debugPreviewEnabled && dbg.blue) {
     nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
       preserveCanvasSize: true,
       clear: true,
@@ -635,7 +789,7 @@ async function bakeShape128(shapeParams = {}, force = false) {
   if (noise.shape128.view3D && !force && !noise.shape128.dirty) {
     noise.shape128.dirty = false;
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-    renderDebugSlices();
+    renderDebugIfEnabled("slices");
     return { baseMs: 0, bandsMs: [0, 0, 0], totalMs: 0 };
   }
 
@@ -687,7 +841,7 @@ async function bakeShape128(shapeParams = {}, force = false) {
   noise.shape128.dirty = false;
 
   if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-  renderDebugSlices();
+  renderDebugIfEnabled("slices");
 
   const totalMs = performance.now() - T0;
   log(
@@ -713,7 +867,7 @@ async function bakeDetail32(detailParams = {}, force = false) {
   if (noise.detail32.view3D && !force && !noise.detail32.dirty) {
     noise.detail32.dirty = false;
     if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-    renderDebugSlices();
+    renderDebugIfEnabled("slices");
     return { bandsMs: [0, 0, 0], totalMs: 0 };
   }
 
@@ -754,7 +908,7 @@ async function bakeDetail32(detailParams = {}, force = false) {
   noise.detail32.dirty = false;
 
   if (typeof queue?.onSubmittedWorkDone === "function") await queue.onSubmittedWorkDone();
-  renderDebugSlices();
+  renderDebugIfEnabled("slices");
 
   const totalMs = performance.now() - T0;
   log(
@@ -925,8 +1079,24 @@ function applyNoiseTransforms(nt, opts = {}) {
 
 }
 
+function transformStateSignature() {
+  return [
+    shapeOffsetWorld[0], shapeOffsetWorld[1], shapeOffsetWorld[2],
+    detailOffsetWorld[0], detailOffsetWorld[1], detailOffsetWorld[2],
+    weatherOffsetWorld[0], weatherOffsetWorld[1], weatherOffsetWorld[2],
+    shapeScale, detailScale, weatherScale,
+    shapeAxisScale[0], shapeAxisScale[1], shapeAxisScale[2],
+    detailAxisScale[0], detailAxisScale[1], detailAxisScale[2],
+    weatherAxisScale[0], weatherAxisScale[1], weatherAxisScale[2],
+    shapeBias, detailBias, weatherBias,
+  ].map((v) => signatureScalar(v, 6)).join("|");
+}
+
 function pushTransformsToCloudBuilder() {
   if (!cb) return;
+
+  const sig = transformStateSignature();
+  if (sig === lastNoiseTransformSignature) return;
 
   const t = {
     shapeOffsetWorld,
@@ -946,6 +1116,36 @@ function pushTransformsToCloudBuilder() {
   if (typeof cb.setNoiseTransforms === "function") cb.setNoiseTransforms(t);
   else if (typeof cb.setTileScaling === "function") cb.setTileScaling(t);
   else cb.noiseTransforms = t;
+  lastNoiseTransformSignature = sig;
+}
+
+function syncBaseInputMaps() {
+  if (!cb) return;
+  const weatherView = noise.weather.arrayView;
+  const blueView = noise.blue.arrayView;
+  const shape3DView = noise.shape128.view3D;
+  const detail3DView = noise.detail32.view3D;
+
+  if (
+    weatherView === lastBaseWeatherView &&
+    blueView === lastBaseBlueView &&
+    shape3DView === lastBaseShapeView &&
+    detail3DView === lastBaseDetailView
+  ) {
+    return;
+  }
+
+  cb.setInputMaps({
+    weatherView,
+    blueView,
+    shape3DView,
+    detail3DView,
+  });
+
+  lastBaseWeatherView = weatherView;
+  lastBaseBlueView = blueView;
+  lastBaseShapeView = shape3DView;
+  lastBaseDetailView = detail3DView;
 }
 
 function snapshotTransforms() {
@@ -971,6 +1171,17 @@ function snapshotTransforms() {
 // -----------------------------------------------------------------------------
 // reproj normalization
 // -----------------------------------------------------------------------------
+function normalizeTemporalCellRate(value) {
+  const n = Math.max(1, Number(value) | 0);
+  if (n >= 64) return 64;
+  if (n >= 32) return 32;
+  if (n >= 16) return 16;
+  if (n >= 8) return 8;
+  if (n >= 4) return 4;
+  if (n >= 2) return 2;
+  return 1;
+}
+
 function normalizeReproj(r) {
   if (!r) return null;
 
@@ -985,6 +1196,9 @@ function normalizeReproj(r) {
     frameIndex: (r.frameIndex ? r.frameIndex >>> 0 : 0) >>> 0,
     fullWidth: r.fullWidth ? r.fullWidth >>> 0 : undefined,
     fullHeight: r.fullHeight ? r.fullHeight >>> 0 : undefined,
+    temporalCellRate: normalizeTemporalCellRate(r.temporalCellRate),
+    temporalCellPhase: r.temporalCellPhase ? r.temporalCellPhase >>> 0 : 0,
+    compactInterleave: r.compactInterleave ? 1 : 0,
     scale: typeof r.scale === "number" ? r.scale : undefined,
     coarseFactor: typeof r.coarseFactor === "number" ? Math.max(1, r.coarseFactor | 0) : undefined,
   };
@@ -1006,13 +1220,13 @@ function getReprojCoarseFactor(r, fallback = 1) {
   return Math.max(1, (rp?.coarseFactor || rp?.subsample || fallback || 1) | 0);
 }
 
-function normalizeRenderScaleDivider(value, fallback = 5) {
+function normalizeRenderScaleDivider(value, fallback = 3) {
   const v = Number.isFinite(+value) ? Math.floor(+value) : fallback;
   return Math.max(1, Math.min(8, v));
 }
 
 function previewRenderScaleDivider(preview) {
-  return normalizeRenderScaleDivider(preview?.renderScaleDivider, 5);
+  return normalizeRenderScaleDivider(preview?.renderScaleDivider, 3);
 }
 
 function renderScaleDividerCoarseFactor(preview, reprojecting = false) {
@@ -1041,6 +1255,95 @@ function previewCloudBox(preview = {}) {
     ],
     uvScale: Math.max(0.001, finiteNumber(box.uvScale, 1)),
   };
+}
+
+function signatureScalar(v, digits = 5) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  const scale = 10 ** digits;
+  return Math.round(n * scale) / scale;
+}
+
+function signatureValue(v) {
+  if (Array.isArray(v)) return v.map((x) => signatureValue(x));
+  if (v && typeof v === "object") {
+    return Object.keys(v)
+      .sort()
+      .map((k) => [k, signatureValue(v[k])]);
+  }
+  return typeof v === "number" ? signatureScalar(v) : v;
+}
+
+function cloudSceneSignature(box, params) {
+  return JSON.stringify({
+    box: signatureValue(box),
+    params: signatureValue(params || {}),
+  });
+}
+
+function cloudViewSignature(preview, box, aspect) {
+  const cam = preview?.cam || {};
+  const sun = preview?.sun || {};
+  return JSON.stringify({
+    cam: {
+      x: signatureScalar(cam.x || 0),
+      y: signatureScalar(cam.y || 0),
+      z: signatureScalar(cam.z || 0),
+      yawDeg: signatureScalar(cam.yawDeg || 0),
+      pitchDeg: signatureScalar(cam.pitchDeg || 0),
+      fovYDeg: signatureScalar(cam.fovYDeg || 60),
+      aspect: signatureScalar(aspect),
+    },
+    sun: {
+      azDeg: signatureScalar(sun.azDeg || 0),
+      elDeg: signatureScalar(sun.elDeg || 0),
+    },
+    boxY: [
+      signatureScalar(box.center[1] - box.half[1]),
+      signatureScalar(box.center[1] + box.half[1]),
+      signatureScalar(box.uvScale),
+    ],
+  });
+}
+
+function renderUniformSignature(preview, aspect, layerIndex) {
+  return JSON.stringify({
+    layerIndex,
+    cam: signatureValue(preview?.cam || {}),
+    sun: signatureValue(preview?.sun || {}),
+    aspect: signatureScalar(aspect),
+    exposure: signatureScalar(preview?.exposure || 1.0),
+    sky: signatureValue(preview?.sky || [0.5, 0.6, 0.8]),
+    gradeStyle: preview?.gradeStyle ?? 1,
+    sunTint: signatureValue(preview?.sunTint || [1.0, 1.0, 1.0]),
+    cloudLitTint: signatureValue(preview?.cloudLitTint || [1.0, 1.0, 1.0]),
+    cloudShadowTint: signatureValue(preview?.cloudShadowTint || [1.0, 1.0, 1.0]),
+    edgeTint: signatureValue(preview?.edgeTint || [1.0, 1.0, 1.0]),
+    styleShadowStrength: signatureScalar(preview?.styleShadowStrength ?? 0.88),
+    styleShadowEdge: signatureScalar(preview?.styleShadowEdge ?? 0.0),
+    styleShadowDarkness: signatureScalar(preview?.styleShadowDarkness ?? 0.0),
+    styleColorLift: signatureScalar(preview?.styleColorLift ?? 1.12),
+    styleSaturation: signatureScalar(preview?.styleSaturation ?? 1.10),
+    styleRimStrength: signatureScalar(preview?.styleRimStrength ?? 1.0),
+    styleSunBleed: signatureScalar(preview?.styleSunBleed ?? 0.85),
+    styleMidLift: signatureScalar(preview?.styleMidLift ?? 1.10),
+    godRaysEnabled: !!preview?.godRaysEnabled,
+    godRayStrength: signatureScalar(preview?.godRayStrength ?? 0.0),
+    godRayLength: signatureScalar(preview?.godRayLength ?? 1.0),
+    godRayFalloff: signatureScalar(preview?.godRayFalloff ?? 1.55),
+    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.085),
+  });
+}
+
+function resetFrameStateCaches() {
+  lastCloudSceneSignature = "";
+  lastCloudViewSignature = "";
+  lastRenderUniformSignature = "";
+  lastNoiseTransformSignature = "";
+  lastBaseWeatherView = null;
+  lastBaseBlueView = null;
+  lastBaseShapeView = null;
+  lastBaseDetailView = null;
 }
 
 
@@ -1078,6 +1381,11 @@ function getDispatchReprojSettings(r, coarseFactor = 1) {
   if (coarseFactor >= 2) {
     out.subsample = 1;
     out.sampleOffset = 0;
+    out.temporalCellRate = normalizeTemporalCellRate(out.temporalCellRate);
+    out.temporalCellPhase = out.temporalCellRate > 1 ? (out.temporalCellPhase >>> 0) % out.temporalCellRate : 0;
+    out.compactInterleave = out.temporalCellRate > 1 ? 1 : 0;
+    out.temporalBlend = 0.0;
+    out.enabled = 0;
   }
   return out;
 }
@@ -1236,6 +1544,7 @@ function makeViewSignature(preview, w, h) {
     roundSig(preview?.styleSunBleed ?? 0.85, 1000),
     roundSig(preview?.styleMidLift ?? 1.10, 1000),
     preview?.godRaysEnabled ? 1 : 0,
+    normalizeTemporalCellRate(preview?.temporalCellRate ?? 1),
     roundSig(preview?.godRayStrength ?? 0.0, 1000),
     roundSig(preview?.godRayLength ?? 1.0, 1000),
     roundSig(preview?.godRayFalloff ?? 1.55, 1000),
@@ -1251,6 +1560,7 @@ function invalidateReprojectionHistory() {
   if (workerReproj) {
     workerReproj.frameIndex = 0;
     workerReproj.sampleOffset = 0;
+    workerReproj.temporalCellPhase = 0;
   }
 }
 
@@ -1275,6 +1585,8 @@ function cloneReprojForReset(r) {
     sampleOffset: 0,
     temporalBlend: 0.0,
     frameIndex: 0,
+    temporalCellPhase: 0,
+    compactInterleave: 0,
   });
 }
 
@@ -1358,6 +1670,7 @@ async function runFrame({
     if (workerReproj && nextReproj && !reproj.resetHistory && nextReproj.enabled && nextReproj.frameIndex === 0 && workerReproj.frameIndex > 0) {
       nextReproj.frameIndex = workerReproj.frameIndex >>> 0;
       nextReproj.sampleOffset = workerReproj.sampleOffset >>> 0;
+      nextReproj.temporalCellPhase = workerReproj.temporalCellPhase >>> 0;
     }
     workerReproj = nextReproj;
     if (reproj.resetHistory) invalidateReprojectionHistory();
@@ -1371,18 +1684,18 @@ async function runFrame({
   if (!noise.shape128.view3D) await bakeShape128(shapeParams, true);
   if (!noise.detail32.view3D) await bakeDetail32(detailParams, true);
 
-  cb.setInputMaps({
-    weatherView: noise.weather.arrayView,
-    blueView: noise.blue.arrayView,
-    shape3DView: noise.shape128.view3D,
-    detail3DView: noise.detail32.view3D,
-  });
+  syncBaseInputMaps();
 
-  const useReproj = !!(workerReproj && workerReproj.enabled);
-  const useTemporalHistory = !!(workerReproj && workerReproj.temporalBlend > 0.0001);
+  const workerTemporalCellRate = normalizeTemporalCellRate(workerReproj?.temporalCellRate);
+  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, renderScaleDividerCoarseFactor(preview, !!workerReproj));
+  const coarseComputeMode = effectiveCoarseFactor >= 2;
+  const useReproj = !!(workerReproj && workerReproj.enabled && !coarseComputeMode);
+  const useTemporalCells = workerTemporalCellRate > 1;
+  const useFullResTemporalBlend = !!(workerReproj && !coarseComputeMode && workerReproj.temporalBlend > 0.0001);
+  const useCoarseInterleave = !!(workerReproj && coarseComputeMode && useTemporalCells);
+  const useTemporalHistory = !!(workerReproj && (useFullResTemporalBlend || useTemporalCells || useCoarseInterleave));
   const resetReprojThisFrame = useTemporalHistory && reprojResetFrames > 0;
   let effectiveReproj = workerReproj;
-  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, renderScaleDividerCoarseFactor(preview, useReproj));
   if (resetReprojThisFrame) {
     effectiveReproj = cloneReprojForReset(workerReproj);
     historyPrevView = null;
@@ -1392,26 +1705,31 @@ async function runFrame({
     if (!workerReproj && reproj) workerReproj = normalizeReproj(reproj);
     if (!effectiveReproj) effectiveReproj = workerReproj;
     if (effectiveReproj) {
-      const coarseDriven = getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor) >= 2;
-      effectiveCoarseFactor = Math.max(effectiveCoarseFactor, getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor));
-      const ss = coarseDriven ? 1 : Math.max(1, effectiveReproj.subsample || 1);
+      const ss = Math.max(1, effectiveReproj.subsample || 1);
       const cells = ss * ss;
       if (!(effectiveReproj.frameIndex === 0 && !historyPrevView)) {
         effectiveReproj.frameIndex = ((effectiveReproj.frameIndex || 0) + 1) >>> 0;
-        effectiveReproj.sampleOffset = coarseDriven ? 0 : (effectiveReproj.frameIndex % cells) >>> 0;
+        effectiveReproj.sampleOffset = (effectiveReproj.frameIndex % cells) >>> 0;
+        const temporalCellRate = normalizeTemporalCellRate(effectiveReproj.temporalCellRate);
+        effectiveReproj.temporalCellRate = temporalCellRate;
+        // True temporal interleave rotates the owner phase. Non-owner pixels
+        // reuse and copy forward full-resolution history in the cloud shader.
+        effectiveReproj.temporalCellPhase = temporalCellRate > 1 ? (effectiveReproj.frameIndex % temporalCellRate) >>> 0 : 0;
         if (workerReproj) {
           workerReproj.frameIndex = effectiveReproj.frameIndex >>> 0;
           workerReproj.sampleOffset = effectiveReproj.sampleOffset >>> 0;
+          workerReproj.temporalCellRate = effectiveReproj.temporalCellRate >>> 0;
+          workerReproj.temporalCellPhase = effectiveReproj.temporalCellPhase >>> 0;
         }
       }
     }
   }
 
-  if (useReproj) {
+  if (useTemporalHistory) {
     if (!workerReproj && reproj) workerReproj = normalizeReproj(reproj);
     if (!effectiveReproj) effectiveReproj = workerReproj;
 
-    if (motionImage) {
+    if (useReproj && motionImage) {
       try {
         motionTex?.destroy?.();
         motionTex = device.createTexture({
@@ -1429,7 +1747,7 @@ async function runFrame({
       motionView = null;
     }
 
-    if (depthImage) {
+    if (useReproj && depthImage) {
       try {
         depthTex?.destroy?.();
         depthTex = device.createTexture({
@@ -1447,8 +1765,16 @@ async function runFrame({
       depthView = null;
     }
 
+    const outputNeedsAlloc = !cb.outTexture || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
+    if (outputNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating cloud render targets...");
     cb.createOutputTexture(MAIN_W, MAIN_H, 1);
-    ensureHistoryTextures(cb.width || MAIN_W, cb.height || MAIN_H, cb.layers || 1);
+
+    const historyW = effectiveCoarseFactor >= 2 ? Math.max(1, Math.ceil(MAIN_W / effectiveCoarseFactor)) : (cb.width || MAIN_W);
+    const historyH = effectiveCoarseFactor >= 2 ? Math.max(1, Math.ceil(MAIN_H / effectiveCoarseFactor)) : (cb.height || MAIN_H);
+    const historyL = cb.layers || 1;
+    const historyNeedsAlloc = !historyAllocated || historyTexWidth !== historyW || historyTexHeight !== historyH || historyTexLayers !== historyL;
+    if (historyNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating temporal history...");
+    ensureHistoryTextures(historyW, historyH, historyL);
 
     historyOutView = historyUsesAasOut ? historyViewA : historyViewB;
 
@@ -1462,11 +1788,12 @@ async function runFrame({
 
     if (workerPerf) cb.setPerfParams(workerPerf);
     if (effectiveReproj) {
-      effectiveCoarseFactor = Math.max(effectiveCoarseFactor, getReprojCoarseFactor(effectiveReproj, effectiveCoarseFactor));
-      if (effectiveReproj) {
-        effectiveReproj.coarseFactor = effectiveCoarseFactor;
-        effectiveReproj.scale = 1 / Math.max(1, effectiveCoarseFactor * effectiveCoarseFactor);
-      }
+      effectiveReproj.coarseFactor = 1;
+      effectiveReproj.scale = 1.0;
+      effectiveReproj.temporalCellRate = normalizeTemporalCellRate(effectiveReproj.temporalCellRate);
+      effectiveReproj.temporalCellPhase = effectiveReproj.temporalCellRate > 1
+        ? (effectiveReproj.frameIndex % effectiveReproj.temporalCellRate) >>> 0
+        : 0;
       cb.setReprojSettings(getDispatchReprojSettings(effectiveReproj, effectiveCoarseFactor));
     }
   } else {
@@ -1476,10 +1803,26 @@ async function runFrame({
       historyPrevView: null,
     });
     cb.setHistoryOutView(null);
+    cb.setReprojSettings({
+      enabled: 0,
+      subsample: 1,
+      sampleOffset: 0,
+      temporalBlend: 0.0,
+      frameIndex: 0,
+      fullWidth: MAIN_W,
+      fullHeight: MAIN_H,
+      temporalCellRate: 1,
+      temporalCellPhase: 0,
+      compactInterleave: 0,
+    });
   }
 
-  cb.setBox(cloudBox);
-  cb.setParams(cloudParams || {});
+  const cloudSig = cloudSceneSignature(cloudBox, cloudParams || {});
+  if (cloudSig !== lastCloudSceneSignature) {
+    cb.setBox(cloudBox);
+    cb.setParams(cloudParams || {});
+    lastCloudSceneSignature = cloudSig;
+  }
 
   const deg2rad = (d) => (d * Math.PI) / 180;
   const yaw = deg2rad(preview?.cam?.yawDeg || 0);
@@ -1502,30 +1845,38 @@ async function runFrame({
   const cel = Math.cos(sEl);
   const sunDir = norm([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
 
-  cb.setViewFromCamera({
-    camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
-    right,
-    up,
-    fwd,
-    fovYDeg: preview?.cam?.fovYDeg || 60,
-    aspect,
-    planetRadius: 0.0,
-    cloudBottom: cloudBox.center[1] - cloudBox.half[1],
-    cloudTop: cloudBox.center[1] + cloudBox.half[1],
-    worldToUV: cloudBox.uvScale,
-    stepBase: 0.02,
-    stepInc: 0.04,
-    volumeLayers: 1,
-  });
+  const viewSig = cloudViewSignature(preview, cloudBox, aspect);
+  if (viewSig !== lastCloudViewSignature) {
+    cb.setViewFromCamera({
+      camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+      right,
+      up,
+      fwd,
+      fovYDeg: preview?.cam?.fovYDeg || 60,
+      aspect,
+      planetRadius: 0.0,
+      cloudBottom: cloudBox.center[1] - cloudBox.half[1],
+      cloudTop: cloudBox.center[1] + cloudBox.half[1],
+      worldToUV: cloudBox.uvScale,
+      stepBase: 0.02,
+      stepInc: 0.04,
+      volumeLayers: 1,
+    });
 
-  cb.setLight({
-    sunDir,
-    camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
-  });
+    cb.setLight({
+      sunDir,
+      camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+    });
 
-  cb.setOptions({ writeRGB: true, outputChannel: 0, debugForceFog: 0 });
+    cb.setOptions({ writeRGB: true, outputChannel: 0, debugForceFog: 0 });
+    lastCloudViewSignature = viewSig;
+  }
 
-  if (!useReproj) cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+  if (!useTemporalHistory) {
+    const outputNeedsAlloc = !cb.outTexture || cb.width !== MAIN_W || cb.height !== MAIN_H || cb.layers !== 1;
+    if (outputNeedsAlloc) await progressiveYield(mobileProfileEnabled, "Allocating cloud render target...");
+    cb.createOutputTexture(MAIN_W, MAIN_H, 1);
+  }
 
   const shouldWaitForGpu = !!waitForGpu;
   const tAll0 = performance.now();
@@ -1536,7 +1887,7 @@ async function runFrame({
   const cf = Math.max(1, effectiveCoarseFactor | 0);
   const enc = device.createCommandEncoder();
   const tC0 = performance.now();
-  const skipUpsampleForPreview = cf >= 2;
+  const skipUpsampleForPreview = false;
   const encodedDispatch =
     typeof cb.encodeDispatchPasses === "function"
       ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, skipUpsampleForPreview })
@@ -1546,42 +1897,53 @@ async function runFrame({
   }
   const tC1 = performance.now();
 
-  const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
-  if (!ctxMain) configureMainContext();
+  const renderFastPreview = false;
+  const presentDivider = previewPresentDivider(preview, cf, renderFastPreview);
+  const presentW = Math.max(1, Math.ceil(MAIN_W / presentDivider));
+  const presentH = Math.max(1, Math.ceil(MAIN_H / presentDivider));
+  ensureMainPresentSize(presentW, presentH);
 
-  cb._writeRenderUniforms({
-    layerIndex: Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0)),
-    cam: {
-      camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
-      right,
-      up,
-      fwd,
-      fovYDeg: preview?.cam?.fovYDeg || 60,
-      aspect,
-    },
-    sunDir,
-    exposure: preview?.exposure || 1.0,
-    skyColor: preview?.sky || [0.5, 0.6, 0.8],
-    sunBloom: preview?.sun?.bloom || 0.0,
-    compositeQuality: 2,
-    gradeStyle: preview?.gradeStyle ?? 1,
-    sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
-    lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
-    shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
-    edgeTint: preview?.edgeTint || [1.0, 1.0, 1.0],
-    styleShadowStrength: preview?.styleShadowStrength ?? 0.88,
-    styleShadowEdge: preview?.styleShadowEdge ?? 0.0,
-    styleShadowDarkness: preview?.styleShadowDarkness ?? 0.0,
-    styleColorLift: preview?.styleColorLift ?? 1.12,
-    styleSaturation: preview?.styleSaturation ?? 1.10,
-    styleRimStrength: preview?.styleRimStrength ?? 1.0,
-    styleSunBleed: preview?.styleSunBleed ?? 0.85,
-    styleMidLift: preview?.styleMidLift ?? 1.10,
-    godRaysEnabled: !!preview?.godRaysEnabled,
-    godRayStrength: preview?.godRayStrength ?? 0.0,
-    godRayLength: preview?.godRayLength ?? 1.0,
-    godRayFalloff: preview?.godRayFalloff ?? 1.55,
-  });
+  const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
+
+  const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
+  const renderSig = renderUniformSignature(preview, aspect, layerIndex);
+  if (renderSig !== lastRenderUniformSignature) {
+    cb._writeRenderUniforms({
+      layerIndex,
+      cam: {
+        camPos: [preview?.cam?.x || 0, preview?.cam?.y || 0, preview?.cam?.z || 0],
+        right,
+        up,
+        fwd,
+        fovYDeg: preview?.cam?.fovYDeg || 60,
+        aspect,
+      },
+      sunDir,
+      exposure: preview?.exposure || 1.0,
+      skyColor: preview?.sky || [0.5, 0.6, 0.8],
+      sunBloom: preview?.sun?.bloom || 0.0,
+      compositeQuality: renderFastPreview ? 0 : 2,
+      gradeStyle: preview?.gradeStyle ?? 1,
+      sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
+      lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
+      shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
+      edgeTint: preview?.edgeTint || [1.0, 1.0, 1.0],
+      styleShadowStrength: preview?.styleShadowStrength ?? 0.88,
+      styleShadowEdge: preview?.styleShadowEdge ?? 0.0,
+      styleShadowDarkness: preview?.styleShadowDarkness ?? 0.0,
+      styleColorLift: preview?.styleColorLift ?? 1.12,
+      styleSaturation: preview?.styleSaturation ?? 1.10,
+      styleRimStrength: preview?.styleRimStrength ?? 1.0,
+      styleSunBleed: preview?.styleSunBleed ?? 0.85,
+      styleMidLift: preview?.styleMidLift ?? 1.10,
+      godRaysEnabled: !!preview?.godRaysEnabled,
+      godRayStrength: (preview?.godRayStrength ?? 0.0) * (renderFastPreview ? 0.78 : 1.0),
+      godRayLength: (preview?.godRayLength ?? 1.0) * (renderFastPreview ? 0.90 : 1.0),
+      godRayFalloff: preview?.godRayFalloff ?? 1.55,
+      alphaFloor: preview?.alphaFloor ?? 0.085,
+    });
+    lastRenderUniformSignature = renderSig;
+  }
 
   const tR0 = performance.now();
   const { bundle } = getOrCreateRenderBundle(pipe, bgl, samp, format);
@@ -1621,6 +1983,7 @@ async function runFrame({
       if (workerReproj) {
         workerReproj.frameIndex = 0;
         workerReproj.sampleOffset = 0;
+        workerReproj.temporalCellPhase = 0;
       }
     }
   }
@@ -1645,7 +2008,13 @@ async function runFrame({
     waitedForGpu: shouldWaitForGpu,
     coarseFactor: cf,
     directPreview: !!encodedDispatch.directPreview,
+    presentDivider,
+    presentWidth: presentW,
+    presentHeight: presentH,
     resetReprojection: resetReprojThisFrame,
+    temporalCellRate: workerTemporalCellRate,
+    temporalCellPhase: workerReproj?.temporalCellPhase ?? 0,
+    interleaveStats: encodedDispatch.interleaveStats || null,
     frame: submittedFrameCount,
   };
 
@@ -1666,6 +2035,12 @@ async function runFrame({
       cf,
       "directPreview:",
       !!encodedDispatch.directPreview,
+      "temporalCellRate:",
+      workerTemporalCellRate,
+      "interleave:",
+      timings.interleaveStats
+        ? `${timings.interleaveStats.updatedPixels}/${timings.interleaveStats.totalPixels} tile=${timings.interleaveStats.tile}`
+        : "n/a",
     );
   }
 
@@ -1675,6 +2050,26 @@ async function runFrame({
 // -----------------------------------------------------------------------------
 // animation loop
 // -----------------------------------------------------------------------------
+function enqueueLoopGpuFence() {
+  if (!queue || typeof queue.onSubmittedWorkDone !== "function") return;
+  const fence = queue.onSubmittedWorkDone().catch(() => {});
+  loopGpuFences.push(fence);
+  if (loopGpuFences.length > LOOP_MAX_GPU_FRAMES_IN_FLIGHT + 2) {
+    loopGpuFences.splice(0, loopGpuFences.length - (LOOP_MAX_GPU_FRAMES_IN_FLIGHT + 2));
+  }
+}
+
+async function waitForLoopGpuBackpressure(targetInFlight = LOOP_MAX_GPU_FRAMES_IN_FLIGHT - 1) {
+  if (!loopGpuFences.length) return;
+  const target = Math.max(0, targetInFlight | 0);
+  while (loopGpuFences.length > target) {
+    const fence = loopGpuFences.shift();
+    try {
+      await fence;
+    } catch {}
+  }
+}
+
 function startLoop() {
   if (loopRunning) return;
 
@@ -1685,6 +2080,7 @@ function startLoop() {
   }
 
   loopEnabled = true;
+  loopGpuFences.length = 0;
   loopRunning = true;
 
   if (workerReproj && workerReproj.temporalBlend > 0.0001 && !historyPrevView) {
@@ -1696,10 +2092,12 @@ function startLoop() {
     log("animation loop started");
 
     let prevTime = performance.now();
+    let lastPresentedTime = prevTime;
     let submitWindowStart = prevTime;
     let submitWindowFrames = 0;
-    lastFenceTime = prevTime;
-    framesSinceFence = 0;
+    let lastStatsPostTime = 0;
+    emaLoopFps = null;
+    emaMaxRoundTripFps = null;
     if (workerReproj && workerReproj.enabled) {
       workerReproj = normalizeReproj(workerReproj);
       workerReproj.frameIndex = workerReproj.frameIndex >>> 0;
@@ -1707,7 +2105,20 @@ function startLoop() {
     }
 
     while (loopEnabled) {
+      if (pendingResizePayload) {
+        try {
+          await waitForLoopGpuBackpressure(1);
+          await applyPendingResizeIfAny();
+        } catch (resizeErr) {
+          postMessage({ type: "log", data: ["animation resize apply failed", String(resizeErr)] });
+        }
+      }
+
       const t0 = performance.now();
+      let timings = null;
+      let submitFrameMs = Number.NaN;
+      let frameOk = false;
+      let workerFrameMs = Number.NaN;
       try {
         const dt = Math.max(0, (t0 - prevTime) / 1000);
         prevTime = t0;
@@ -1724,35 +2135,44 @@ function startLoop() {
         weatherOffsetWorld[1] += weatherVel[1] * dt;
         weatherOffsetWorld[2] += weatherVel[2] * dt;
 
-        pushTransformsToCloudBuilder();
-
         if (workerReproj && workerReproj.enabled) {
           workerReproj = normalizeReproj(workerReproj);
         }
 
         if (lastRunPayload) {
-          const merged = Object.assign({}, lastRunPayload.tileTransforms || {});
-          Object.assign(merged, snapshotTransforms(), { explicit: true });
-          lastRunPayload.tileTransforms = merged;
+          lastRunPayload.tileTransforms = null;
+          lastRunPayload.noiseTransforms = null;
           const loopUsesReproj = !!(workerReproj && workerReproj.enabled);
           const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview, loopUsesReproj);
           if (workerReproj) {
             lastRunPayload.reproj = Object.assign({}, workerReproj, { resetHistory: false });
-            lastRunPayload.coarseFactor = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1));
+            lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
             lastRunPayload.reproj.coarseFactor = lastRunPayload.coarseFactor;
             lastRunPayload.reproj.scale = 1 / Math.max(1, lastRunPayload.coarseFactor * lastRunPayload.coarseFactor);
           } else {
-            lastRunPayload.coarseFactor = Math.max(qCoarse, lastRunPayload.coarseFactor || 1);
+            lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
           }
           lastRunPayload.waitForGpu = false;
           lastRunPayload.logFrame = false;
         }
 
-        const timings = await runFrame(lastRunPayload);
-        const submitFrameMs = performance.now() - t0 || timings.totalMs || 1;
+        await waitForLoopGpuBackpressure();
+        timings = await runFrame(lastRunPayload);
+        enqueueLoopGpuFence();
+        submitFrameMs = performance.now() - t0 || timings.totalMs || 1;
+        workerFrameMs = Math.max(
+          0.001,
+          timings?.totalMs || 0,
+          (timings?.computeMs || 0) + (timings?.renderMs || 0) + (timings?.submitMs || 0),
+          submitFrameMs,
+        );
+        frameOk = true;
+        const maxWorkerFpsInst = 1000 / workerFrameMs;
+        emaMaxRoundTripFps = emaMaxRoundTripFps === null
+          ? maxWorkerFpsInst
+          : emaMaxRoundTripFps * 0.82 + maxWorkerFpsInst * 0.18;
 
         submitWindowFrames += 1;
-        framesSinceFence += 1;
         const nowForSubmit = performance.now();
         if (nowForSubmit - submitWindowStart >= 250) {
           const submitFpsInst = (submitWindowFrames * 1000) / Math.max(1, nowForSubmit - submitWindowStart);
@@ -1760,19 +2180,6 @@ function startLoop() {
           submitWindowStart = nowForSubmit;
           submitWindowFrames = 0;
         }
-
-        postMessage({
-          type: "frame",
-          data: {
-            timings,
-            fps: emaGpuFps ?? emaSubmitFps,
-            submitFps: emaSubmitFps,
-            gpuFps: emaGpuFps,
-            submitFrameMs,
-            gpuFrameMs: lastGpuFrameMs,
-            resetReprojection: timings.resetReprojection,
-          },
-        });
       } catch (err) {
         postMessage({ type: "log", data: ["animation loop error", String(err)] });
       }
@@ -1782,30 +2189,31 @@ function startLoop() {
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       else await Promise.resolve();
 
-      if (
-        typeof queue?.onSubmittedWorkDone === "function" &&
-        framesSinceFence >= LOOP_BACKPRESSURE_EVERY
-      ) {
-        const fenceStart = performance.now();
-        await queue.onSubmittedWorkDone();
-        const fenceEnd = performance.now();
-        const elapsedSinceFence = Math.max(1, fenceEnd - lastFenceTime);
-        const completedNow = framesSinceFence;
-        completedFrameCount += completedNow;
-        const gpuFpsInst = (completedNow * 1000) / elapsedSinceFence;
-        emaGpuFps = emaGpuFps === null ? gpuFpsInst : emaGpuFps * 0.80 + gpuFpsInst * 0.20;
-        lastGpuFrameMs = elapsedSinceFence / Math.max(1, completedNow);
-        lastFenceTime = fenceEnd;
-        framesSinceFence = 0;
+      const presentedTime = performance.now();
+      const cadenceMs = Math.max(0.001, presentedTime - lastPresentedTime);
+      lastPresentedTime = presentedTime;
+      const loopFpsInst = 1000 / cadenceMs;
+      emaLoopFps = emaLoopFps === null ? loopFpsInst : emaLoopFps * 0.78 + loopFpsInst * 0.22;
+      const nowForStats = performance.now();
+      if (nowForStats - lastStatsPostTime >= 250) {
+        lastStatsPostTime = nowForStats;
         postMessage({
           type: "frame",
           data: {
-            fps: emaGpuFps,
-            gpuFps: emaGpuFps,
+            fps: emaLoopFps,
+            loopFps: emaLoopFps,
+            maxRoundTripFps: emaMaxRoundTripFps,
             submitFps: emaSubmitFps,
-            gpuFrameMs: lastGpuFrameMs,
-            fenceWaitMs: fenceEnd - fenceStart,
-            completedFrames: completedFrameCount,
+            submitFrameMs,
+            loopFrameMs: cadenceMs,
+            workFrameMs: workerFrameMs,
+            presentDivider: timings?.presentDivider,
+            presentWidth: timings?.presentWidth,
+            presentHeight: timings?.presentHeight,
+            capFps: LOOP_TARGET_MS > 0 ? 1000 / LOOP_TARGET_MS : 0,
+            frameOk,
+            gpuQueueDepth: loopGpuFences.length,
+            resetReprojection: lastRunPayload?.reproj?.resetHistory,
           },
         });
       }
@@ -1819,6 +2227,7 @@ function startLoop() {
 
 function stopLoop() {
   loopEnabled = false;
+  loopGpuFences.length = 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -1862,10 +2271,15 @@ async function _handleMessage(ev) {
       WEATHER_H = constants.WEATHER_H;
       BN_W = constants.BN_W;
       BN_H = constants.BN_H;
+      debugPreviewEnabled = constants.DEBUG_ENABLED !== false;
+      mobileProfileEnabled = !!constants.MOBILE_PROFILE;
 
+      await progressiveYield(true, "Starting WebGPU worker...");
       await ensureDevice();
+      await progressiveYield(mobileProfileEnabled, "Configuring canvas...");
       configureMainContext();
       renderBundleCache.clear();
+      resetFrameStateCaches();
 
       respond(true, {
         ok: true,
@@ -1875,39 +2289,27 @@ async function _handleMessage(ev) {
     }
 
     if (type === "resize") {
-      const { main, dbg: dbgSize } = payload;
-
-      MAIN_W = Math.max(1, main.width | 0);
-      MAIN_H = Math.max(1, main.height | 0);
-      DBG_W = Math.max(1, dbgSize.width | 0);
-      DBG_H = Math.max(1, dbgSize.height | 0);
-
-      if (canvasMain) {
-        canvasMain.width = MAIN_W;
-        canvasMain.height = MAIN_H;
-      }
-
-      Object.values(dbg).forEach((c) => {
-        if (c) {
-          c.width = DBG_W;
-          c.height = DBG_H;
-        }
+      const incoming = Object.assign({}, payload || {}, { serial: ++pendingResizeSerial });
+      const incomingSig = resizePayloadSignature(incoming);
+      const currentSig = resizePayloadSignature({
+        main: { width: MAIN_W, height: MAIN_H },
+        dbg: { width: DBG_W, height: DBG_H },
+        profile: lastResizeProfile,
       });
 
-      if (ctxMain) {
-        ctxMain.configure({
-          device,
-          format: cb?._ensureRenderPipeline?.("bgra8unorm")?.format ?? "bgra8unorm",
-          alphaMode: "opaque",
-          size: [MAIN_W, MAIN_H],
-        });
+      if (incomingSig === currentSig && !pendingResizePayload) {
+        respond(true, { ok: true, unchanged: true, serial: incoming.serial });
+        return;
       }
 
-      renderBundleCache.clear();
-      if (cb) cb._bg0Dirty = cb._bg1Dirty = true;
-      invalidateReprojectionHistory();
+      if (loopRunning) {
+        pendingResizePayload = incoming;
+        respond(true, { ok: true, queued: true, serial: incoming.serial });
+        return;
+      }
 
-      respond(true, { ok: true });
+      const result = await applyResizePayloadNow(incoming);
+      respond(true, result);
       return;
     }
 
@@ -1959,24 +2361,40 @@ async function _handleMessage(ev) {
     if (type === "bakeAll") {
       await ensureDevice();
       const t0 = performance.now();
+      const progressive = !!payload?.progressive;
+      const prevDebugEnabled = debugPreviewEnabled;
+      if (payload?.skipDebug === true) debugPreviewEnabled = false;
 
-      if (payload?.tileTransforms) applyNoiseTransforms(payload.tileTransforms, { allowPositions: !!payload.tileTransforms.explicit, allowScale: true, allowVel: true, additive: !!payload.tileTransforms.additive });
-      if (payload?.noiseTransforms) applyNoiseTransforms(payload.noiseTransforms, { allowPositions: true, allowScale: true, allowVel: true, additive: !!payload.noiseTransforms.additive });
-      pushTransformsToCloudBuilder();
+      try {
+        if (payload?.tileTransforms) applyNoiseTransforms(payload.tileTransforms, { allowPositions: !!payload.tileTransforms.explicit, allowScale: true, allowVel: true, additive: !!payload.tileTransforms.additive });
+        if (payload?.noiseTransforms) applyNoiseTransforms(payload.noiseTransforms, { allowPositions: true, allowScale: true, allowVel: true, additive: !!payload.noiseTransforms.additive });
+        pushTransformsToCloudBuilder();
 
-      const weather = await bakeWeather2D(
-        payload.weatherParams || {},
-        true,
-        payload.billowParams || {},
-        payload.weatherBParams || payload.weatherB || null,
-      );
-      const blue = await bakeBlue2D(payload.blueParams || {}, true);
-      const shape = await bakeShape128(payload.shapeParams || {}, true);
-      const detail = await bakeDetail32(payload.detailParams || {}, true);
+        await progressiveYield(progressive, "Baking weather map...");
+        const weather = await bakeWeather2D(
+          payload.weatherParams || {},
+          true,
+          payload.billowParams || {},
+          payload.weatherBParams || payload.weatherB || null,
+        );
 
-      const t1 = performance.now();
-      invalidateReprojectionHistory();
-      respond(true, { baked: "all", timings: { weather, blue, shape, detail, totalMs: t1 - t0 } });
+        await progressiveYield(progressive, "Baking blue noise...");
+        const blue = await bakeBlue2D(payload.blueParams || {}, true);
+
+        await progressiveYield(progressive, `Baking shape volume ${SHAPE_SIZE}³...`);
+        const shape = await bakeShape128(payload.shapeParams || {}, true);
+
+        await progressiveYield(progressive, `Baking detail volume ${DETAIL_SIZE}³...`);
+        const detail = await bakeDetail32(payload.detailParams || {}, true);
+
+        await progressiveYield(progressive, "Preparing first frame...");
+        const t1 = performance.now();
+        invalidateReprojectionHistory();
+        respond(true, { baked: "all", timings: { weather, blue, shape, detail, totalMs: t1 - t0 } });
+      } finally {
+        debugPreviewEnabled = prevDebugEnabled;
+        if (debugPreviewEnabled) renderDebugIfEnabled();
+      }
       return;
     }
 
@@ -1998,7 +2416,7 @@ async function _handleMessage(ev) {
         pushTransformsToCloudBuilder();
 
         try {
-          if (lastRunPayload) {
+          if (lastRunPayload && !loopRunning) {
             const merged = Object.assign({}, lastRunPayload.tileTransforms || {});
             Object.assign(merged, snapshotTransforms(), { explicit: true });
             lastRunPayload.tileTransforms = merged;
@@ -2027,6 +2445,7 @@ async function _handleMessage(ev) {
       if (workerReproj && workerReproj.temporalBlend > 0.0001 && payload?.reproj?.resetHistory) {
         workerReproj.frameIndex = 0;
         workerReproj.sampleOffset = 0;
+        workerReproj.temporalCellPhase = 0;
         invalidateReprojectionHistory();
       }
 
@@ -2034,21 +2453,21 @@ async function _handleMessage(ev) {
         lastRunPayload.reproj = workerReproj
           ? Object.assign({}, workerReproj, { resetHistory: false })
           : workerReproj;
-        const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview, !!(workerReproj && workerReproj.enabled));
+        const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview, !!(workerReproj && (workerReproj.enabled || normalizeTemporalCellRate(workerReproj.temporalCellRate) > 1)));
         if (workerReproj) {
-          lastRunPayload.coarseFactor = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, lastRunPayload.coarseFactor || 1));
+          lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
           lastRunPayload.reproj.coarseFactor = lastRunPayload.coarseFactor;
           lastRunPayload.reproj.scale = 1 / Math.max(1, lastRunPayload.coarseFactor * lastRunPayload.coarseFactor);
         } else {
-          lastRunPayload.coarseFactor = Math.max(qCoarse, lastRunPayload.coarseFactor || 1);
+          lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
         }
       }
 
       if (cb) {
         if (workerPerf) cb.setPerfParams(workerPerf);
         if (workerReproj) {
-          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload?.preview, !!workerReproj.enabled);
-          const cf = Math.max(qCoarse, getReprojCoarseFactor(workerReproj, 1));
+          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload?.preview, !!(workerReproj.enabled || normalizeTemporalCellRate(workerReproj.temporalCellRate) > 1));
+          const cf = Math.max(1, qCoarse | 0);
           workerReproj.coarseFactor = cf;
           workerReproj.scale = 1 / Math.max(1, cf * cf);
           cb.setReprojSettings(getDispatchReprojSettings(workerReproj, cf));
@@ -2056,9 +2475,96 @@ async function _handleMessage(ev) {
       }
 
       renderBundleCache.clear();
-      if (!workerReproj || !workerReproj.enabled) stopLoop();
+      if (!workerReproj || (!workerReproj.enabled && normalizeTemporalCellRate(workerReproj.temporalCellRate) <= 1)) stopLoop();
 
       respond(true, { ok: true, reproj: workerReproj, perf: workerPerf });
+      return;
+    }
+
+    if (type === "setLiveFrameState") {
+      await ensureDevice();
+      try {
+        const incomingPreview = payload?.preview || null;
+        const incomingCloudParams = payload?.cloudParams || null;
+        const incomingTuning = payload?.tuning || null;
+        const incomingTransforms = payload?.tileTransforms || payload?.noiseTransforms || null;
+        const incomingReproj = payload?.reproj || null;
+
+        if (!lastRunPayload) {
+          lastRunPayload = {
+            preview: incomingPreview || {},
+            cloudParams: incomingCloudParams || {},
+            tileTransforms: incomingTransforms || null,
+            reproj: incomingReproj || workerReproj || null,
+            coarseFactor: renderScaleDividerCoarseFactor(incomingPreview || {}, true),
+          };
+        }
+
+        if (incomingPreview && typeof incomingPreview === "object") {
+          lastRunPayload.preview = Object.assign({}, lastRunPayload.preview || {}, incomingPreview);
+        }
+
+        if (incomingCloudParams && typeof incomingCloudParams === "object") {
+          lastRunPayload.cloudParams = incomingCloudParams;
+        }
+
+        if (incomingTuning && typeof incomingTuning === "object") {
+          mergeTuningPatch(incomingTuning);
+          lastRunPayload.tuning = Object.assign({}, lastRunPayload.tuning || {}, incomingTuning);
+          try {
+            applyWorkerTuning(previewCloudBox(lastRunPayload.preview || {}));
+          } catch (e) {
+            console.warn("setLiveFrameState tuning apply failed", e);
+          }
+        }
+
+        if (incomingTransforms && typeof incomingTransforms === "object") {
+          applyNoiseTransforms(incomingTransforms, {
+            allowPositions: true,
+            allowScale: true,
+            allowVel: true,
+            additive: !!incomingTransforms.additive,
+          });
+          pushTransformsToCloudBuilder();
+          if (!loopRunning) {
+            const merged = Object.assign({}, lastRunPayload.tileTransforms || {});
+            Object.assign(merged, snapshotTransforms(), { explicit: true });
+            lastRunPayload.tileTransforms = merged;
+          }
+        }
+
+        if (incomingReproj && typeof incomingReproj === "object") {
+          const nextReproj = normalizeReproj(incomingReproj);
+          if (workerReproj && nextReproj && !incomingReproj.resetHistory) {
+            nextReproj.frameIndex = workerReproj.frameIndex >>> 0;
+            nextReproj.sampleOffset = workerReproj.sampleOffset >>> 0;
+            nextReproj.temporalCellPhase = workerReproj.temporalCellPhase >>> 0;
+          }
+          workerReproj = nextReproj;
+        }
+
+        const previewForCoarse = lastRunPayload.preview || incomingPreview || {};
+        const usesHistory = !!(workerReproj && (workerReproj.enabled || normalizeTemporalCellRate(workerReproj.temporalCellRate) > 1));
+        const qCoarse = renderScaleDividerCoarseFactor(previewForCoarse, usesHistory);
+        lastRunPayload.coarseFactor = Math.max(1, qCoarse);
+        if (workerReproj) {
+          workerReproj.coarseFactor = lastRunPayload.coarseFactor;
+          workerReproj.scale = 1 / Math.max(1, workerReproj.coarseFactor * workerReproj.coarseFactor);
+          lastRunPayload.reproj = Object.assign({}, workerReproj, { resetHistory: false });
+        }
+        lastRunPayload.waitForGpu = false;
+        lastRunPayload.logFrame = false;
+
+        respond(true, {
+          ok: true,
+          seq: payload?.seq || 0,
+          coarseFactor: lastRunPayload.coarseFactor,
+          temporalCellRate: normalizeTemporalCellRate(workerReproj?.temporalCellRate),
+        });
+      } catch (err) {
+        console.warn("setLiveFrameState failed", err);
+        respond(false, err);
+      }
       return;
     }
 

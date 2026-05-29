@@ -8,15 +8,74 @@ import wrkr from "./cloudTest.worker.js";
 
 let worker;
 
-// Constants (mirror worker)
-const SHAPE_SIZE = 128,
-  DETAIL_SIZE = 32,
-  WEATHER_W = 512,
-  WEATHER_H = 512,
-  BN_W = 256,
-  BN_H = 256;
-const DBG_SIZE = 224;
-const DPR = () => Math.max(1, Math.floor(window.devicePixelRatio || 1));
+// Constants (mirror worker). Mobile keeps the same shader path but lowers
+// startup texture/canvas pressure so first load does not stall the browser.
+function isMobileLikeDevice() {
+  const params = new URLSearchParams(location.search || "");
+  if (params.has("desktop") || params.get("profile") === "desktop") return false;
+  if (params.has("mobile") || params.get("profile") === "mobile") return true;
+
+  const ua = navigator.userAgent || "";
+  const uaMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const coarse = typeof matchMedia === "function" ? !!matchMedia("(pointer: coarse)").matches : false;
+  const noHover = typeof matchMedia === "function" ? !!matchMedia("(hover: none)").matches : false;
+  const touchPoints = Number(navigator.maxTouchPoints || 0);
+  const smallSide = Math.min(window.innerWidth || 0, window.innerHeight || 0);
+  const shortScreenSide = Math.min(screen?.width || 0, screen?.height || 0);
+  const lowMem = Number(navigator.deviceMemory || 8) <= 4;
+
+  // Do not classify desktop Chrome as mobile only because deviceMemory is 4 GB.
+  // Mobile caps are for touch/small-screen devices unless explicitly forced with ?mobile=1.
+  const touchSmallViewport = touchPoints > 0 && coarse && smallSide <= 980;
+  const touchSmallScreen = touchPoints > 0 && coarse && shortScreenSide > 0 && shortScreenSide <= 900;
+  const constrainedTouchDevice = touchPoints > 0 && coarse && noHover && lowMem && smallSide <= 1200;
+
+  return uaMobile || touchSmallViewport || touchSmallScreen || constrainedTouchDevice;
+}
+
+const MOBILE_PROFILE = isMobileLikeDevice();
+const STARTUP_PROFILE = MOBILE_PROFILE
+  ? {
+      shapeSize: 96,
+      detailSize: 32,
+      weatherW: 384,
+      weatherH: 384,
+      blueW: 128,
+      blueH: 128,
+      dbgSize: 128,
+      maxDpr: 1.35,
+      maxMainPixels: 900_000,
+      maxMainSide: 1280,
+      renderScaleDivider: 4,
+      temporalCellRate: 4,
+      debugCanvases: false,
+      capMainCanvas: true,
+    }
+  : {
+      shapeSize: 128,
+      detailSize: 32,
+      weatherW: 512,
+      weatherH: 512,
+      blueW: 256,
+      blueH: 256,
+      dbgSize: 224,
+      renderScaleDivider: 4,
+      temporalCellRate: 4,
+      debugCanvases: true,
+      capMainCanvas: false,
+    };
+
+const SHAPE_SIZE = STARTUP_PROFILE.shapeSize,
+  DETAIL_SIZE = STARTUP_PROFILE.detailSize,
+  WEATHER_W = STARTUP_PROFILE.weatherW,
+  WEATHER_H = STARTUP_PROFILE.weatherH,
+  BN_W = STARTUP_PROFILE.blueW,
+  BN_H = STARTUP_PROFILE.blueH;
+const DBG_SIZE = STARTUP_PROFILE.dbgSize;
+const DPR = () => {
+  const raw = Math.max(1, window.devicePixelRatio || 1);
+  return STARTUP_PROFILE.capMainCanvas ? Math.min(STARTUP_PROFILE.maxDpr, raw) : raw;
+};
 
 let ENTRY_POINTS = [];
 
@@ -31,9 +90,16 @@ const preview = {
     half: [18, 0.3, 18],
     uvScale: 1,
   },
-  renderScaleDivider: 5,
+  renderScaleDivider: STARTUP_PROFILE.renderScaleDivider,
+  temporalCellRate: STARTUP_PROFILE.temporalCellRate,
+  layerPreset: "rain_shelf",
   gradeStyle: 3,
   sunTint: [1.0, 1.0, 1.0],
+  transmissiveLightTint: [0.94, 1.00, 1.08],
+  frontLightTint: [1.18, 1.24, 1.32],
+  volumeShadowTint: [0.60, 0.68, 0.82],
+  directLightBlend: 0.90,
+  directLightBoost: 0.72,
   cloudLitTint: [1.0, 1.0, 1.0],
   cloudShadowTint: [0.0, 0.0, 0.0],
   edgeTint: [1.0, 1.0, 1.0],
@@ -45,11 +111,12 @@ const preview = {
   styleRimStrength: 1.04,
   styleSunBleed: 0.66,
   styleMidLift: 1.26,
+  alphaFloor: 0.085,
   godRaysEnabled: true,
   godRayStrength: 1.00,
   godRayLength: 1.10,
   godRayFalloff: 1.10,
-  sun: { azDeg: 45, elDeg: 41, bloom: 0.18 },
+  sun: { azDeg: 45, elDeg: 21, bloom: 0.18 },
 };
 
 // Weather params (R channel)
@@ -176,7 +243,7 @@ function normalizeRenderScaleDivider(value, fallback = 5) {
 }
 
 function previewRenderScaleDivider() {
-  return normalizeRenderScaleDivider(preview.renderScaleDivider, 5);
+  return normalizeRenderScaleDivider(preview.renderScaleDivider, 4);
 }
 
 preview.renderScaleDivider = previewRenderScaleDivider();
@@ -186,13 +253,62 @@ const reprojDefaultScale = 1 / 16;
 
 const reprojTemporalBlend = 0.94;
 let animRunning = false;
+let visualFpsRaf = 0;
+let visualFpsLastT = 0;
+let visualFpsEma = null;
 
-function currentReprojectionTemporalBlend(enabled = reprojEnabled) {
+function stopVisualFpsTicker() {
+  if (visualFpsRaf) cancelAnimationFrame(visualFpsRaf);
+  visualFpsRaf = 0;
+  visualFpsLastT = 0;
+  visualFpsEma = null;
+}
+
+function startVisualFpsTicker() {
+  stopVisualFpsTicker();
+  const fpsEl = $("fpsDisplay");
+  const tick = (t) => {
+    if (!animRunning) {
+      stopVisualFpsTicker();
+      return;
+    }
+    if (visualFpsLastT > 0) {
+      const dt = Math.max(0.001, t - visualFpsLastT);
+      const fps = 1000 / dt;
+      visualFpsEma = visualFpsEma === null ? fps : visualFpsEma * 0.86 + fps * 0.14;
+      if (fpsEl) fpsEl.textContent = `${Math.round(visualFpsEma * 10) / 10} fps`;
+    }
+    visualFpsLastT = t;
+    visualFpsRaf = requestAnimationFrame(tick);
+  };
+  visualFpsRaf = requestAnimationFrame(tick);
+}
+
+function currentReprojectionTemporalBlend(enabled = cloudHistoryEnabled()) {
   return enabled ? reprojTemporalBlend : 0.0;
 }
 
 function currentPreviewCoarseFactor() {
-  return reprojEnabled ? previewRenderScaleDivider() : 1;
+  return previewRenderScaleDivider();
+}
+
+function normalizeTemporalCellRate(value) {
+  const n = Math.max(1, Number(value) | 0);
+  if (n >= 64) return 64;
+  if (n >= 32) return 32;
+  if (n >= 16) return 16;
+  if (n >= 8) return 8;
+  if (n >= 4) return 4;
+  if (n >= 2) return 2;
+  return 1;
+}
+
+function temporalCellUpdateEnabled() {
+  return normalizeTemporalCellRate(preview.temporalCellRate ?? 1) > 1;
+}
+
+function cloudHistoryEnabled() {
+  return reprojEnabled || temporalCellUpdateEnabled();
 }
 
 // ---- DOM helpers ----
@@ -211,6 +327,276 @@ const u32 = (id, fallback) => {
 
 const clamp01 = (v) => Math.max(0, Math.min(4, Number.isFinite(+v) ? +v : 1));
 
+const CLOUD_LAYER_PRESETS = {
+  fair_cumulus: {
+    description: "Puffy fair-weather cumulus with a balanced body and soft tops.",
+    values: {
+      "p-coverage": 0.86,
+      "p-density": 8.5,
+      "p-anvil": 0.0,
+      "p-beer": 5.8,
+      "p-sI": 10.5,
+      "p-sE": 10.0,
+      "t-fluffFactor": 3.15,
+      "t-baseJitter": 0.055,
+      "t-topJitter": 0.22,
+      "t-verticalTextureHomogeneity": 0.62,
+      "t-verticalLayerDecorrelation": 0.76,
+      "t-sliceJitterStrength": 0.10,
+      "t-alphaBoostThreshold": 0.20,
+      "t-alphaBoostAmount": 0.12,
+      "we-zoom": 3.7,
+      "we-freq": 1.05,
+      "we-oct": 5,
+      "we-gain": 0.52,
+      "we-billow-enable": true,
+      "we-billow-zoom": 4.4,
+      "we-billow-freq": 1.55,
+      "we-billow-oct": 4,
+      "sh-zoom": 4.2,
+      "sh-freq": 1.02,
+      "sh-oct": 2,
+      "sh-scale": 0.115,
+      "sh-bias": 0.42,
+      "sh-axis-y": 1.18,
+      "de-zoom": 4.8,
+      "de-freq": 1.18,
+      "de-oct": 4,
+      "de-scale": 1.12,
+      "de-bias": 0.0,
+      "de-axis-y": 1.38,
+    },
+  },
+  broken_cumulus: {
+    description: "Open-cell broken cumulus with deeper erosion and more gaps.",
+    values: {
+      "p-coverage": 0.72,
+      "p-density": 8.0,
+      "p-anvil": 0.0,
+      "p-beer": 6.2,
+      "p-sI": 11.0,
+      "p-sE": 12.0,
+      "t-fluffFactor": 4.2,
+      "t-baseJitter": 0.075,
+      "t-topJitter": 0.28,
+      "t-verticalTextureHomogeneity": 0.72,
+      "t-verticalLayerDecorrelation": 0.88,
+      "t-sliceJitterStrength": 0.12,
+      "we-zoom": 4.7,
+      "we-freq": 1.24,
+      "we-oct": 5,
+      "we-gain": 0.54,
+      "we-thr": 0.04,
+      "we-billow-enable": true,
+      "we-billow-zoom": 5.4,
+      "we-billow-freq": 1.8,
+      "we-billow-oct": 4,
+      "sh-zoom": 5.0,
+      "sh-freq": 1.12,
+      "sh-oct": 2,
+      "sh-scale": 0.13,
+      "sh-bias": 0.34,
+      "sh-axis-y": 1.45,
+      "de-zoom": 5.8,
+      "de-freq": 1.45,
+      "de-oct": 4,
+      "de-scale": 1.38,
+      "de-axis-y": 1.75,
+    },
+  },
+  stratus_sheet: {
+    description: "Low smooth layered stratus sheet with reduced vertical relief.",
+    values: {
+      "p-coverage": 1.0,
+      "p-density": 6.8,
+      "p-anvil": 0.0,
+      "p-beer": 5.2,
+      "p-sI": 5.5,
+      "p-sE": 7.0,
+      "t-fluffFactor": 1.25,
+      "t-baseJitter": 0.018,
+      "t-topJitter": 0.045,
+      "t-verticalTextureHomogeneity": 0.22,
+      "t-verticalLayerDecorrelation": 0.30,
+      "t-sliceJitterStrength": 0.055,
+      "t-alphaBoostThreshold": 0.16,
+      "t-alphaBoostAmount": 0.10,
+      "we-zoom": 2.7,
+      "we-freq": 0.82,
+      "we-oct": 4,
+      "we-gain": 0.46,
+      "we-billow-enable": true,
+      "we-billow-zoom": 3.2,
+      "we-billow-freq": 1.15,
+      "we-billow-oct": 3,
+      "sh-zoom": 3.0,
+      "sh-freq": 0.86,
+      "sh-oct": 2,
+      "sh-scale": 0.075,
+      "sh-bias": 0.48,
+      "sh-axis-y": 0.58,
+      "de-zoom": 3.8,
+      "de-freq": 0.88,
+      "de-oct": 3,
+      "de-scale": 0.58,
+      "de-axis-y": 0.72,
+    },
+  },
+  towering_cu: {
+    description: "Strong vertical cumulus towers without a fully spread anvil.",
+    values: {
+      "p-coverage": 0.88,
+      "p-density": 10.5,
+      "p-anvil": 0.42,
+      "p-beer": 6.3,
+      "p-sI": 14.0,
+      "p-sE": 14.0,
+      "t-fluffFactor": 4.15,
+      "t-baseJitter": 0.05,
+      "t-topJitter": 0.26,
+      "t-verticalTextureHomogeneity": 0.92,
+      "t-verticalLayerDecorrelation": 0.92,
+      "t-sliceJitterStrength": 0.12,
+      "t-alphaBoostThreshold": 0.22,
+      "t-alphaBoostAmount": 0.15,
+      "we-zoom": 3.9,
+      "we-freq": 1.10,
+      "we-oct": 5,
+      "we-gain": 0.52,
+      "we-billow-enable": true,
+      "we-billow-zoom": 4.8,
+      "we-billow-freq": 1.7,
+      "we-billow-oct": 4,
+      "sh-zoom": 4.8,
+      "sh-freq": 1.15,
+      "sh-oct": 2,
+      "sh-scale": 0.12,
+      "sh-bias": 0.38,
+      "sh-axis-y": 2.05,
+      "de-zoom": 5.2,
+      "de-freq": 1.42,
+      "de-oct": 4,
+      "de-scale": 1.45,
+      "de-axis-y": 2.25,
+    },
+  },
+  cumulonimbus_anvil: {
+    description: "Tall storm tower with connected body and upper anvil, with extra vertical erosion.",
+    values: {
+      "p-coverage": 0.94,
+      "p-density": 11.8,
+      "p-anvil": 1.15,
+      "p-beer": 6.8,
+      "p-sI": 16.5,
+      "p-sE": 18.0,
+      "t-fluffFactor": 5.0,
+      "t-baseJitter": 0.045,
+      "t-topJitter": 0.32,
+      "t-verticalTextureHomogeneity": 1.0,
+      "t-verticalLayerDecorrelation": 1.0,
+      "t-sliceJitterStrength": 0.14,
+      "t-alphaCutoff": 0.965,
+      "t-alphaBoostThreshold": 0.22,
+      "t-alphaBoostAmount": 0.18,
+      "we-zoom": 3.55,
+      "we-freq": 1.00,
+      "we-oct": 5,
+      "we-gain": 0.50,
+      "we-billow-enable": true,
+      "we-billow-zoom": 4.3,
+      "we-billow-freq": 1.55,
+      "we-billow-oct": 4,
+      "sh-zoom": 4.6,
+      "sh-freq": 1.05,
+      "sh-oct": 2,
+      "sh-scale": 0.112,
+      "sh-bias": 0.36,
+      "sh-axis-y": 2.65,
+      "de-zoom": 5.7,
+      "de-freq": 1.55,
+      "de-oct": 4,
+      "de-scale": 1.65,
+      "de-axis-y": 3.0,
+    },
+  },
+  wispy_high: {
+    description: "Thin high broken wisps with stronger erosion and low density.",
+    values: {
+      "p-coverage": 0.52,
+      "p-density": 4.4,
+      "p-anvil": 0.05,
+      "p-beer": 4.2,
+      "p-sI": 8.0,
+      "p-sE": 20.0,
+      "t-fluffFactor": 5.8,
+      "t-baseJitter": 0.04,
+      "t-topJitter": 0.18,
+      "t-verticalTextureHomogeneity": 0.78,
+      "t-verticalLayerDecorrelation": 1.0,
+      "t-sliceJitterStrength": 0.12,
+      "t-alphaCutoff": 0.985,
+      "t-alphaBoostThreshold": 0.30,
+      "t-alphaBoostAmount": 0.06,
+      "we-zoom": 5.8,
+      "we-freq": 1.55,
+      "we-oct": 5,
+      "we-gain": 0.58,
+      "we-thr": 0.08,
+      "we-billow-enable": false,
+      "sh-zoom": 6.0,
+      "sh-freq": 1.45,
+      "sh-oct": 2,
+      "sh-scale": 0.16,
+      "sh-bias": 0.28,
+      "sh-axis-y": 1.10,
+      "de-zoom": 8.0,
+      "de-freq": 1.85,
+      "de-oct": 4,
+      "de-scale": 2.0,
+      "de-axis-y": 1.65,
+    },
+  },
+  rain_shelf: {
+    description: "Dense shelf/rain-bank body with broad lower mass and a bright upper rim.",
+    values: {
+      "p-coverage": 1.0,
+      "p-density": 12.5,
+      "p-anvil": 0.72,
+      "p-beer": 7.2,
+      "p-sI": 13.5,
+      "p-sE": 14.0,
+      "t-fluffFactor": 2.55,
+      "t-baseJitter": 0.026,
+      "t-topJitter": 0.16,
+      "t-verticalTextureHomogeneity": 0.74,
+      "t-verticalLayerDecorrelation": 0.70,
+      "t-sliceJitterStrength": 0.08,
+      "t-alphaCutoff": 0.955,
+      "t-alphaBoostThreshold": 0.18,
+      "t-alphaBoostAmount": 0.22,
+      "we-zoom": 3.1,
+      "we-freq": 0.95,
+      "we-oct": 5,
+      "we-gain": 0.47,
+      "we-billow-enable": true,
+      "we-billow-zoom": 3.7,
+      "we-billow-freq": 1.28,
+      "we-billow-oct": 4,
+      "sh-zoom": 3.8,
+      "sh-freq": 0.95,
+      "sh-oct": 2,
+      "sh-scale": 0.092,
+      "sh-bias": 0.44,
+      "sh-axis-y": 1.25,
+      "de-zoom": 4.2,
+      "de-freq": 1.05,
+      "de-oct": 4,
+      "de-scale": 0.86,
+      "de-axis-y": 1.15,
+    },
+  },
+};
+
 function injectPreviewLookControls() {
   const panel = $("p-preview");
   if (!panel || $("v-grade")) return;
@@ -223,6 +609,19 @@ function injectPreviewLookControls() {
   wrap.innerHTML = `
     <div style="font-size:12px; letter-spacing:0.04em; text-transform:uppercase; opacity:0.82; margin-bottom:10px;">Look / Grade</div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end;">
+      <label style="display:flex; flex-direction:column; gap:6px;">
+        <span>Cloud Layer</span>
+        <select id="v-layer-preset" title="Applies a coordinated cloud-structure preset across weather, shape/detail noise, transforms, density, and vertical/anvil tuning. Presets rebake the procedural textures.">
+          <option value="custom">Custom / Manual</option>
+          <option value="fair_cumulus">Fair Cumulus</option>
+          <option value="broken_cumulus">Broken Cumulus</option>
+          <option value="stratus_sheet">Stratus Sheet</option>
+          <option value="towering_cu">Towering Cu</option>
+          <option value="cumulonimbus_anvil">Cumulonimbus Anvil</option>
+          <option value="wispy_high">Wispy High</option>
+          <option value="rain_shelf">Rain Shelf</option>
+        </select>
+      </label>
       <label style="display:flex; flex-direction:column; gap:6px;">
         <span>Color Grade</span>
         <select id="v-grade">
@@ -238,9 +637,24 @@ function injectPreviewLookControls() {
           <option value="9">Ash Gold</option>
           <option value="10">Rose Storm</option>
           <option value="11">Deep Ocean</option>
+          <option value="12">Natural White</option>
+          <option value="13">Silver Daylight</option>
+          <option value="14">Soft Overcast</option>
+          <option value="15">RGB Spectrum</option>
         </select>
       </label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Animated render-scale divider. 1 = full resolution, 4 = 1/4 resolution per axis, 5 = 1/5 resolution per axis, then upsampled."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider / Coarse Factor</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Compute coarse factor for still and animated renders. 1 = full resolution, 4 is the default coarse compute scale, then upsampled to the full presentation canvas."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Step Boost</span><input id="t-frontOcclusionStepBoost" type="number" step="0.05" min="1" max="8" title="Maximum behind-front-cloud step multiplier."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Slice Jitter</span><input id="t-sliceJitterStrength" type="number" step="0.01" min="0" max="1" title="Low-amplitude ray jitter that breaks residual march bands without turning tall clouds into screen-space speckle."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Y Decorrelation</span><input id="t-verticalLayerDecorrelation" type="number" step="0.01" min="0" max="1" title="Tiles and bends Y-domain shape/detail sampling so taller volumes read like repeated fluffy structure instead of horizontal shelves."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Direct Light Blend</span><input id="t-directLightBlend" type="number" step="0.01" min="0" max="1" title="Blends in a brighter top-lit cloud color profile for direct sun views, while keeping the current stormy backlit profile for transmissive views."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Direct Light Boost</span><input id="t-directLightBoost" type="number" step="0.01" min="0" max="2" title="Brightness boost for the direct-light profile used when looking at sunlit cloud tops and faces."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Min</span><input id="t-alphaBoostThreshold" type="number" step="0.01" min="0" max="1" title="Only cloud pixels with final alpha above this threshold receive the additive end-stage alpha boost."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Add</span><input id="t-alphaBoostAmount" type="number" step="0.01" min="0" max="1" title="Additive alpha applied after cloud lighting and transmission, ramped from the Alpha Boost Min threshold upward."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="5"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Edge</span><input id="v-shadow-edge" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Darkness</span><input id="v-shadow-darkness" type="number" step="0.01" min="0" max="6"></label>
@@ -258,6 +672,16 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint G</span><input id="v-sun-g" type="number" step="0.01" min="0" max="4"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Sun Tint B</span><input id="v-sun-b" type="number" step="0.01" min="0" max="4"></label>
       <div></div>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Trans Light R</span><input id="v-trans-r" type="number" step="0.01" min="0" max="4" title="Transmissive/backlit cloud light tint used by the storm/shadow lighting profile."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Trans Light G</span><input id="v-trans-g" type="number" step="0.01" min="0" max="4" title="Transmissive/backlit cloud light tint used by the storm/shadow lighting profile."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Trans Light B</span><input id="v-trans-b" type="number" step="0.01" min="0" max="4" title="Transmissive/backlit cloud light tint used by the storm/shadow lighting profile."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Light R</span><input id="v-front-r" type="number" step="0.01" min="0" max="4" title="Direct/front-lit cloud surface tint used when looking at sunlit cloud tops/faces."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Light G</span><input id="v-front-g" type="number" step="0.01" min="0" max="4" title="Direct/front-lit cloud surface tint used when looking at sunlit cloud tops/faces."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Light B</span><input id="v-front-b" type="number" step="0.01" min="0" max="4" title="Direct/front-lit cloud surface tint used when looking at sunlit cloud tops/faces."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Vol. Shadow R</span><input id="v-vol-shad-r" type="number" step="0.01" min="0" max="4" title="March-time shadow/ambient tint for the volume lighting profile."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Vol. Shadow G</span><input id="v-vol-shad-g" type="number" step="0.01" min="0" max="4" title="March-time shadow/ambient tint for the volume lighting profile."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Vol. Shadow B</span><input id="v-vol-shad-b" type="number" step="0.01" min="0" max="4" title="March-time shadow/ambient tint for the volume lighting profile."></label>
+      <div></div>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit R</span><input id="v-lit-r" type="number" step="0.01" min="0" max="4"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit G</span><input id="v-lit-g" type="number" step="0.01" min="0" max="4"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Lit B</span><input id="v-lit-b" type="number" step="0.01" min="0" max="4"></label>
@@ -274,255 +698,533 @@ function injectPreviewLookControls() {
 
 const GRADE_PRESETS = {
   0: {
-    sky: [0.60, 0.75, 0.98],
+    sky: [0.56, 0.72, 1.02],
     sunBloom: 0.18,
     sunTint: [1.00, 0.99, 0.97],
-    cloudLitTint: [1.02, 1.02, 1.03],
-    cloudShadowTint: [0.84, 0.90, 1.00],
-    edgeTint: [1.02, 1.01, 0.99],
-    styleShadowStrength: 5.00,
-    styleShadowEdge: 2.00,
-    styleShadowDarkness: 0.50,
-    styleColorLift: 1.26,
-    styleSaturation: 1.02,
-    styleRimStrength: 2.00,
-    styleSunBleed: 0.56,
-    styleMidLift: 1.16,
+    transmissiveLightTint: [0.96, 0.98, 1.06],
+    frontLightTint: [1.22, 1.20, 1.16],
+    volumeShadowTint: [0.72, 0.80, 0.94],
+    directLightBlend: 0.84,
+    directLightBoost: 0.64,
+    cloudLitTint: [1.08, 1.08, 1.09],
+    cloudShadowTint: [0.80, 0.88, 0.98],
+    edgeTint: [1.06, 1.05, 1.03],
+    styleShadowStrength: 2.30,
+    styleShadowEdge: 0.44,
+    styleShadowDarkness: 0.10,
+    styleColorLift: 1.18,
+    styleSaturation: 0.98,
+    styleRimStrength: 1.20,
+    styleSunBleed: 0.42,
+    styleMidLift: 1.12,
     godRaysEnabled: true,
-    godRayStrength: 1.00,
+    godRayStrength: 0.58,
     godRayLength: 1.0,
-    godRayFalloff: 1.55,
+    godRayFalloff: 1.62,
   },
   1: {
-    sky: [0.38, 0.22, 0.68],
-    sunBloom: 0.72,
-    sunTint: [1.50, 1.10, 0.36],
-    cloudLitTint: [2.35, 1.50, 0.34],
-    cloudShadowTint: [0.03, 0.1, 0.23],
-    edgeTint: [2.10, 1.48, 0.40],
-    styleShadowStrength: 2.5,
-    styleShadowEdge: 0.16,
-    styleShadowDarkness: 0.0,
-    styleColorLift: 2.00,
-    styleSaturation: 2.50,
-    styleRimStrength: 2.00,
-    styleSunBleed: 2.00,
-    styleMidLift: 0.00,
+    sky: [0.44, 0.24, 0.56],
+    sunBloom: 0.70,
+    sunTint: [1.34, 1.04, 0.52],
+    transmissiveLightTint: [1.12, 0.70, 0.46],
+    frontLightTint: [1.68, 1.34, 0.82],
+    volumeShadowTint: [0.18, 0.10, 0.24],
+    directLightBlend: 0.84,
+    directLightBoost: 0.94,
+    cloudLitTint: [1.62, 1.12, 0.62],
+    cloudShadowTint: [0.24, 0.12, 0.30],
+    edgeTint: [1.42, 1.02, 0.52],
+    styleShadowStrength: 2.10,
+    styleShadowEdge: 0.56,
+    styleShadowDarkness: 0.16,
+    styleColorLift: 1.30,
+    styleSaturation: 1.78,
+    styleRimStrength: 1.44,
+    styleSunBleed: 1.08,
+    styleMidLift: 0.98,
     godRaysEnabled: true,
-    godRayStrength: 1.00,
+    godRayStrength: 0.66,
     godRayLength: 1.10,
-    godRayFalloff: 1.10,
+    godRayFalloff: 1.18,
   },
   2: {
     sky: [0.46, 0.40, 0.74],
     sunBloom: 0.54,
     sunTint: [1.02, 0.92, 1.06],
-    cloudLitTint: [1.12, 0.84, 1.00],
-    cloudShadowTint: [0.36, 0.32, 0.72],
-    edgeTint: [1.08, 0.86, 1.06],
-    styleShadowStrength: 1.82,
-    styleShadowEdge: 0.06,
+    transmissiveLightTint: [0.88, 0.80, 1.10],
+    frontLightTint: [1.36, 1.14, 1.40],
+    volumeShadowTint: [0.30, 0.26, 0.56],
+    directLightBlend: 0.82,
+    directLightBoost: 0.84,
+    cloudLitTint: [1.20, 0.98, 1.18],
+    cloudShadowTint: [0.34, 0.28, 0.66],
+    edgeTint: [1.14, 0.96, 1.18],
+    styleShadowStrength: 1.70,
+    styleShadowEdge: 0.18,
     styleShadowDarkness: 0.0,
     styleColorLift: 1.18,
-    styleSaturation: 1.18,
-    styleRimStrength: 1.02,
-    styleSunBleed: 0.68,
-    styleMidLift: 1.22,
+    styleSaturation: 1.26,
+    styleRimStrength: 1.10,
+    styleSunBleed: 0.64,
+    styleMidLift: 1.18,
     godRaysEnabled: true,
-    godRayStrength: 1.00,
+    godRayStrength: 0.70,
     godRayLength: 1.02,
-    godRayFalloff: 1.40,
+    godRayFalloff: 1.42,
   },
   3: {
     sky: [0.46, 0.56, 0.82],
     sunBloom: 0.34,
     sunTint: [0.96, 1.00, 1.04],
-    cloudLitTint: [2.00, 1.02, 1.06],
-    cloudShadowTint: [0.70, 0.82, 1.12],
-    edgeTint: [2.00, 2.00, 0.00],
-    styleShadowStrength: 5.0,
-    styleShadowEdge: 1.00,
-    styleShadowDarkness: 0.4,
-    styleColorLift: 1.00,
-    styleSaturation: 1.20,
-    styleRimStrength: 2.00,
-    styleSunBleed: 2.00,
-    styleMidLift: 0.50,
+    transmissiveLightTint: [0.96, 1.04, 1.30],
+    frontLightTint: [1.44, 1.42, 1.38],
+    volumeShadowTint: [0.28, 0.36, 0.52],
+    directLightBlend: 0.92,
+    directLightBoost: 1.02,
+    cloudLitTint: [1.42, 1.34, 1.28],
+    cloudShadowTint: [0.72, 0.84, 1.08],
+    edgeTint: [1.22, 1.22, 1.18],
+    styleShadowStrength: 2.56,
+    styleShadowEdge: 0.48,
+    styleShadowDarkness: 0.12,
+    styleColorLift: 1.18,
+    styleSaturation: 1.06,
+    styleRimStrength: 1.58,
+    styleSunBleed: 0.94,
+    styleMidLift: 1.00,
     godRaysEnabled: true,
-    godRayStrength: 0.5,
-    godRayLength: 0.9,
-    godRayFalloff: 1.90,
+    godRayStrength: 0.38,
+    godRayLength: 0.94,
+    godRayFalloff: 1.86,
   },
   4: {
-    sky: [0.44, 0.34, 0.54],
-    sunBloom: 0.56,
-    sunTint: [1.08, 0.84, 0.66],
-    cloudLitTint: [1.18, 0.72, 0.38],
-    cloudShadowTint: [0.07, 0.05, 0.07],
-    edgeTint: [1.22, 0.86, 0.54],
-    styleShadowStrength: 1.50,
-    styleShadowEdge: 0.28,
-    styleShadowDarkness: 0.0,
-    styleColorLift: 1.12,
-    styleSaturation: 2.00,
-    styleRimStrength: 2.10,
-    styleSunBleed: 0.70,
-    styleMidLift: 1.08,
+    sky: [0.42, 0.30, 0.42],
+    sunBloom: 0.58,
+    sunTint: [1.12, 0.82, 0.62],
+    transmissiveLightTint: [0.98, 0.54, 0.32],
+    frontLightTint: [1.58, 1.04, 0.62],
+    volumeShadowTint: [0.18, 0.08, 0.10],
+    directLightBlend: 0.88,
+    directLightBoost: 1.00,
+    cloudLitTint: [1.34, 0.80, 0.42],
+    cloudShadowTint: [0.16, 0.08, 0.10],
+    edgeTint: [1.34, 0.92, 0.56],
+    styleShadowStrength: 2.12,
+    styleShadowEdge: 0.34,
+    styleShadowDarkness: 0.28,
+    styleColorLift: 1.10,
+    styleSaturation: 1.74,
+    styleRimStrength: 1.62,
+    styleSunBleed: 0.78,
+    styleMidLift: 1.00,
     godRaysEnabled: true,
-    godRayStrength: 1.00,
+    godRayStrength: 0.88,
     godRayLength: 0.96,
-    godRayFalloff: 1.42,
+    godRayFalloff: 1.36,
   },
   5: {
-    sky: [0.56, 0.38, 0.72],
+    sky: [0.50, 0.34, 0.64],
     sunBloom: 0.58,
-    sunTint: [1.12, 0.80, 0.78],
-    cloudLitTint: [1.34, 0.76, 0.68],
-    cloudShadowTint: [0.36, 0.26, 0.72],
-    edgeTint: [1.24, 0.82, 0.90],
-    styleShadowStrength: 0.76,
-    styleShadowEdge: 0.04,
+    sunTint: [1.10, 0.84, 0.86],
+    transmissiveLightTint: [0.96, 0.70, 0.98],
+    frontLightTint: [1.42, 1.00, 1.20],
+    volumeShadowTint: [0.28, 0.18, 0.52],
+    directLightBlend: 0.82,
+    directLightBoost: 0.86,
+    cloudLitTint: [1.26, 0.88, 1.02],
+    cloudShadowTint: [0.34, 0.24, 0.60],
+    edgeTint: [1.20, 0.86, 1.00],
+    styleShadowStrength: 1.24,
+    styleShadowEdge: 0.12,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.36,
-    styleSaturation: 1.34,
-    styleRimStrength: 1.08,
-    styleSunBleed: 0.56,
-    styleMidLift: 1.34,
+    styleColorLift: 1.28,
+    styleSaturation: 1.32,
+    styleRimStrength: 1.10,
+    styleSunBleed: 0.60,
+    styleMidLift: 1.30,
     godRaysEnabled: true,
-    godRayStrength: 1.00,
+    godRayStrength: 0.72,
     godRayLength: 1.02,
     godRayFalloff: 1.34,
   },
   6: {
-    sky: [0.50, 0.42, 0.34],
+    sky: [0.52, 0.42, 0.30],
     sunBloom: 0.62,
-    sunTint: [1.26, 0.94, 0.58],
-    cloudLitTint: [1.42, 0.94, 0.50],
-    cloudShadowTint: [0.18, 0.12, 0.10],
-    edgeTint: [1.44, 1.02, 0.60],
-    styleShadowStrength: 1.34,
-    styleShadowEdge: 0.22,
+    sunTint: [1.24, 0.96, 0.62],
+    transmissiveLightTint: [1.04, 0.82, 0.44],
+    frontLightTint: [1.54, 1.14, 0.64],
+    volumeShadowTint: [0.20, 0.12, 0.08],
+    directLightBlend: 0.84,
+    directLightBoost: 0.90,
+    cloudLitTint: [1.36, 1.00, 0.56],
+    cloudShadowTint: [0.20, 0.14, 0.10],
+    edgeTint: [1.38, 1.06, 0.64],
+    styleShadowStrength: 1.42,
+    styleShadowEdge: 0.26,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.26,
-    styleSaturation: 1.64,
-    styleRimStrength: 1.44,
+    styleColorLift: 1.22,
+    styleSaturation: 1.52,
+    styleRimStrength: 1.36,
     styleSunBleed: 0.92,
-    styleMidLift: 0.94,
+    styleMidLift: 0.96,
     godRaysEnabled: true,
-    godRayStrength: 0.74,
+    godRayStrength: 0.66,
     godRayLength: 1.06,
-    godRayFalloff: 1.28,
+    godRayFalloff: 1.26,
   },
   7: {
-    sky: [0.20, 0.34, 0.54],
+    sky: [0.22, 0.34, 0.54],
     sunBloom: 0.42,
-    sunTint: [0.72, 1.04, 1.22],
-    cloudLitTint: [0.78, 1.16, 1.38],
-    cloudShadowTint: [0.04, 0.12, 0.22],
-    edgeTint: [0.72, 1.34, 1.56],
-    styleShadowStrength: 1.46,
-    styleShadowEdge: 0.34,
+    sunTint: [0.76, 1.06, 1.22],
+    transmissiveLightTint: [0.62, 0.98, 1.18],
+    frontLightTint: [0.98, 1.40, 1.56],
+    volumeShadowTint: [0.08, 0.16, 0.28],
+    directLightBlend: 0.82,
+    directLightBoost: 0.82,
+    cloudLitTint: [0.90, 1.22, 1.42],
+    cloudShadowTint: [0.10, 0.18, 0.30],
+    edgeTint: [0.84, 1.38, 1.58],
+    styleShadowStrength: 1.48,
+    styleShadowEdge: 0.30,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.08,
-    styleSaturation: 1.58,
-    styleRimStrength: 1.26,
-    styleSunBleed: 0.48,
-    styleMidLift: 1.08,
+    styleColorLift: 1.06,
+    styleSaturation: 1.46,
+    styleRimStrength: 1.20,
+    styleSunBleed: 0.50,
+    styleMidLift: 1.10,
     godRaysEnabled: true,
-    godRayStrength: 0.38,
-    godRayLength: 0.92,
-    godRayFalloff: 1.72,
+    godRayStrength: 0.42,
+    godRayLength: 0.94,
+    godRayFalloff: 1.66,
   },
   8: {
-    sky: [0.20, 0.54, 0.50],
+    sky: [0.22, 0.54, 0.50],
     sunBloom: 0.52,
-    sunTint: [0.86, 1.16, 0.98],
-    cloudLitTint: [0.80, 1.34, 1.02],
-    cloudShadowTint: [0.06, 0.22, 0.24],
-    edgeTint: [0.66, 1.56, 1.16],
-    styleShadowStrength: 1.20,
-    styleShadowEdge: 0.18,
+    sunTint: [0.88, 1.14, 0.98],
+    transmissiveLightTint: [0.58, 1.06, 0.92],
+    frontLightTint: [1.02, 1.46, 1.16],
+    volumeShadowTint: [0.08, 0.24, 0.22],
+    directLightBlend: 0.84,
+    directLightBoost: 0.88,
+    cloudLitTint: [0.92, 1.34, 1.08],
+    cloudShadowTint: [0.12, 0.26, 0.24],
+    edgeTint: [0.78, 1.52, 1.16],
+    styleShadowStrength: 1.22,
+    styleShadowEdge: 0.20,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.42,
-    styleSaturation: 1.72,
-    styleRimStrength: 1.38,
-    styleSunBleed: 0.58,
-    styleMidLift: 1.22,
+    styleColorLift: 1.34,
+    styleSaturation: 1.60,
+    styleRimStrength: 1.32,
+    styleSunBleed: 0.62,
+    styleMidLift: 1.20,
     godRaysEnabled: true,
-    godRayStrength: 0.56,
-    godRayLength: 1.18,
-    godRayFalloff: 1.48,
+    godRayStrength: 0.58,
+    godRayLength: 1.16,
+    godRayFalloff: 1.44,
   },
   9: {
     sky: [0.58, 0.50, 0.36],
     sunBloom: 0.46,
-    sunTint: [1.20, 1.08, 0.72],
-    cloudLitTint: [1.28, 1.06, 0.64],
+    sunTint: [1.18, 1.08, 0.74],
+    transmissiveLightTint: [0.98, 0.88, 0.50],
+    frontLightTint: [1.44, 1.28, 0.84],
+    volumeShadowTint: [0.22, 0.18, 0.12],
+    directLightBlend: 0.80,
+    directLightBoost: 0.76,
+    cloudLitTint: [1.28, 1.10, 0.72],
     cloudShadowTint: [0.26, 0.22, 0.16],
-    edgeTint: [1.34, 1.12, 0.72],
-    styleShadowStrength: 1.62,
-    styleShadowEdge: 0.46,
+    edgeTint: [1.34, 1.14, 0.78],
+    styleShadowStrength: 1.54,
+    styleShadowEdge: 0.40,
     styleShadowDarkness: 0.0,
-    styleColorLift: 0.98,
-    styleSaturation: 1.12,
-    styleRimStrength: 1.18,
+    styleColorLift: 1.00,
+    styleSaturation: 1.08,
+    styleRimStrength: 1.16,
     styleSunBleed: 0.54,
-    styleMidLift: 0.74,
+    styleMidLift: 0.80,
     godRaysEnabled: false,
-    godRayStrength: 0.20,
+    godRayStrength: 0.22,
     godRayLength: 0.86,
-    godRayFalloff: 2.00,
+    godRayFalloff: 1.96,
   },
   10: {
     sky: [0.44, 0.28, 0.38],
     sunBloom: 0.68,
-    sunTint: [1.18, 0.78, 0.86],
-    cloudLitTint: [1.32, 0.82, 0.92],
-    cloudShadowTint: [0.18, 0.10, 0.22],
-    edgeTint: [1.42, 0.90, 1.06],
-    styleShadowStrength: 1.30,
-    styleShadowEdge: 0.24,
+    sunTint: [1.16, 0.82, 0.88],
+    transmissiveLightTint: [0.96, 0.60, 0.88],
+    frontLightTint: [1.46, 1.04, 1.18],
+    volumeShadowTint: [0.18, 0.10, 0.22],
+    directLightBlend: 0.84,
+    directLightBoost: 0.80,
+    cloudLitTint: [1.32, 0.90, 0.98],
+    cloudShadowTint: [0.22, 0.12, 0.26],
+    edgeTint: [1.40, 0.96, 1.10],
+    styleShadowStrength: 1.34,
+    styleShadowEdge: 0.26,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.24,
-    styleSaturation: 1.52,
-    styleRimStrength: 1.34,
-    styleSunBleed: 0.72,
+    styleColorLift: 1.22,
+    styleSaturation: 1.42,
+    styleRimStrength: 1.28,
+    styleSunBleed: 0.76,
     styleMidLift: 1.18,
     godRaysEnabled: true,
-    godRayStrength: 0.68,
+    godRayStrength: 0.60,
     godRayLength: 1.00,
-    godRayFalloff: 1.36,
+    godRayFalloff: 1.34,
   },
   11: {
     sky: [0.14, 0.22, 0.42],
     sunBloom: 0.38,
     sunTint: [0.62, 0.86, 1.30],
-    cloudLitTint: [0.70, 0.94, 1.42],
-    cloudShadowTint: [0.02, 0.04, 0.14],
-    edgeTint: [0.68, 0.96, 1.62],
-    styleShadowStrength: 1.72,
-    styleShadowEdge: 0.52,
+    transmissiveLightTint: [0.42, 0.74, 1.18],
+    frontLightTint: [0.86, 1.16, 1.56],
+    volumeShadowTint: [0.02, 0.06, 0.18],
+    directLightBlend: 0.82,
+    directLightBoost: 0.80,
+    cloudLitTint: [0.78, 1.00, 1.42],
+    cloudShadowTint: [0.04, 0.08, 0.20],
+    edgeTint: [0.74, 1.02, 1.60],
+    styleShadowStrength: 1.70,
+    styleShadowEdge: 0.48,
     styleShadowDarkness: 0.0,
-    styleColorLift: 0.92,
-    styleSaturation: 1.40,
-    styleRimStrength: 1.16,
+    styleColorLift: 0.96,
+    styleSaturation: 1.34,
+    styleRimStrength: 1.14,
     styleSunBleed: 0.36,
-    styleMidLift: 0.66,
+    styleMidLift: 0.72,
     godRaysEnabled: false,
-    godRayStrength: 0.16,
+    godRayStrength: 0.18,
     godRayLength: 0.82,
-    godRayFalloff: 2.20,
+    godRayFalloff: 2.14,
+  },
+  12: {
+    sky: [0.66, 0.80, 1.00],
+    sunBloom: 0.22,
+    sunTint: [1.00, 0.99, 0.97],
+    transmissiveLightTint: [1.04, 1.00, 1.14],
+    frontLightTint: [1.26, 1.20, 1.14],
+    volumeShadowTint: [0.62, 0.72, 0.92],
+    directLightBlend: 0.86,
+    directLightBoost: 0.72,
+    cloudLitTint: [1.16, 1.12, 1.08],
+    cloudShadowTint: [0.74, 0.82, 0.96],
+    edgeTint: [1.12, 1.08, 1.04],
+    styleShadowStrength: 1.82,
+    styleShadowEdge: 0.30,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 1.22,
+    styleSaturation: 0.96,
+    styleRimStrength: 1.18,
+    styleSunBleed: 0.38,
+    styleMidLift: 1.16,
+    godRaysEnabled: true,
+    godRayStrength: 0.42,
+    godRayLength: 0.98,
+    godRayFalloff: 1.66,
+  },
+  13: {
+    sky: [0.60, 0.74, 0.98],
+    sunBloom: 0.26,
+    sunTint: [1.02, 1.00, 0.98],
+    transmissiveLightTint: [1.00, 1.04, 1.16],
+    frontLightTint: [1.30, 1.28, 1.24],
+    volumeShadowTint: [0.56, 0.66, 0.84],
+    directLightBlend: 0.90,
+    directLightBoost: 0.82,
+    cloudLitTint: [1.22, 1.22, 1.20],
+    cloudShadowTint: [0.68, 0.78, 0.92],
+    edgeTint: [1.16, 1.16, 1.14],
+    styleShadowStrength: 1.58,
+    styleShadowEdge: 0.24,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 1.28,
+    styleSaturation: 0.90,
+    styleRimStrength: 1.24,
+    styleSunBleed: 0.46,
+    styleMidLift: 1.22,
+    godRaysEnabled: true,
+    godRayStrength: 0.48,
+    godRayLength: 1.02,
+    godRayFalloff: 1.50,
+  },
+  14: {
+    sky: [0.70, 0.76, 0.94],
+    sunBloom: 0.18,
+    sunTint: [0.98, 0.98, 0.98],
+    transmissiveLightTint: [0.94, 0.98, 1.08],
+    frontLightTint: [1.14, 1.14, 1.14],
+    volumeShadowTint: [0.54, 0.60, 0.74],
+    directLightBlend: 0.80,
+    directLightBoost: 0.54,
+    cloudLitTint: [1.06, 1.06, 1.06],
+    cloudShadowTint: [0.68, 0.74, 0.86],
+    edgeTint: [1.04, 1.04, 1.04],
+    styleShadowStrength: 1.92,
+    styleShadowEdge: 0.32,
+    styleShadowDarkness: 0.10,
+    styleColorLift: 1.10,
+    styleSaturation: 0.80,
+    styleRimStrength: 0.98,
+    styleSunBleed: 0.22,
+    styleMidLift: 1.00,
+    godRaysEnabled: false,
+    godRayStrength: 0.18,
+    godRayLength: 0.90,
+    godRayFalloff: 1.86,
+  },
+  15: {
+    sky: [0.48, 0.56, 0.82],
+    sunBloom: 0.52,
+    sunTint: [1.00, 1.00, 1.00],
+    transmissiveLightTint: [0.22, 1.04, 0.76],
+    frontLightTint: [1.48, 0.42, 0.84],
+    volumeShadowTint: [0.16, 0.24, 1.08],
+    directLightBlend: 0.92,
+    directLightBoost: 1.08,
+    cloudLitTint: [1.28, 0.72, 0.96],
+    cloudShadowTint: [0.18, 0.22, 0.86],
+    edgeTint: [1.08, 0.96, 1.42],
+    styleShadowStrength: 1.44,
+    styleShadowEdge: 0.22,
+    styleShadowDarkness: 0.0,
+    styleColorLift: 1.22,
+    styleSaturation: 1.82,
+    styleRimStrength: 1.34,
+    styleSunBleed: 0.78,
+    styleMidLift: 1.08,
+    godRaysEnabled: true,
+    godRayStrength: 0.54,
+    godRayLength: 1.04,
+    godRayFalloff: 1.42,
   },
 };
+
+function colorVec3(v, fallback) {
+  const f = fallback || [1.0, 1.0, 1.0];
+  return [
+    +(v?.[0] ?? f[0] ?? 1.0),
+    +(v?.[1] ?? f[1] ?? 1.0),
+    +(v?.[2] ?? f[2] ?? 1.0),
+  ];
+}
+
+function mulVec3(a, b, c) {
+  return [
+    +(a?.[0] ?? 1.0) * +(b?.[0] ?? 1.0) * +(c?.[0] ?? 1.0),
+    +(a?.[1] ?? 1.0) * +(b?.[1] ?? 1.0) * +(c?.[1] ?? 1.0),
+    +(a?.[2] ?? 1.0) * +(b?.[2] ?? 1.0) * +(c?.[2] ?? 1.0),
+  ];
+}
+
+function lightingProfileForGrade(style) {
+  const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
+  const sunTint = colorVec3(preset.sunTint, [1.0, 1.0, 1.0]);
+  const litTint = colorVec3(preset.cloudLitTint, [1.0, 1.0, 1.0]);
+  const shadowTint = colorVec3(preset.cloudShadowTint, [0.62, 0.68, 0.78]);
+
+  return {
+    transmissiveLightTint: colorVec3(preset.transmissiveLightTint, sunTint),
+    frontLightTint: colorVec3(
+      preset.frontLightTint,
+      [
+        Math.max(1.0, litTint[0] * 0.72 + sunTint[0] * 0.40),
+        Math.max(1.0, litTint[1] * 0.72 + sunTint[1] * 0.40),
+        Math.max(1.0, litTint[2] * 0.72 + sunTint[2] * 0.40),
+      ],
+    ),
+    volumeShadowTint: colorVec3(preset.volumeShadowTint, shadowTint),
+    directLightBlend: +(preset.directLightBlend ?? 0.78),
+    directLightBoost: +(preset.directLightBoost ?? 0.58),
+  };
+}
+
 function setFieldValue(id, val) {
   const el = $(id);
   if (!el) return;
   el.value = `${val}`;
 }
 
+function setControlValue(id, val) {
+  const el = $(id);
+  if (!el) return;
+  if (el.type === "checkbox") {
+    el.checked = !!val;
+  } else {
+    el.value = `${val}`;
+  }
+}
+
+function applyCloudLayerPresetValues(key) {
+  const preset = CLOUD_LAYER_PRESETS[key];
+  if (!preset) return false;
+  preview.layerPreset = key;
+  setControlValue("v-layer-preset", key);
+  for (const [id, val] of Object.entries(preset.values || {})) {
+    setControlValue(id, val);
+  }
+  return true;
+}
+
+async function applyCloudLayerPreset(key, render = true) {
+  if (!key || key === "custom") {
+    preview.layerPreset = "custom";
+    return;
+  }
+
+  const preset = CLOUD_LAYER_PRESETS[key];
+  if (!preset) return;
+
+  applyCloudLayerPresetValues(key);
+
+  if (!render) return;
+
+  setBusy(true, `Applying ${key.replaceAll("_", " ")}...`);
+  try {
+    readWeather();
+    readWeatherG();
+    readWeatherB();
+    readShape();
+    readShapeTransform();
+    readDetail();
+    readDetailTransform();
+    readPreview();
+
+    await rpc("bakeAll", {
+      weatherParams: safeClone(weatherParams),
+      billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
+      blueParams: safeClone(blueParams),
+      shapeParams: safeClone(shapeParams),
+      detailParams: safeClone(detailParams),
+      tileTransforms: safeClone(tileTransforms),
+    });
+
+    await sendTuningNow(true);
+    const cloudParams = readCloudParams();
+    const payload = {
+      weatherParams: safeClone(weatherParams),
+      billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
+      shapeParams: safeClone(shapeParams),
+      detailParams: safeClone(detailParams),
+      tileTransforms: safeClone(tileTransforms),
+      preview: safeClone(preview),
+      cloudParams,
+    };
+    useFreshFullFrameReproj(payload);
+    ensureCoarseInPayload(payload);
+    await runFrameLatest(payload);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function syncPreviewLookInputs() {
+  setFieldValue("v-layer-preset", preview.layerPreset || "custom");
   setFieldValue("v-grade", preview.gradeStyle);
-  setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 5);
+  setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
+  setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
+  setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.085);
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
@@ -553,6 +1255,17 @@ function syncPreviewLookInputs() {
   setFieldValue("v-sun-r", preview.sunTint[0]);
   setFieldValue("v-sun-g", preview.sunTint[1]);
   setFieldValue("v-sun-b", preview.sunTint[2]);
+  setFieldValue("v-trans-r", preview.transmissiveLightTint?.[0] ?? 1.0);
+  setFieldValue("v-trans-g", preview.transmissiveLightTint?.[1] ?? 1.0);
+  setFieldValue("v-trans-b", preview.transmissiveLightTint?.[2] ?? 1.0);
+  setFieldValue("v-front-r", preview.frontLightTint?.[0] ?? 1.10);
+  setFieldValue("v-front-g", preview.frontLightTint?.[1] ?? 1.12);
+  setFieldValue("v-front-b", preview.frontLightTint?.[2] ?? 1.16);
+  setFieldValue("v-vol-shad-r", preview.volumeShadowTint?.[0] ?? 0.62);
+  setFieldValue("v-vol-shad-g", preview.volumeShadowTint?.[1] ?? 0.68);
+  setFieldValue("v-vol-shad-b", preview.volumeShadowTint?.[2] ?? 0.78);
+  setFieldValue("t-directLightBlend", preview.directLightBlend ?? 0.78);
+  setFieldValue("t-directLightBoost", preview.directLightBoost ?? 0.58);
   setFieldValue("v-lit-r", preview.cloudLitTint[0]);
   setFieldValue("v-lit-g", preview.cloudLitTint[1]);
   setFieldValue("v-lit-b", preview.cloudLitTint[2]);
@@ -567,10 +1280,16 @@ function syncPreviewLookInputs() {
 function applyGradePreset(style, syncInputs = true) {
   const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
   preview.gradeStyle = style >>> 0;
-  preview.renderScaleDivider = normalizeRenderScaleDivider(preset.renderScaleDivider ?? preview.renderScaleDivider ?? 5);
+  preview.renderScaleDivider = normalizeRenderScaleDivider(preset.renderScaleDivider ?? preview.renderScaleDivider ?? 4);
   preview.sky = preset.sky.slice();
   preview.sun.bloom = preset.sunBloom;
+  const lighting = lightingProfileForGrade(style);
   preview.sunTint = preset.sunTint.slice();
+  preview.transmissiveLightTint = lighting.transmissiveLightTint.slice();
+  preview.frontLightTint = lighting.frontLightTint.slice();
+  preview.volumeShadowTint = lighting.volumeShadowTint.slice();
+  preview.directLightBlend = lighting.directLightBlend;
+  preview.directLightBoost = lighting.directLightBoost;
   preview.cloudLitTint = preset.cloudLitTint.slice();
   preview.cloudShadowTint = preset.cloudShadowTint.slice();
   preview.edgeTint = preset.edgeTint.slice();
@@ -740,8 +1459,19 @@ function readTuning() {
     raySmoothDens: +($("t-raySmoothDens")?.value || 0.34),
     raySmoothSun: +($("t-raySmoothSun")?.value || 0.34),
     fluffFactor: +($("t-fluffFactor")?.value || 4.0),
-    anvilLift: +($("t-anvilLift")?.value || 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
+    verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
+    verticalTextureHomogeneity: +($("t-verticalTextureHomogeneity")?.value || 0.0),
+    verticalLightingStepBoost: +($("t-verticalLightingStepBoost")?.value || 1.35),
+    frontOcclusionStrength: +($("t-frontOcclusionStrength")?.value || 0.72),
+    frontOcclusionAlpha: +($("t-frontOcclusionAlpha")?.value || 0.66),
+    frontOcclusionStepBoost: +($("t-frontOcclusionStepBoost")?.value || 3.0),
+    sliceJitterStrength: +($("t-sliceJitterStrength")?.value || 0.08),
+    verticalLayerDecorrelation: +($("t-verticalLayerDecorrelation")?.value || 0.35),
+    directLightBlend: +($("t-directLightBlend")?.value || preview.directLightBlend || 0.78),
+    directLightBoost: +($("t-directLightBoost")?.value || preview.directLightBoost || 0.58),
+    alphaBoostThreshold: +($("t-alphaBoostThreshold")?.value || 0.22),
+    alphaBoostAmount: +($("t-alphaBoostAmount")?.value || 0.16),
   };
 }
 
@@ -801,6 +1531,10 @@ function readCloudParams() {
   };
   const baseSunColor = sunColorByGrade[preview.gradeStyle] || [1.0, 0.95, 0.87];
   const sunTint = preview.sunTint || [1.0, 1.0, 1.0];
+  const lightingProfile = lightingProfileForGrade(preview.gradeStyle);
+  const transmissiveTint = preview.transmissiveLightTint || lightingProfile.transmissiveLightTint;
+  const frontTint = preview.frontLightTint || lightingProfile.frontLightTint;
+  const volumeShadowTint = preview.volumeShadowTint || lightingProfile.volumeShadowTint;
 
   return {
     globalCoverage: num("p-coverage", 1.0),
@@ -815,7 +1549,9 @@ function readCloudParams() {
     inVsOut: num("p-ivo", 0.5),
     outScatterAmbientAmt: num("p-ambOut", 0.12),
     ambientMinimum: num("p-ambMin", 0.055),
-    sunColor: baseSunColor.map((v, i) => v * (sunTint[i] ?? 1.0)),
+    sunColor: mulVec3(baseSunColor, sunTint, transmissiveTint),
+    frontLightColor: mulVec3(baseSunColor, sunTint, frontTint),
+    shadowLightColor: colorVec3(volumeShadowTint, [0.62, 0.68, 0.78]),
     sunAzDeg: sunAz,
     sunElDeg: sunEl,
     sunBloom,
@@ -1057,11 +1793,26 @@ function readPreview() {
   preview.box.half[1] = Math.max(0.001, num("v-box-hy", preview.box.half[1]));
   preview.box.half[2] = Math.max(0.001, num("v-box-hz", preview.box.half[2]));
   preview.box.uvScale = Math.max(0.001, num("v-box-uv", preview.box.uvScale ?? 1));
+  preview.layerPreset = $("v-layer-preset")?.value || preview.layerPreset || "custom";
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
-  preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 5));
+  preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 4));
+  preview.temporalCellRate = normalizeTemporalCellRate(u32("v-temporal-cell-rate", preview.temporalCellRate ?? 1));
+  preview.alphaFloor = Math.max(0, Math.min(0.24, num("v-alpha-floor", preview.alphaFloor ?? 0.085)));
   preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));
   preview.sunTint[1] = clamp01(num("v-sun-g", preview.sunTint[1]));
   preview.sunTint[2] = clamp01(num("v-sun-b", preview.sunTint[2]));
+  preview.transmissiveLightTint = preview.transmissiveLightTint || [1, 1, 1];
+  preview.transmissiveLightTint[0] = clamp01(num("v-trans-r", preview.transmissiveLightTint[0]));
+  preview.transmissiveLightTint[1] = clamp01(num("v-trans-g", preview.transmissiveLightTint[1]));
+  preview.transmissiveLightTint[2] = clamp01(num("v-trans-b", preview.transmissiveLightTint[2]));
+  preview.frontLightTint = preview.frontLightTint || [1.10, 1.12, 1.16];
+  preview.frontLightTint[0] = clamp01(num("v-front-r", preview.frontLightTint[0]));
+  preview.frontLightTint[1] = clamp01(num("v-front-g", preview.frontLightTint[1]));
+  preview.frontLightTint[2] = clamp01(num("v-front-b", preview.frontLightTint[2]));
+  preview.volumeShadowTint = preview.volumeShadowTint || [0.62, 0.68, 0.78];
+  preview.volumeShadowTint[0] = clamp01(num("v-vol-shad-r", preview.volumeShadowTint[0]));
+  preview.volumeShadowTint[1] = clamp01(num("v-vol-shad-g", preview.volumeShadowTint[1]));
+  preview.volumeShadowTint[2] = clamp01(num("v-vol-shad-b", preview.volumeShadowTint[2]));
   preview.cloudLitTint[0] = clamp01(num("v-lit-r", preview.cloudLitTint[0]));
   preview.cloudLitTint[1] = clamp01(num("v-lit-g", preview.cloudLitTint[1]));
   preview.cloudLitTint[2] = clamp01(num("v-lit-b", preview.cloudLitTint[2]));
@@ -1093,15 +1844,19 @@ function computeCoarseFactorFromScale(scale) {
 
 function getReprojPayload() {
   const enabled = !!reprojEnabled;
-  const coarseFactor = enabled ? previewRenderScaleDivider() : 1;
-  const scale = enabled ? 1 / Math.max(1, coarseFactor * coarseFactor) : reprojDefaultScale;
+  const temporalCellRate = normalizeTemporalCellRate(preview.temporalCellRate ?? 1);
+  const historyEnabled = enabled || temporalCellRate > 1;
+  const coarseFactor = currentPreviewCoarseFactor();
+  const scale = historyEnabled ? 1 / Math.max(1, coarseFactor * coarseFactor) : reprojDefaultScale;
   return {
     enabled,
     scale,
     coarseFactor,
     frameIndex: 0,
     sampleOffset: 0,
-    temporalBlend: currentReprojectionTemporalBlend(enabled),
+    temporalCellRate,
+    temporalCellPhase: 0,
+    temporalBlend: currentReprojectionTemporalBlend(historyEnabled),
   };
 }
 
@@ -1114,19 +1869,35 @@ function getFreshReprojPayload() {
   return rp;
 }
 
+function getFreshFullFrameReprojPayload() {
+  const rp = getFreshReprojPayload();
+  rp.temporalCellRate = 1;
+  rp.temporalCellPhase = 0;
+  rp.compactInterleave = 0;
+  rp.temporalBlend = 0.0;
+  return rp;
+}
+
+function useFreshFullFrameReproj(payload) {
+  if (!payload || !cloudHistoryEnabled()) return payload;
+  payload.reproj = getFreshFullFrameReprojPayload();
+  payload.coarseFactor = currentPreviewCoarseFactor();
+  return payload;
+}
+
 function ensureCoarseInPayload(payload) {
   if (!payload) return payload;
   const qCoarse = currentPreviewCoarseFactor();
   if (payload.reproj && typeof payload.reproj.coarseFactor === "number") {
-    payload.coarseFactor = Math.max(qCoarse, payload.reproj.coarseFactor | 0);
-    payload.reproj.coarseFactor = payload.coarseFactor;
-    payload.reproj.scale = 1 / Math.max(1, payload.coarseFactor * payload.coarseFactor);
-  } else if (reprojEnabled) {
+    payload.coarseFactor = qCoarse;
+    payload.reproj.coarseFactor = qCoarse;
+    payload.reproj.scale = 1;
+  } else if (cloudHistoryEnabled()) {
     const rp = getReprojPayload();
     payload.reproj = payload.reproj || rp;
-    payload.coarseFactor = Math.max(qCoarse, rp.coarseFactor | 0);
+    payload.coarseFactor = qCoarse;
   } else {
-    payload.coarseFactor = Math.max(qCoarse, payload.coarseFactor || 1);
+    payload.coarseFactor = qCoarse;
   }
   return payload;
 }
@@ -1179,6 +1950,72 @@ function runFrameLatest(payload) {
     }
     _pumpRunFrameLatest().catch((err) => console.warn("runFrameLatest failed", err));
   });
+}
+
+let _liveAnimationUpdateTimer = 0;
+let _liveAnimationUpdateInFlight = false;
+let _liveAnimationUpdateQueued = false;
+let _liveAnimationUpdateSeq = 0;
+
+function buildLiveAnimationPayload(options = {}) {
+  const cloudParams = readCloudParams();
+  const tuning = readTuning();
+  const rp = getReprojPayload();
+  rp.resetHistory = false;
+  rp.coarseFactor = currentPreviewCoarseFactor();
+  rp.scale = 1 / Math.max(1, rp.coarseFactor * rp.coarseFactor);
+
+  const payload = {
+    preview: safeClone(preview),
+    cloudParams,
+    tuning,
+    reproj: rp,
+    seq: ++_liveAnimationUpdateSeq,
+  };
+
+  if (options.includeTransforms) {
+    payload.tileTransforms = Object.assign(safeClone(tileTransforms), { explicit: true });
+  }
+
+  return payload;
+}
+
+let _liveAnimationUpdateIncludeTransforms = false;
+
+function queueLiveAnimationUpdate(delayMs = 90, options = {}) {
+  if (!animRunning) return false;
+  _liveAnimationUpdateQueued = true;
+  _liveAnimationUpdateIncludeTransforms = _liveAnimationUpdateIncludeTransforms || !!options.includeTransforms;
+  if (_liveAnimationUpdateTimer) clearTimeout(_liveAnimationUpdateTimer);
+  _liveAnimationUpdateTimer = setTimeout(() => {
+    _liveAnimationUpdateTimer = 0;
+    flushLiveAnimationUpdate().catch((err) => console.warn("live animation update failed", err));
+  }, delayMs);
+  return true;
+}
+
+async function flushLiveAnimationUpdate() {
+  if (!animRunning) return;
+  if (_liveAnimationUpdateInFlight) {
+    _liveAnimationUpdateQueued = true;
+    return;
+  }
+  _liveAnimationUpdateInFlight = true;
+  try {
+    do {
+      _liveAnimationUpdateQueued = false;
+      const includeTransforms = _liveAnimationUpdateIncludeTransforms;
+      _liveAnimationUpdateIncludeTransforms = false;
+      const payload = buildLiveAnimationPayload({ includeTransforms });
+      await rpc("setLiveFrameState", payload);
+      lastTuningSent = cloneTuning(payload.tuning);
+    } while (_liveAnimationUpdateQueued && animRunning);
+  } finally {
+    _liveAnimationUpdateInFlight = false;
+    if (_liveAnimationUpdateQueued && animRunning) {
+      queueLiveAnimationUpdate(40);
+    }
+  }
 }
 
 // ---- UI wiring helpers ----
@@ -1277,11 +2114,23 @@ function attachTuningInputs() {
     ),
   );
   if (!inputs.length) return;
-  const sendDebounced = debounce(() => sendTuningIfChanged(), 100);
+  const sendDebounced = debounce(() => {
+    if (animRunning) {
+      readPreview();
+      queueLiveAnimationUpdate(80);
+      return;
+    }
+    sendTuningIfChanged();
+  }, 100);
   inputs.forEach((inp) => {
     inp.addEventListener("input", sendDebounced);
     inp.addEventListener("change", () => {
       sendDebounced.cancel();
+      if (animRunning) {
+        readPreview();
+        queueLiveAnimationUpdate(40);
+        return;
+      }
       sendTuningIfChanged();
     });
   });
@@ -1313,7 +2162,7 @@ async function runAfterBakeAndTuning(
       extraPayload || {},
     );
 
-    if (reprojEnabled) payload.reproj = getReprojPayload();
+    useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
     await runFrameLatest(payload);
   } finally {
@@ -1328,6 +2177,12 @@ async function runFrameEnsuringTuning(payload = {}) {
 }
 
 // ---- UI busy indicator ----
+function nextPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+}
+
 function setBusy(on, msg = "Working...") {
   const ov = $("busyOverlay"),
     m = $("busyMsg");
@@ -1384,19 +2239,100 @@ function showPanelsFor(pass) {
   vis("p-preview", pass === "preview");
 }
 
+function clampCanvasPixelSize(pixelW, pixelH) {
+  let w = Math.max(1, Math.floor(pixelW));
+  let h = Math.max(1, Math.floor(pixelH));
+  if (!STARTUP_PROFILE.capMainCanvas) {
+    return { width: w, height: h, scale: 1 };
+  }
+
+  const maxSide = Math.max(256, STARTUP_PROFILE.maxMainSide | 0);
+  const maxPixels = Math.max(256 * 256, STARTUP_PROFILE.maxMainPixels | 0);
+  const sideScale = Math.min(1, maxSide / Math.max(w, h));
+  const pixelScale = Math.min(1, Math.sqrt(maxPixels / Math.max(1, w * h)));
+  const scale = Math.min(sideScale, pixelScale);
+  if (scale < 1) {
+    w = Math.max(1, Math.floor(w * scale));
+    h = Math.max(1, Math.floor(h * scale));
+  }
+  return { width: w, height: h, scale };
+}
+
+let _resizeInFlight = false;
+let _resizeQueuedPayload = null;
+let _resizeQueuedSig = "";
+let _resizeLastSentSig = "";
+let _resizeRafPending = false;
+let _resizeSerial = 0;
+
+function resizePayloadSignature(payload) {
+  const main = payload?.main || {};
+  const dbg = payload?.dbg || {};
+  const profile = payload?.profile || {};
+  return [
+    main.width | 0,
+    main.height | 0,
+    dbg.width | 0,
+    dbg.height | 0,
+    Number(profile.dpr || 0).toFixed(4),
+    profile.cssWidth | 0,
+    profile.cssHeight | 0,
+  ].join("x");
+}
+
+function scheduleResizeFlush() {
+  if (_resizeRafPending) return;
+  _resizeRafPending = true;
+  requestAnimationFrame(() => {
+    _resizeRafPending = false;
+    flushQueuedResize().catch((e) => console.warn("resize rpc failed", e));
+  });
+}
+
+async function flushQueuedResize() {
+  if (_resizeInFlight || !_resizeQueuedPayload) return;
+
+  const payload = _resizeQueuedPayload;
+  const sig = _resizeQueuedSig;
+  _resizeQueuedPayload = null;
+  _resizeQueuedSig = "";
+
+  if (sig === _resizeLastSentSig) return;
+
+  _resizeInFlight = true;
+  try {
+    await rpc("resize", payload);
+    _resizeLastSentSig = sig;
+  } finally {
+    _resizeInFlight = false;
+    if (_resizeQueuedPayload && _resizeQueuedSig !== _resizeLastSentSig) {
+      scheduleResizeFlush();
+    }
+  }
+}
+
+function queueResizePayload(payload) {
+  const sig = resizePayloadSignature(payload);
+  if (sig === _resizeLastSentSig && !_resizeInFlight) return;
+  _resizeQueuedPayload = Object.assign({}, payload, { serial: ++_resizeSerial });
+  _resizeQueuedSig = sig;
+  scheduleResizeFlush();
+}
+
 function sendSizes() {
   const dpr = DPR();
   const canvas = $("gpuCanvas");
+  if (!canvas) return;
   const cW = Math.max(1, Math.round(canvas.clientWidth));
   const cH = Math.max(1, Math.round(canvas.clientHeight));
-  const pixelW = Math.max(1, Math.floor(cW * dpr));
-  const pixelH = Math.max(1, Math.floor(cH * dpr));
-  const dbgSizePx = Math.round(DBG_SIZE * dpr);
+  const main = clampCanvasPixelSize(cW * dpr, cH * dpr);
+  const dbgSizePx = Math.max(1, Math.round(DBG_SIZE * dpr));
 
-  rpc("resize", {
-    main: { width: pixelW, height: pixelH },
+  queueResizePayload({
+    main,
     dbg: { width: dbgSizePx, height: dbgSizePx },
-  }).catch((e) => console.warn("resize rpc failed", e));
+    profile: { mobile: MOBILE_PROFILE, dpr, cssWidth: cW, cssHeight: cH },
+  });
 }
 
 // ---- populate mode selects ----
@@ -1437,6 +2373,15 @@ function populateAllModeSelects() {
 async function wireUI() {
   $("pass")?.addEventListener("change", () => showPanelsFor($("pass").value));
   showPanelsFor($("pass")?.value || "preview");
+
+  $("v-layer-preset")?.addEventListener("change", async () => {
+    const key = $("v-layer-preset")?.value || "custom";
+    try {
+      await applyCloudLayerPreset(key, true);
+    } catch (err) {
+      console.warn("cloud layer preset failed", err);
+    }
+  });
 
   $("v-grade")?.addEventListener("change", () => {
     const style = u32("v-grade", preview.gradeStyle);
@@ -1484,17 +2429,19 @@ async function wireUI() {
         await rpc("setReproj", { reproj: loopReproj, perf: null });
         await rpc("startLoop", {});
         animRunning = true;
+        startVisualFpsTicker();
         if (reprojBtn) reprojBtn.textContent = "Stop Reproject Anim";
       } catch (e) {
         console.warn("start animation failed", e);
         reprojEnabled = false;
         animRunning = false;
+        stopVisualFpsTicker();
         try {
           await rpc("setReproj", {
             reproj: {
               enabled: false,
               scale: reprojDefaultScale,
-              coarseFactor: previewRenderScaleDivider(false),
+              coarseFactor: currentPreviewCoarseFactor(),
             },
             perf: null,
           });
@@ -1510,13 +2457,14 @@ async function wireUI() {
         console.warn("stopLoop failed", e);
       }
       animRunning = false;
+      stopVisualFpsTicker();
       reprojEnabled = false;
       try {
         await rpc("setReproj", {
           reproj: {
             enabled: false,
             scale: reprojDefaultScale,
-            coarseFactor: previewRenderScaleDivider(false),
+            coarseFactor: currentPreviewCoarseFactor(),
           },
           perf: null,
         });
@@ -1547,7 +2495,7 @@ async function wireUI() {
         cloudParams,
       };
 
-      if (reprojEnabled) payload.reproj = getReprojPayload();
+      useFreshFullFrameReproj(payload);
       ensureCoarseInPayload(payload);
 
       payload.waitForGpu = true;
@@ -1641,6 +2589,7 @@ async function wireUI() {
     async () => {
       try {
         readWeatherTransform();
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -1657,7 +2606,7 @@ async function wireUI() {
           preview: safeClone(preview),
           cloudParams,
         };
-        if (reprojEnabled) payload.reproj = getReprojPayload();
+        useFreshFullFrameReproj(payload);
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
       } catch (e) {
@@ -1751,6 +2700,7 @@ async function wireUI() {
     async () => {
       try {
         readShapeTransform();
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -1767,7 +2717,7 @@ async function wireUI() {
           preview: safeClone(preview),
           cloudParams,
         };
-        if (reprojEnabled) payload.reproj = getReprojPayload();
+        useFreshFullFrameReproj(payload);
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
       } catch (e) {
@@ -1793,6 +2743,7 @@ async function wireUI() {
     async () => {
       try {
         readDetailTransform();
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -1809,7 +2760,7 @@ async function wireUI() {
           preview: safeClone(preview),
           cloudParams,
         };
-        if (reprojEnabled) payload.reproj = getReprojPayload();
+        useFreshFullFrameReproj(payload);
         ensureCoarseInPayload(payload);
         await runFrameLatest(payload);
       } catch (e) {
@@ -1823,6 +2774,7 @@ async function wireUI() {
     readPreview();
     const cloudParams = readCloudParams();
     const tuning = readTuning();
+    if (queueLiveAnimationUpdate(80)) return;
     const payload = {
       weatherParams: safeClone(weatherParams),
       billowParams: safeClone(billowParams),
@@ -1834,7 +2786,7 @@ async function wireUI() {
       cloudParams,
       tuning,
     };
-    if (reprojEnabled) payload.reproj = getReprojPayload();
+    useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
     try {
       await runFrameLatest(payload);
@@ -1845,10 +2797,12 @@ async function wireUI() {
   }, 70);
 
   // preview panel: debounce camera/light edits and avoid a separate tuning RPC.
-  attachPanelInputs($("p-preview"), async () => {
+  attachPanelInputs($("p-preview"), async (ev) => {
+    if (ev?.target?.id === "v-layer-preset") return;
     readPreview();
     const cloudParams = readCloudParams();
     const tuning = readTuning();
+    if (queueLiveAnimationUpdate(80)) return;
     const payload = {
       weatherParams: safeClone(weatherParams),
       billowParams: safeClone(billowParams),
@@ -1860,11 +2814,11 @@ async function wireUI() {
       cloudParams,
       tuning,
     };
-    if (reprojEnabled) payload.reproj = getFreshReprojPayload();
+    useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
     try {
       await runFrameLatest(payload);
-      if (reprojEnabled) {
+      if (cloudHistoryEnabled()) {
         const rp = getReprojPayload();
         await rpc("setReproj", { reproj: rp, perf: null });
       }
@@ -1949,7 +2903,7 @@ async function wireUI() {
         cloudParams,
       };
 
-      if (reprojEnabled) payload.reproj = getReprojPayload();
+      useFreshFullFrameReproj(payload);
       ensureCoarseInPayload(payload);
       await runFrameLatest(payload);
     } finally {
@@ -2030,7 +2984,13 @@ async function wireUI() {
     }
   });
 
-  window.addEventListener("resize", debounce(() => sendSizes(), 120));
+  const sendSizesDebounced = debounce(() => sendSizes(), 80);
+  window.addEventListener("resize", sendSizesDebounced);
+  const mainCanvas = $("gpuCanvas");
+  if (mainCanvas && typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(() => sendSizesDebounced());
+    ro.observe(mainCanvas);
+  }
 }
 
 // ---- init ----
@@ -2193,6 +3153,35 @@ async function init() {
   setIf("t-fluffFactor", 2.0);
   setIf("t-anvilLift", 0.6);
   setIf("t-alphaCutoff", 0.98);
+  setIf("t-verticalStepBoost", 3.0);
+  setIf("t-verticalTextureHomogeneity", 0.0);
+  setIf("t-verticalLightingStepBoost", 1.35);
+  setIf("t-frontOcclusionStrength", 0.72);
+  setIf("t-frontOcclusionAlpha", 0.66);
+  setIf("t-frontOcclusionStepBoost", 3.0);
+  setIf("t-sliceJitterStrength", 0.08);
+  setIf("t-verticalLayerDecorrelation", 0.35);
+  setIf("t-directLightBlend", preview.directLightBlend ?? 0.78);
+  setIf("t-directLightBoost", preview.directLightBoost ?? 0.58);
+  setIf("t-alphaBoostThreshold", 0.22);
+  setIf("t-alphaBoostAmount", 0.16);
+
+  const anvilInput = $("p-anvil");
+  if (anvilInput) {
+    anvilInput.removeAttribute("max");
+    anvilInput.min = "0";
+    anvilInput.step = "0.01";
+    anvilInput.title = "Single cloud anvil/cumulonimbus amount. Higher values continue to overdrive tower height and cap spread.";
+  }
+
+  const anvilLiftInput = $("t-anvilLift");
+  if (anvilLiftInput) {
+    anvilLiftInput.disabled = true;
+    const wrap = anvilLiftInput.closest("label") || anvilLiftInput.parentElement;
+    if (wrap) wrap.style.display = "none";
+  }
+
+  syncPreviewLookInputs();
 
   // preview
   setIf("v-cx", preview.cam.x);
@@ -2209,7 +3198,11 @@ async function init() {
   setIf("v-box-hy", preview.box.half[1]);
   setIf("v-box-hz", preview.box.half[2]);
   setIf("v-box-uv", preview.box.uvScale);
+  setIf("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   syncPreviewLookInputs();
+
+  setBusy(true, MOBILE_PROFILE ? "Starting mobile WebGPU worker..." : "Starting WebGPU worker...");
+  await nextPaint();
 
   // spawn worker
   worker = new Worker(wrkr, { type: "module" });
@@ -2221,21 +3214,25 @@ async function init() {
       return ok ? resolve(data) : reject(error || new Error("Worker error"));
     }
     if (type === "log") console.log(...(data || []));
+    if (type === "progress") {
+      const msg = data?.message || data || "Working...";
+      const ov = $("busyOverlay");
+      if (ov && ov.style.display !== "none") setBusy(true, msg);
+    }
     if (type === "frame") {
-      const info = data || {};
-      const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "-");
-      const fpsEl = $("fpsDisplay");
-      if (fpsEl) {
-        const gpu = fmt(info.gpuFps);
-        const submit = fmt(info.submitFps);
-        const gpuMs = Number.isFinite(info.gpuFrameMs) && info.gpuFrameMs > 0 ? `${Math.round(info.gpuFrameMs * 10) / 10}ms` : "-";
-        fpsEl.textContent = info.gpuFps
-          ? `GPU ${gpu} fps (${gpuMs}) · submit ${submit}`
-          : `submit ${submit} fps · GPU measuring`;
+      if (!animRunning) {
+        const info = data || {};
+        const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "-");
+        const fpsEl = $("fpsDisplay");
+        if (fpsEl) {
+          const loop = fmt(info.loopFps ?? info.fps);
+          fpsEl.textContent = `${loop} fps`;
+        }
       }
     }
     if (type === "loop-stopped") {
       animRunning = false;
+      stopVisualFpsTicker();
       const btn = $("reproj-anim-toggle");
       if (btn) btn.textContent = "Start Reproject Anim";
       const fpsEl = $("fpsDisplay");
@@ -2273,7 +3270,16 @@ async function init() {
           blue: offscreenDbg["dbg-blue"],
         },
       },
-      constants: { SHAPE_SIZE, DETAIL_SIZE, WEATHER_W, WEATHER_H, BN_W, BN_H },
+      constants: {
+        SHAPE_SIZE,
+        DETAIL_SIZE,
+        WEATHER_W,
+        WEATHER_H,
+        BN_W,
+        BN_H,
+        DEBUG_ENABLED: STARTUP_PROFILE.debugCanvases,
+        MOBILE_PROFILE,
+      },
     },
     [
       offscreenMain,
@@ -2313,13 +3319,27 @@ async function init() {
     setSel("de-mode-3", detailParams.mode3);
   }
 
+  if (preview.layerPreset && preview.layerPreset !== "custom") {
+    applyCloudLayerPresetValues(preview.layerPreset);
+    readWeather();
+    readWeatherG();
+    readWeatherB();
+    readShape();
+    readShapeTransform();
+    readDetail();
+    readDetailTransform();
+    readPreview();
+  }
+
   sendSizes();
+  await nextPaint();
 
   try {
     await setTileTransformsRPC(tileTransforms);
   } catch {}
 
-  setBusy(true, "Initializing...");
+  setBusy(true, MOBILE_PROFILE ? "Initializing mobile profile..." : "Initializing...");
+  await nextPaint();
   try {
     refreshSliceLabel();
 
@@ -2331,6 +3351,8 @@ async function init() {
       shapeParams: safeClone(shapeParams),
       detailParams: safeClone(detailParams),
       tileTransforms: safeClone(tileTransforms),
+      progressive: true,
+      skipDebug: !STARTUP_PROFILE.debugCanvases,
     });
 
     readPreview();
@@ -2353,7 +3375,7 @@ async function init() {
       cloudParams,
     };
 
-    if (reprojEnabled) payload.reproj = getReprojPayload();
+    useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
 
     const { timings } = await rpc("runFrame", payload);

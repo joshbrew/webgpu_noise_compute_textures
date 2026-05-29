@@ -41,6 +41,7 @@ struct RenderParams {
   edgeTint:vec3<f32>, _p15:f32,
   styleControls:vec4<f32>,
   godRayControls:vec4<f32>,
+  reservedControls:vec4<f32>,
 };
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var tex  : texture_2d_array<f32>;
@@ -80,8 +81,17 @@ fn luma(c:vec3<f32>)->f32 {
   return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
 
-fn sampleCloudFiltered(uv:vec2<f32>, layer:i32)->vec4<f32> {
+fn sampleCloudRaw(uv:vec2<f32>, layer:i32)->vec4<f32> {
   return textureSampleLevel(tex, samp, uv, layer, 0.0);
+}
+
+fn sampleCloud(uv:vec2<f32>, layer:i32)->vec4<f32> {
+  return sampleCloudRaw(uv, layer);
+}
+
+fn alphaFloorGate(alpha: f32) -> f32 {
+  let floorA = clamp(R.reservedControls.x, 0.0, 0.24);
+  return select(1.0, smoothstep(floorA, floorA + 0.035, alpha), floorA > 0.0001);
 }
 
 fn applyStyleGrade(cIn:vec3<f32>, style:u32, cloudMask:f32)->vec3<f32> {
@@ -147,7 +157,8 @@ fn stableSunHintUV(uvSun: vec2<f32>) -> vec2<f32> {
 
 fn stableSunProximity(uv: vec2<f32>, uvSun: vec2<f32>, towardSun: f32, fwdDot: f32) -> f32 {
   let sunHint = stableSunHintUV(uvSun);
-  let screenNear = exp(-pow(distance(uv, sunHint) / 0.34, 2.0));
+  let d2 = dot(uv - sunHint, uv - sunHint);
+  let screenNear = 1.0 / (1.0 + d2 * 8.65);
   let angular = smoothstep(0.18, 0.985, towardSun);
   let frontHemisphere = smoothstep(-0.10, 0.22, fwdDot);
   let offscreenFloor = 0.28 * angular * frontHemisphere;
@@ -331,18 +342,14 @@ fn sampleAlphaWide(
   perp: vec2<f32>
 ) -> f32 {
   let uv0 = clamp(uv, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999));
-  let uv1 = clamp(uv + perp * width, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999));
-  let uv2 = clamp(uv - perp * width, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999));
-  let uv3 = clamp(uv + dir * width * 0.85, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999));
-  let uv4 = clamp(uv - dir * width * 0.55, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999));
+  let uv1 = clamp(uv + perp * width * 0.82, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999));
+  let uv2 = clamp(uv - perp * width * 0.82, vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999));
 
   let a0 = clamp(textureSampleLevel(tex, samp, uv0, layer, lod).a, 0.0, 1.0);
   let a1 = clamp(textureSampleLevel(tex, samp, uv1, layer, lod).a, 0.0, 1.0);
   let a2 = clamp(textureSampleLevel(tex, samp, uv2, layer, lod).a, 0.0, 1.0);
-  let a3 = clamp(textureSampleLevel(tex, samp, uv3, layer, lod).a, 0.0, 1.0);
-  let a4 = clamp(textureSampleLevel(tex, samp, uv4, layer, lod).a, 0.0, 1.0);
 
-  return clamp(a0 * 0.34 + (a1 + a2) * 0.22 + (a3 + a4) * 0.11, 0.0, 1.0);
+  return clamp(a0 * 0.46 + (a1 + a2) * 0.27, 0.0, 1.0);
 }
 
 fn godRayShaft(
@@ -385,7 +392,8 @@ fn godRayShaft(
 
   let span = mix(0.52, 1.55, clamp(rayLength * 0.60, 0.0, 1.0));
   let reach = min(dist, span);
-  let radialGate = exp(-pow(dist / max(span, 0.001), mix(1.10, 1.58, clamp(falloff * 0.22, 0.0, 1.0))));
+  let radialX = dist / max(span, 0.001);
+  let radialGate = 1.0 / (1.0 + radialX * radialX * mix(1.45, 2.35, clamp(falloff * 0.22, 0.0, 1.0)));
   let angularGate = smoothstep(0.08, 0.88, towardSun) * mix(0.68, 1.22, lowSun);
 
   let horizonFog = pow(clamp(1.0 - abs(uv.y - 0.55) * 2.0, 0.0, 1.0), 0.48);
@@ -397,12 +405,12 @@ fn godRayShaft(
   let edgeBand = smoothstep(0.035, 0.22, cloudA) * (1.0 - smoothstep(0.24, 0.62, cloudA));
   let localFade = mix(localFadeA, localFadeB, smoothstep(0.22, 0.82, cloudA)) * (1.0 - 0.62 * edgeBand);
 
-  var samples: u32 = 20u;
+  var samples: u32 = 8u;
   if (R.compositeQuality >= 1u) {
-    samples = 28u;
+    samples = 12u;
   }
   if (R.compositeQuality >= 2u) {
-    samples = 40u;
+    samples = 16u;
   }
 
   let dims = vec2<f32>(textureDimensions(tex, 0));
@@ -430,7 +438,7 @@ fn godRayShaft(
     2.5
   ).a, 0.0, 1.0);
 
-  for (var i: u32 = 0u; i < 36u; i = i + 1u) {
+  for (var i: u32 = 0u; i < 16u; i = i + 1u) {
     if (i >= samples) {
       break;
     }
@@ -470,7 +478,7 @@ fn godRayShaft(
       mix(0.90, 1.20, smoothstep(0.015, 0.14, edge)) *
       (stepLen / max(stepBase, 1e-4));
 
-    let stepTr = exp(-extinction);
+    let stepTr = 1.0 / (1.0 + extinction * (1.0 + 0.28 * extinction));
 
     let scatterW =
       (1.0 - occ) *
@@ -506,16 +514,17 @@ fn godRayShaft(
 @fragment
 fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let layer = i32(R.layerIndex);
-  let texel = sampleCloudFiltered(in.uv, layer);
-  let cloudRGB = texel.rgb;
-  let cloudA = clamp(texel.a, 0.0, 1.0);
+  let texel = sampleCloud(in.uv, layer);
+  let alphaGate = alphaFloorGate(texel.a);
+  let cloudRGB = texel.rgb * alphaGate;
+  let cloudA = clamp(texel.a * alphaGate, 0.0, 1.0);
 
   let rayDir = rayDirFromUV(in.uv);
   let sunDir = normalize(R.sunDir);
   let uvSun = projectDirToUV(sunDir);
 
   let v = in.uv.y;
-  let horizon = pow(clamp(1.0 - abs(v - 0.5) * 2.0, 0.0, 1.0), 1.25);
+  let horizon = pow(clamp(1.0 - abs(rayDir.y) * 7.5, 0.0, 1.0), 1.65) * 0.28;
   let lowSunRaw = 1.0 - clamp((sunDir.y + 0.08) / 0.82, 0.0, 1.0);
   let lowSun = clamp(pow(lowSunRaw, 0.72) * 1.18, 0.0, 1.0);
   let towardSunSky = clamp(dot(rayDir, sunDir), 0.0, 1.0);
@@ -640,7 +649,7 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   sunWash *= mix(vec3<f32>(1.0, 1.0, 1.0), userSunTint, 0.26);
 
   var sky = mix(horizonSky, zenithSky, pow(clamp(v, 0.0, 1.0), 1.35));
-  sky += vec3<f32>(0.010, 0.014, 0.025) * horizon;
+  sky += vec3<f32>(0.004, 0.006, 0.011) * horizon;
   sky += sunWash * pow(towardSunSky, 5.0) * mix(0.020, 0.090, lowSun);
 
   var sunGlow = 0.0;
@@ -671,7 +680,11 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     }
   }
 
-  let godRayFog = godRayShaft(in.uv, uvSun, layer, fwdDot, towardSunSky, cloudA, lowSun);
+  let godRayGate = clamp(R.godRayControls.x, 0.0, 1.0) * clamp(R.godRayControls.y, 0.0, 3.0) * smoothstep(-0.04, 0.20, fwdDot) * smoothstep(0.06, 0.72, towardSunSky);
+  var godRayFog = vec2<f32>(0.0, 0.0);
+  if (godRayGate > 0.0001) {
+    godRayFog = godRayShaft(in.uv, uvSun, layer, fwdDot, towardSunSky, cloudA, lowSun);
+  }
   let godRays = godRayFog.x;
   let godRayShadow = godRayFog.y;
   let godRayColor = mix(sunWash, sunColor, 0.72);
