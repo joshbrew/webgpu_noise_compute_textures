@@ -2773,7 +2773,7 @@ export class CloudComputeBuilder {
     }
 
     const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
-    const alphaFloor = Math.max(0, Math.min(0.24, opts.alphaFloor ?? 0.10));
+    const alphaFloor = Math.max(0, Math.min(1.0, opts.alphaFloor ?? 0.20));
 
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, compositeQuality, true);

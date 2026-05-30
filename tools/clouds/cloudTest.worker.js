@@ -107,7 +107,7 @@ let shapeOffsetWorld = [0, 0, 0],
   weatherOffsetWorld = [0, 0, 0];
 
 let shapeVel = [0.2, 0, 0],
-  detailVel = [0.03, 0, 0],
+  detailVel = [0.05, 0, 0],
   weatherVel = [0.01, 0, 0];
 
 let shapeScale = 0.1,
@@ -1364,7 +1364,7 @@ function renderUniformSignature(preview, aspect, layerIndex) {
     godRayStrength: signatureScalar(preview?.godRayStrength ?? 0.0),
     godRayLength: signatureScalar(preview?.godRayLength ?? 1.0),
     godRayFalloff: signatureScalar(preview?.godRayFalloff ?? 1.55),
-    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.10),
+    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.20),
   });
 }
 
@@ -1974,7 +1974,7 @@ async function runFrame({
       godRayStrength: (preview?.godRayStrength ?? 0.0) * (renderFastPreview ? 0.78 : 1.0),
       godRayLength: (preview?.godRayLength ?? 1.0) * (renderFastPreview ? 0.90 : 1.0),
       godRayFalloff: preview?.godRayFalloff ?? 1.55,
-      alphaFloor: preview?.alphaFloor ?? 0.10,
+      alphaFloor: preview?.alphaFloor ?? 0.20,
     });
     lastRenderUniformSignature = renderSig;
   }

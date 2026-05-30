@@ -113,7 +113,7 @@ const preview = {
   styleRimStrength: 1.04,
   styleSunBleed: 0.66,
   styleMidLift: 1.26,
-  alphaFloor: 0.10,
+  alphaFloor: 0.0,
   godRaysEnabled: true,
   godRayStrength: 1.00,
   godRayLength: 1.10,
@@ -2928,50 +2928,50 @@ const GRADE_PRESETS = {
     godRayFalloff: 2.14,
   },
   12: {
-    sky: [0.46, 0.70, 1.16],
+    sky: [0.36, 0.66, 1.24],
     sunBloom: 0.22,
-    sunTint: [0.98, 1.00, 1.03],
-    transmissiveLightTint: [0.92, 1.00, 1.22],
-    frontLightTint: [1.14, 1.20, 1.32],
-    volumeShadowTint: [0.50, 0.68, 1.00],
+    sunTint: [0.94, 0.99, 1.06],
+    transmissiveLightTint: [0.82, 1.02, 1.34],
+    frontLightTint: [1.06, 1.18, 1.42],
+    volumeShadowTint: [0.42, 0.64, 1.14],
     directLightBlend: 0.86,
-    directLightBoost: 0.76,
-    cloudLitTint: [1.06, 1.10, 1.18],
-    cloudShadowTint: [0.60, 0.76, 1.08],
-    edgeTint: [1.04, 1.08, 1.18],
-    styleShadowStrength: 1.74,
-    styleShadowEdge: 0.30,
+    directLightBoost: 0.74,
+    cloudLitTint: [0.98, 1.08, 1.28],
+    cloudShadowTint: [0.48, 0.70, 1.18],
+    edgeTint: [0.88, 1.02, 1.34],
+    styleShadowStrength: 1.70,
+    styleShadowEdge: 0.24,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.20,
-    styleSaturation: 1.08,
-    styleRimStrength: 1.18,
-    styleSunBleed: 0.40,
-    styleMidLift: 1.16,
+    styleColorLift: 1.16,
+    styleSaturation: 1.12,
+    styleRimStrength: 1.20,
+    styleSunBleed: 0.34,
+    styleMidLift: 1.14,
     godRaysEnabled: true,
     godRayStrength: 0.44,
     godRayLength: 0.98,
     godRayFalloff: 1.62,
   },
   13: {
-    sky: [0.40, 0.66, 1.18],
+    sky: [0.30, 0.62, 1.28],
     sunBloom: 0.26,
-    sunTint: [0.98, 1.00, 1.04],
-    transmissiveLightTint: [0.88, 1.04, 1.28],
-    frontLightTint: [1.16, 1.24, 1.42],
-    volumeShadowTint: [0.44, 0.62, 0.98],
+    sunTint: [0.92, 0.99, 1.08],
+    transmissiveLightTint: [0.76, 1.04, 1.42],
+    frontLightTint: [1.02, 1.20, 1.54],
+    volumeShadowTint: [0.34, 0.56, 1.18],
     directLightBlend: 0.90,
-    directLightBoost: 0.86,
-    cloudLitTint: [1.10, 1.16, 1.28],
-    cloudShadowTint: [0.56, 0.72, 1.08],
-    edgeTint: [1.08, 1.14, 1.26],
-    styleShadowStrength: 1.54,
-    styleShadowEdge: 0.24,
+    directLightBoost: 0.84,
+    cloudLitTint: [0.96, 1.10, 1.38],
+    cloudShadowTint: [0.40, 0.64, 1.22],
+    edgeTint: [0.78, 0.98, 1.46],
+    styleShadowStrength: 1.50,
+    styleShadowEdge: 0.20,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.28,
-    styleSaturation: 1.06,
-    styleRimStrength: 1.28,
-    styleSunBleed: 0.48,
-    styleMidLift: 1.22,
+    styleColorLift: 1.24,
+    styleSaturation: 1.12,
+    styleRimStrength: 1.36,
+    styleSunBleed: 0.42,
+    styleMidLift: 1.18,
     godRaysEnabled: true,
     godRayStrength: 0.50,
     godRayLength: 1.02,
@@ -3003,29 +3003,29 @@ const GRADE_PRESETS = {
     godRayFalloff: 1.86,
   },
   15: {
-    sky: [0.18, 0.24, 0.72],
-    sunBloom: 0.50,
-    sunTint: [1.08, 1.00, 0.94],
-    transmissiveLightTint: [0.10, 1.34, 0.28],
-    frontLightTint: [1.78, 0.22, 0.18],
-    volumeShadowTint: [0.08, 0.18, 1.34],
-    directLightBlend: 0.72,
-    directLightBoost: 0.98,
-    cloudLitTint: [1.52, 0.28, 0.24],
-    cloudShadowTint: [0.08, 0.16, 1.16],
-    edgeTint: [0.20, 1.42, 0.34],
-    styleShadowStrength: 1.62,
-    styleShadowEdge: 0.26,
+    sky: [0.08, 0.18, 0.72],
+    sunBloom: 0.42,
+    sunTint: [1.24, 0.84, 0.78],
+    transmissiveLightTint: [0.06, 1.70, 0.20],
+    frontLightTint: [2.20, 0.10, 0.08],
+    volumeShadowTint: [0.04, 0.12, 1.70],
+    directLightBlend: 0.74,
+    directLightBoost: 1.08,
+    cloudLitTint: [2.05, 0.12, 0.10],
+    cloudShadowTint: [0.04, 0.12, 1.58],
+    edgeTint: [0.08, 1.86, 0.18],
+    styleShadowStrength: 1.54,
+    styleShadowEdge: 0.18,
     styleShadowDarkness: 0.0,
     styleColorLift: 1.18,
-    styleSaturation: 2.08,
-    styleRimStrength: 1.38,
-    styleSunBleed: 0.74,
-    styleMidLift: 0.98,
+    styleSaturation: 2.20,
+    styleRimStrength: 1.66,
+    styleSunBleed: 0.60,
+    styleMidLift: 0.92,
     godRaysEnabled: true,
-    godRayStrength: 0.52,
-    godRayLength: 1.04,
-    godRayFalloff: 1.38,
+    godRayStrength: 0.42,
+    godRayLength: 1.00,
+    godRayFalloff: 1.42,
   },
 };
 
@@ -3151,7 +3151,7 @@ function syncPreviewLookInputs() {
   setFieldValue("v-grade", preview.gradeStyle);
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
   setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
-  setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.10);
+  setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.0);
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
@@ -3399,7 +3399,7 @@ function readTuning() {
     directLightBoost: +($("t-directLightBoost")?.value || preview.directLightBoost || 0.58),
     alphaBoostThreshold: +($("t-alphaBoostThreshold")?.value || 0.22),
     alphaBoostAmount: +($("t-alphaBoostAmount")?.value || 0.16),
-    minOutputAlpha: +($("t-minOutputAlpha")?.value || 0.10),
+    minOutputAlpha: +($("t-minOutputAlpha")?.value || 0.05),
   };
 }
 
@@ -3456,6 +3456,10 @@ function readCloudParams() {
     9: [1.12, 1.02, 0.68],
     10: [1.14, 0.74, 0.82],
     11: [0.62, 0.84, 1.22],
+    12: [0.86, 0.96, 1.14],
+    13: [0.76, 0.92, 1.20],
+    14: [0.96, 0.98, 1.02],
+    15: [1.34, 0.10, 0.08],
   };
   const baseSunColor = sunColorByGrade[preview.gradeStyle] || [1.0, 0.95, 0.87];
   const sunTint = preview.sunTint || [1.0, 1.0, 1.0];
@@ -3725,7 +3729,7 @@ function readPreview() {
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
   preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 4));
   preview.temporalCellRate = normalizeTemporalCellRate(u32("v-temporal-cell-rate", preview.temporalCellRate ?? 1));
-  preview.alphaFloor = Math.max(0, Math.min(0.24, num("v-alpha-floor", preview.alphaFloor ?? 0.10)));
+  preview.alphaFloor = Math.max(0, Math.min(0.24, num("v-alpha-floor", preview.alphaFloor ?? 0.0)));
   preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));
   preview.sunTint[1] = clamp01(num("v-sun-g", preview.sunTint[1]));
   preview.sunTint[2] = clamp01(num("v-sun-b", preview.sunTint[2]));
@@ -5247,7 +5251,7 @@ async function init() {
   setIf("t-directLightBoost", preview.directLightBoost ?? 0.58);
   setIf("t-alphaBoostThreshold", 0.22);
   setIf("t-alphaBoostAmount", 0.16);
-  setIf("t-minOutputAlpha", 0.10);
+  setIf("t-minOutputAlpha", 0.05);
 
   const anvilInput = $("p-anvil");
   if (anvilInput) {
