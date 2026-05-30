@@ -254,8 +254,8 @@ export class CloudComputeBuilder {
         maxSteps: 256,
         minStep: 0.003,
         maxStep: 0.16,
-        sunSteps: 6,
-        sunStride: 3,
+        sunSteps: 5,
+        sunStride: 4,
         sunMinTr: 0.003,
         phaseJitter: 1.0,
         stepJitter: 0.3,
@@ -285,8 +285,8 @@ export class CloudComputeBuilder {
         farStepMult: 2.05,
         bnFarScale: 0.28,
         farTaaHistoryBoost: 1.8,
-        raySmoothDens: 0.34,
-        raySmoothSun: 0.34,
+        raySmoothDens: 0.40,
+        raySmoothSun: 0.40,
         fluffFactor: 2.0,
         anvilLift: 0.6,
         alphaCutoff: 0.98,
@@ -297,11 +297,17 @@ export class CloudComputeBuilder {
         verticalStepBoost: 3.0,
         verticalTextureHomogeneity: 0.0,
         verticalLightingStepBoost: 1.35,
-        frontOcclusionStrength: 0.72,
-        frontOcclusionAlpha: 0.66,
-        frontOcclusionStepBoost: 3.0,
+        frontOcclusionStrength: 0.82,
+        frontOcclusionAlpha: 0.58,
+        frontOcclusionStepBoost: 3.6,
         sliceJitterStrength: 0.08,
         verticalLayerDecorrelation: 0.35,
+        directLightBlend: 0.78,
+        directLightBoost: 0.58,
+        alphaBoostThreshold: 0.22,
+        alphaBoostAmount: 0.16,
+        minOutputAlpha: 0.10,
+        outputAlphaFeather: 0.0,
       },
     };
 
@@ -1399,8 +1405,8 @@ export class CloudComputeBuilder {
     putF(212, s.directLightBoost ?? 0.58);
     putF(216, s.alphaBoostThreshold ?? 0.22);
     putF(220, s.alphaBoostAmount ?? 0.16);
-    putF(224, s.alphaMinCutoff ?? 0.04);
-    putF(228, s.alphaMinSoftness ?? 0.035);
+    putF(224, s.minOutputAlpha ?? 0.10);
+    putF(228, s.outputAlphaFeather ?? 0.0);
 
     for (let i = 232; i < this._abTuning.byteLength; i += 4)
       dv.setUint32(i, 0, true);
@@ -2046,8 +2052,6 @@ export class CloudComputeBuilder {
       (s.frameIndex >>> 0) > 0 &&
       this.historyPrevView &&
       this.historyOutView &&
-      this.outView &&
-      this._getResId(this.historyOutView) !== this._getResId(this.outView) &&
       this.width > 0 &&
       this.height > 0
     );
@@ -2084,8 +2088,7 @@ export class CloudComputeBuilder {
   }
 
   _ensureHistoryCopyPipeline() {
-    const outFormat = this.outFormat || "rgba16float";
-    if (this._historyCopy && this._historyCopy.format === outFormat) return this._historyCopy;
+    if (this._historyCopy && this._historyCopy.format === "rgba16float") return this._historyCopy;
 
     const wgsl = `
       struct Frame {
@@ -2118,10 +2121,9 @@ export class CloudComputeBuilder {
       };
 
       @group(0) @binding(0) var srcTex: texture_2d_array<f32>;
-      @group(0) @binding(1) var historyDstTex: texture_storage_2d_array<rgba16float, write>;
+      @group(0) @binding(1) var dstTex: texture_storage_2d_array<rgba16float, write>;
       @group(0) @binding(2) var<uniform> frame: Frame;
       @group(0) @binding(3) var<uniform> reproj: ReprojSettings;
-      @group(0) @binding(4) var outputDstTex: texture_storage_2d_array<${outFormat}, write>;
 
       @compute @workgroup_size(16, 16, 1)
       fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -2131,8 +2133,7 @@ export class CloudComputeBuilder {
         let p = vec2<i32>(i32(gid.x), i32(gid.y));
         let layer = frame.layerIndex;
         let c = textureLoad(srcTex, p, layer, 0);
-        textureStore(historyDstTex, p, layer, c);
-        textureStore(outputDstTex, p, layer, c);
+        textureStore(dstTex, p, layer, c);
       }
     `;
 
@@ -2143,26 +2144,24 @@ export class CloudComputeBuilder {
         { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "2d-array" } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
-        { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: outFormat, viewDimension: "2d-array" } },
       ],
     });
     const pipe = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
       compute: { module, entryPoint: "main" },
     });
-    this._historyCopy = { format: outFormat, bgl, pipe };
+    this._historyCopy = { format: "rgba16float", bgl, pipe };
     this._historyCopyBgCache.clear();
     this._historyCopyBgKeys.length = 0;
     return this._historyCopy;
   }
 
   _getHistoryCopyBindGroup() {
-    if (!this.historyPrevView || !this.historyOutView || !this.outView) return null;
+    if (!this.historyPrevView || !this.historyOutView) return null;
     const h = this._ensureHistoryCopyPipeline();
     const key = [
       this._getResId(this.historyPrevView),
       this._getResId(this.historyOutView),
-      this._getResId(this.outView),
       this._getResId(this.frameBuffer),
       this._getResId(this.reprojBuffer),
     ].join("|");
@@ -2175,7 +2174,6 @@ export class CloudComputeBuilder {
         { binding: 1, resource: this.historyOutView },
         { binding: 2, resource: { buffer: this.frameBuffer } },
         { binding: 3, resource: { buffer: this.reprojBuffer } },
-        { binding: 4, resource: this.outView },
       ],
     });
     this._historyCopyBgCache.set(key, bg);
@@ -2775,7 +2773,7 @@ export class CloudComputeBuilder {
     }
 
     const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
-    const alphaFloor = Math.max(0, Math.min(0.24, opts.alphaFloor ?? 0.085));
+    const alphaFloor = Math.max(0, Math.min(0.24, opts.alphaFloor ?? 0.10));
 
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, compositeQuality, true);

@@ -85,8 +85,55 @@ fn sampleCloudRaw(uv:vec2<f32>, layer:i32)->vec4<f32> {
   return textureSampleLevel(tex, samp, uv, layer, 0.0);
 }
 
+fn cloudDeDitherWeight(center: vec4<f32>, tap: vec4<f32>, spatialWeight: f32) -> f32 {
+  let centerA = clamp(center.a, 0.0, 1.0);
+  let tapA = clamp(tap.a, 0.0, 1.0);
+  let alphaDelta = abs(tapA - centerA);
+  let lumaDelta = abs(luma(tap.rgb) - luma(center.rgb));
+  let alphaWeight = exp(-alphaDelta * 18.0);
+  let lumaWeight = exp(-lumaDelta * 14.0);
+  let visibilityWeight = smoothstep(0.01, 0.12, tapA);
+  return spatialWeight * alphaWeight * lumaWeight * visibilityWeight;
+}
+
 fn sampleCloud(uv:vec2<f32>, layer:i32)->vec4<f32> {
-  return sampleCloudRaw(uv, layer);
+  let center = sampleCloudRaw(uv, layer);
+  let centerA = clamp(center.a, 0.0, 1.0);
+  if (R.compositeQuality == 0u || centerA < 0.01 || centerA > 0.995) {
+    return center;
+  }
+
+  let dims = vec2<f32>(textureDimensions(tex, 0));
+  let px = 1.0 / max(dims, vec2<f32>(1.0, 1.0));
+  let radius = mix(1.0, 1.35, smoothstep(0.10, 0.85, centerA));
+  let stepUv = px * radius;
+
+  let left  = sampleCloudRaw(clamp(uv + vec2<f32>(-stepUv.x, 0.0), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+  let right = sampleCloudRaw(clamp(uv + vec2<f32>( stepUv.x, 0.0), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+  let down  = sampleCloudRaw(clamp(uv + vec2<f32>(0.0, -stepUv.y), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+  let up    = sampleCloudRaw(clamp(uv + vec2<f32>(0.0,  stepUv.y), vec2<f32>(0.001, 0.001), vec2<f32>(0.999, 0.999)), layer);
+
+  let wCenter = 1.0;
+  let wLeft = cloudDeDitherWeight(center, left, 0.58);
+  let wRight = cloudDeDitherWeight(center, right, 0.58);
+  let wDown = cloudDeDitherWeight(center, down, 0.58);
+  let wUp = cloudDeDitherWeight(center, up, 0.58);
+
+  let wSum = max(wCenter + wLeft + wRight + wDown + wUp, 1e-5);
+  let filtered = (
+    center * wCenter +
+    left * wLeft +
+    right * wRight +
+    down * wDown +
+    up * wUp
+  ) / wSum;
+
+  let edgeBand = smoothstep(0.02, 0.18, centerA) * (1.0 - smoothstep(0.62, 0.98, centerA));
+  let bodyBand = smoothstep(0.18, 0.72, centerA) * (1.0 - smoothstep(0.88, 0.99, centerA));
+  let qualityF = min(f32(R.compositeQuality), 2.0) * 0.5;
+  let blend = clamp(mix(0.40, 0.62, qualityF) * edgeBand + 0.14 * bodyBand, 0.0, 0.72);
+
+  return mix(center, filtered, blend);
 }
 
 fn alphaFloorGate(alpha: f32) -> f32 {
@@ -220,7 +267,7 @@ fn alphaGradAt(uv:vec2<f32>, layer:i32)->vec2<f32> {
   let px = 1.0 / max(dims, vec2<f32>(1.0, 1.0));
 
   let r1 = px * 1.5;
-  let r2 = px * 4.0;
+  let r2 = px * 3.0;
 
   let aL1 = textureSampleLevel(tex, samp, uv - vec2<f32>(r1.x, 0.0), layer, 0.0).a;
   let aR1 = textureSampleLevel(tex, samp, uv + vec2<f32>(r1.x, 0.0), layer, 0.0).a;
@@ -235,28 +282,18 @@ fn alphaGradAt(uv:vec2<f32>, layer:i32)->vec2<f32> {
   let g1 = vec2<f32>(aR1 - aL1, aU1 - aD1);
   let g2 = vec2<f32>(aR2 - aL2, aU2 - aD2);
 
-  return g1 * 0.60 + g2 * 0.40;
+  return g1 * 0.72 + g2 * 0.28;
 }
 
 fn alphaGradLite(uv:vec2<f32>, layer:i32)->vec2<f32> {
   let dims = vec2<f32>(textureDimensions(tex, 0));
   let px = 1.0 / max(dims, vec2<f32>(1.0, 1.0));
-  let r1 = px * 2.0;
-  let r2 = px * 4.0;
-
-  let aL1 = textureSampleLevel(tex, samp, uv - vec2<f32>(r1.x, 0.0), layer, 0.0).a;
-  let aR1 = textureSampleLevel(tex, samp, uv + vec2<f32>(r1.x, 0.0), layer, 0.0).a;
-  let aD1 = textureSampleLevel(tex, samp, uv - vec2<f32>(0.0, r1.y), layer, 0.0).a;
-  let aU1 = textureSampleLevel(tex, samp, uv + vec2<f32>(0.0, r1.y), layer, 0.0).a;
-
-  let aL2 = textureSampleLevel(tex, samp, uv - vec2<f32>(r2.x, 0.0), layer, 0.0).a;
-  let aR2 = textureSampleLevel(tex, samp, uv + vec2<f32>(r2.x, 0.0), layer, 0.0).a;
-  let aD2 = textureSampleLevel(tex, samp, uv - vec2<f32>(0.0, r2.y), layer, 0.0).a;
-  let aU2 = textureSampleLevel(tex, samp, uv + vec2<f32>(0.0, r2.y), layer, 0.0).a;
-
-  let g1 = vec2<f32>(aR1 - aL1, aU1 - aD1);
-  let g2 = vec2<f32>(aR2 - aL2, aU2 - aD2);
-  return g1 * 0.62 + g2 * 0.38;
+  let r = px * 2.0;
+  let aL = textureSampleLevel(tex, samp, uv - vec2<f32>(r.x, 0.0), layer, 0.0).a;
+  let aR = textureSampleLevel(tex, samp, uv + vec2<f32>(r.x, 0.0), layer, 0.0).a;
+  let aD = textureSampleLevel(tex, samp, uv - vec2<f32>(0.0, r.y), layer, 0.0).a;
+  let aU = textureSampleLevel(tex, samp, uv + vec2<f32>(0.0, r.y), layer, 0.0).a;
+  return vec2<f32>(aR - aL, aU - aD);
 }
 
 fn alphaOccLite(uv:vec2<f32>, layer:i32)->f32 {
@@ -406,12 +443,9 @@ fn godRayShaft(
   let radialGate = 1.0 / (1.0 + radialX * radialX * mix(1.45, 2.35, clamp(falloff * 0.22, 0.0, 1.0)));
   let angularGate = smoothstep(0.08, 0.88, towardSun) * mix(0.68, 1.22, lowSun);
 
-  let rayDir = rayDirFromUV(uv);
-  let rayHorizon = pow(clamp(1.0 - abs(rayDir.y) * 8.5, 0.0, 1.0), 1.35);
-  let beamFog = smoothstep(0.18, 0.88, towardSun) * radialGate;
-  let sunColumnFog = (1.0 - smoothstep(0.18, 1.0, radialX)) * smoothstep(0.08, 0.72, towardSun);
-  let horizonSuppression = 1.0 - rayHorizon * (0.54 + 0.18 * lowSun) * (1.0 - max(beamFog, sunColumnFog));
-  let fogDensity = mix(0.22, 0.58, max(beamFog, sunColumnFog)) * mix(0.74, 1.08, lowSun) * horizonSuppression;
+  let horizonFog = pow(clamp(1.0 - abs(uv.y - 0.55) * 2.0, 0.0, 1.0), 0.48);
+  let upperFog = pow(clamp(1.0 - uv.y, 0.0, 1.0), 0.30);
+  let fogDensity = mix(0.34, 0.92, max(horizonFog, upperFog * 0.42)) * mix(0.74, 1.18, lowSun);
 
   let localFadeA = pow(max(1.0 - cloudA, 0.0), 1.10);
   let localFadeB = pow(max(1.0 - cloudA, 0.0), 1.95);
@@ -703,11 +737,10 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   let godRayColor = mix(sunWash, sunColor, 0.72);
 
   if (cloudA < 0.003) {
-    let clearRayWindow = smoothstep(0.16, 0.88, towardSunSky) * stableSunProximity(in.uv, uvSun, towardSunSky, fwdDot);
     let clearLinear =
-      sky * (1.0 - godRayShadow * (0.09 + 0.24 * lowSun) * clearRayWindow) +
+      sky * (1.0 - godRayShadow * (0.16 + 0.34 * lowSun)) +
       sunColor * (1.18 * sunDisk + 0.22 * sunGlow) +
-      godRayColor * godRays * (0.34 + 0.72 * lowSun) * max(clearRayWindow, 0.18);
+      godRayColor * godRays * (0.40 + 0.86 * lowSun);
 
     let clearMapped = toneMapFilmic(clearLinear * max(R.exposure * 0.80, 0.0));
     let clearStyled = applyStyleGrade(clearMapped, style, 0.0);
@@ -993,9 +1026,8 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
     (1.0 - 0.72 * edgeAlphaBand) *
     mix(1.0, 0.72, shadowBand);
 
-  let cloudRayWindow = smoothstep(0.16, 0.88, towardSunSky) * stableSunProximity(in.uv, uvSun, towardSunSky, fwdDot);
   var linear =
-    sky * skyMask * (1.0 - godRayShadow * (0.08 + 0.22 * lowSun) * skyFogMask * cloudRayWindow) +
+    sky * skyMask * (1.0 - godRayShadow * (0.13 + 0.30 * lowSun) * skyFogMask) +
     cloudShaded;
 
   linear += sunColor * (
@@ -1007,10 +1039,9 @@ fn fs_main(in:VSOut)->@location(0) vec4<f32> {
   linear +=
     godRayColor *
     godRays *
-    (0.26 + 0.58 * lowSun) *
+    (0.32 + 0.68 * lowSun) *
     skyFogMask *
-    rayBodyMask *
-    max(cloudRayWindow, 0.16);
+    rayBodyMask;
 
   let mapped = toneMapFilmic(linear * max(R.exposure * 0.82, 0.0));
   let styled = applyStyleGrade(mapped, style, clamp(cloudA * 1.15 + bodyCore * 0.35, 0.0, 1.0));

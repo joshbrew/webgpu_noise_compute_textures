@@ -48,8 +48,8 @@ const noise = {
   detail32: { view3D: null, size: 32, dirty: false },
 };
 
-const BLUE_NOISE_SHARPNESS = 0.12;
-const BLUE_NOISE_CONTRAST = 0.68;
+const BLUE_NOISE_SHARPNESS = 0.08;
+const BLUE_NOISE_CONTRAST = 0.62;
 let blueBlurPipeline = null;
 let blueBlurSampler = null;
 let blueBlurUniform = null;
@@ -58,7 +58,8 @@ let blueBlurView = null;
 let blueBlurW = 0;
 let blueBlurH = 0;
 
-let currentSlice = 0;
+let currentShapeSlice = 0,
+  currentDetailSlice = 0;
 
 // reprojection/history resources
 let historyTexA = null,
@@ -173,8 +174,13 @@ function renderDebugIfEnabled(kind = "all") {
     renderDebugSlices();
     return;
   }
+  if (kind === "blue") {
+    renderBlueDebug();
+    return;
+  }
   renderWeatherDebug();
   renderDebugSlices();
+  renderBlueDebug();
 }
 
 // -----------------------------------------------------------------------------
@@ -203,7 +209,6 @@ async function ensureDevice() {
   queue = device.queue;
 
   nb = new NoiseComputeBuilder(device, queue);
-  cb = new CloudComputeBuilder(device, queue);
 
   nb.initBlitRender?.();
 
@@ -213,11 +218,22 @@ async function ensureDevice() {
     console.warn("nb.buildPermTable initial failed", e);
   }
 
+}
+
+function ensureCloudBuilder() {
+  if (cb) return cb;
+
+  cb = new CloudComputeBuilder(device, queue);
+  lastNoiseTransformSignature = "";
+  lastAppliedTuningSignature = "";
+  pushTransformsToCloudBuilder();
   try {
-    cb.setTuning?.();
+    applyWorkerTuning(previewCloudBox(lastRunPayload?.preview || {}));
   } catch (e) {
     console.warn("Initial cb.setTuning failed", e);
   }
+  renderBundleCache.clear();
+  return cb;
 }
 
 function configureMainContext(width = MAIN_W, height = MAIN_H) {
@@ -232,7 +248,7 @@ function configureMainContext(width = MAIN_W, height = MAIN_H) {
   if (canvasMain.width !== w) canvasMain.width = w;
   if (canvasMain.height !== h) canvasMain.height = h;
 
-  const fmt = cb?._ensureRenderPipeline?.("bgra8unorm")?.format ?? "bgra8unorm";
+  const fmt = "bgra8unorm";
   ctxMain.configure({
     device,
     format: fmt,
@@ -315,6 +331,7 @@ async function applyResizePayloadNow(payload = {}) {
   resetFrameStateCaches();
   if (cb) cb._bg0Dirty = cb._bg1Dirty = true;
   invalidateReprojectionHistory();
+  renderDebugIfEnabled();
 
   return { ok: true, resized: true, serial: p.serial, width: MAIN_W, height: MAIN_H };
 }
@@ -348,8 +365,8 @@ function previewPresentDivider(preview, coarseFactor, fastPreview) {
 function renderDebugSlices() {
   if (!nb) return;
 
-  const s = Math.max(0, Math.min(SHAPE_SIZE - 1, currentSlice | 0));
-  const d = Math.max(0, Math.min(DETAIL_SIZE - 1, Math.floor((s * DETAIL_SIZE) / SHAPE_SIZE)));
+  const s = Math.max(0, Math.min(SHAPE_SIZE - 1, currentShapeSlice | 0));
+  const d = Math.max(0, Math.min(DETAIL_SIZE - 1, currentDetailSlice | 0));
 
   if (dbg.shapeR && noise.shape128.view3D) {
     nb.renderTexture3DSliceToCanvas(noise.shape128.view3D, dbg.shapeR, {
@@ -406,6 +423,16 @@ function renderWeatherDebug() {
       height: DBG_H,
     });
   }
+}
+
+function renderBlueDebug() {
+  if (!nb || !noise.blue.arrayView || !dbg.blue) return;
+  nb.renderTextureToCanvas(noise.blue.arrayView, dbg.blue, {
+    preserveCanvasSize: true,
+    clear: true,
+    width: DBG_W,
+    height: DBG_H,
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -496,6 +523,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
     viewDimension: "2d-array",
   });
   const baseMs = performance.now() - t0;
+  await deferToBrowser();
 
   const enabledG = !!(billowParams && billowParams.enabled === true);
   let gMs = 0;
@@ -515,6 +543,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
       viewDimension: "2d-array",
     });
     gMs = performance.now() - tg0;
+    await deferToBrowser();
     noise.weather.gCleared = false;
   } else if (!noise.weather.gCleared) {
     const tc0 = performance.now();
@@ -551,6 +580,7 @@ async function bakeWeather2D(weatherParams = {}, force = false, billowParams = {
       viewDimension: "2d-array",
     });
     bMs = performance.now() - tb0;
+    await deferToBrowser();
     noise.weather.bCleared = false;
   } else if (!noise.weather.bCleared) {
     const tc0 = performance.now();
@@ -812,6 +842,7 @@ async function bakeShape128(shapeParams = {}, force = false) {
     id: "shape128",
   });
   const baseMs = performance.now() - t0;
+  await deferToBrowser();
 
   const z = Number(shapeParams.zoom) || 1;
   const bandSpecs = [
@@ -835,6 +866,7 @@ async function bakeShape128(shapeParams = {}, force = false) {
       },
     );
     bandsMs.push(performance.now() - tb0);
+    await deferToBrowser();
   }
 
   noise.shape128.view3D = nb.get3DView("shape128");
@@ -902,6 +934,7 @@ async function bakeDetail32(detailParams = {}, force = false) {
       },
     );
     bandsMs.push(performance.now() - tb0);
+    await deferToBrowser();
   }
 
   noise.detail32.view3D = nb.get3DView("detail32");
@@ -1331,7 +1364,7 @@ function renderUniformSignature(preview, aspect, layerIndex) {
     godRayStrength: signatureScalar(preview?.godRayStrength ?? 0.0),
     godRayLength: signatureScalar(preview?.godRayLength ?? 1.0),
     godRayFalloff: signatureScalar(preview?.godRayFalloff ?? 1.55),
-    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.085),
+    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.10),
   });
 }
 
@@ -1368,10 +1401,10 @@ function autoThickBoxTuning(box) {
   const reachF = Math.max(thickF, horizonF * 0.85);
 
   return {
-    thickBoxPerf: +(0.44 + reachF * 1.10).toFixed(4),
-    thickStepBoost: +(1.22 + reachF * 1.38).toFixed(4),
-    thickDetailSkip: +(0.040 + thickF * 0.10).toFixed(4),
-    thickLightSkip: +(0.40 + reachF * 1.08).toFixed(4),
+    thickBoxPerf: +(0.52 + reachF * 1.22).toFixed(4),
+    thickStepBoost: +(1.32 + reachF * 1.68).toFixed(4),
+    thickDetailSkip: +(0.060 + thickF * 0.14).toFixed(4),
+    thickLightSkip: +(0.56 + reachF * 1.20).toFixed(4),
   };
 }
 
@@ -1642,6 +1675,7 @@ async function runFrame({
 
   if (tuning && typeof tuning === "object") mergeTuningPatch(tuning);
   const cloudBox = previewCloudBox(preview);
+  ensureCloudBuilder();
   applyWorkerTuning(cloudBox);
 
   if (tileTransforms && typeof tileTransforms === "object") {
@@ -1940,7 +1974,7 @@ async function runFrame({
       godRayStrength: (preview?.godRayStrength ?? 0.0) * (renderFastPreview ? 0.78 : 1.0),
       godRayLength: (preview?.godRayLength ?? 1.0) * (renderFastPreview ? 0.90 : 1.0),
       godRayFalloff: preview?.godRayFalloff ?? 1.55,
-      alphaFloor: preview?.alphaFloor ?? 0.085,
+      alphaFloor: preview?.alphaFloor ?? 0.10,
     });
     lastRenderUniformSignature = renderSig;
   }
@@ -2393,7 +2427,7 @@ async function _handleMessage(ev) {
         respond(true, { baked: "all", timings: { weather, blue, shape, detail, totalMs: t1 - t0 } });
       } finally {
         debugPreviewEnabled = prevDebugEnabled;
-        if (debugPreviewEnabled) renderDebugIfEnabled();
+        if (debugPreviewEnabled && !payload?.skipFinalDebug) renderDebugIfEnabled();
       }
       return;
     }
@@ -2432,9 +2466,29 @@ async function _handleMessage(ev) {
     }
 
     if (type === "setSlice") {
-      currentSlice = Math.max(0, Math.min(SHAPE_SIZE - 1, payload.slice | 0));
+      currentShapeSlice = Math.max(0, Math.min(SHAPE_SIZE - 1, payload.slice | 0));
+      currentDetailSlice = Math.max(0, Math.min(DETAIL_SIZE - 1, Math.floor((currentShapeSlice * DETAIL_SIZE) / Math.max(1, SHAPE_SIZE))));
       renderDebugSlices();
-      respond(true, { slice: currentSlice });
+      respond(true, { shapeSlice: currentShapeSlice, detailSlice: currentDetailSlice });
+      return;
+    }
+
+    if (type === "setDebugSlice") {
+      const target = String(payload?.target || "shape");
+      const slice = Math.max(0, payload?.slice | 0);
+      if (target === "detail") {
+        currentDetailSlice = Math.min(DETAIL_SIZE - 1, slice);
+      } else {
+        currentShapeSlice = Math.min(SHAPE_SIZE - 1, slice);
+      }
+      renderDebugSlices();
+      respond(true, { shapeSlice: currentShapeSlice, detailSlice: currentDetailSlice });
+      return;
+    }
+
+    if (type === "refreshDebug") {
+      renderDebugIfEnabled(payload?.kind || "all");
+      respond(true, { ok: true, kind: payload?.kind || "all" });
       return;
     }
 
@@ -2520,7 +2574,7 @@ async function _handleMessage(ev) {
 
         if (incomingTransforms && typeof incomingTransforms === "object") {
           applyNoiseTransforms(incomingTransforms, {
-            allowPositions: !!incomingTransforms.explicitPositions || !!incomingTransforms.explicit,
+            allowPositions: true,
             allowScale: true,
             allowVel: true,
             additive: !!incomingTransforms.additive,
@@ -2565,19 +2619,6 @@ async function _handleMessage(ev) {
         console.warn("setLiveFrameState failed", err);
         respond(false, err);
       }
-      return;
-    }
-
-    if (type === "getFrameState") {
-      respond(true, {
-        ok: true,
-        loopRunning,
-        loopEnabled,
-        frame: submittedFrameCount,
-        transforms: snapshotTransforms(),
-        reproj: workerReproj ? Object.assign({}, workerReproj) : null,
-        coarseFactor: lastRunPayload?.coarseFactor || 1,
-      });
       return;
     }
 

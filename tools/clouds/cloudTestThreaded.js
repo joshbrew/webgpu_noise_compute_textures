@@ -48,7 +48,8 @@ const STARTUP_PROFILE = MOBILE_PROFILE
       maxMainSide: 1280,
       renderScaleDivider: 4,
       temporalCellRate: 4,
-      debugCanvases: false,
+      debugCanvases: true,
+      skipStartupDebug: true,
       capMainCanvas: true,
     }
   : {
@@ -62,6 +63,7 @@ const STARTUP_PROFILE = MOBILE_PROFILE
       renderScaleDivider: 4,
       temporalCellRate: 4,
       debugCanvases: true,
+      skipStartupDebug: true,
       capMainCanvas: false,
     };
 
@@ -111,7 +113,7 @@ const preview = {
   styleRimStrength: 1.04,
   styleSunBleed: 0.66,
   styleMidLift: 1.26,
-  alphaFloor: 0.085,
+  alphaFloor: 0.10,
   godRaysEnabled: true,
   godRayStrength: 1.00,
   godRayLength: 1.10,
@@ -312,6 +314,1928 @@ function cloudHistoryEnabled() {
 }
 
 // ---- DOM helpers ----
+function mountCloudHtml() {
+  if ($("gpuCanvas")) return;
+
+  const styleMatch = String(html).match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+  if (styleMatch && !document.getElementById("clouds-inline-style")) {
+    const style = document.createElement("style");
+    style.id = "clouds-inline-style";
+    style.textContent = styleMatch[1];
+    document.head.appendChild(style);
+  }
+
+  const bodyMatch = String(html).match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  document.body.insertAdjacentHTML("beforeend", bodyMatch ? bodyMatch[1] : String(html));
+}
+
+function installCloudUiPolish() {
+  if (document.getElementById("cloud-ui-polish")) return;
+
+  const style = document.createElement("style");
+  style.id = "cloud-ui-polish";
+  style.textContent = `
+    :root {
+      color-scheme: dark;
+      --cloud-ui-bg: #070b13;
+      --cloud-ui-panel: rgba(14, 20, 32, 0.86);
+      --cloud-ui-panel-strong: rgba(24, 32, 48, 0.94);
+      --cloud-ui-line: rgba(180, 205, 255, 0.16);
+      --cloud-ui-line-strong: rgba(180, 205, 255, 0.28);
+      --cloud-ui-text: rgba(235, 242, 255, 0.94);
+      --cloud-ui-muted: rgba(198, 212, 236, 0.68);
+      --cloud-ui-accent: #84b8ff;
+    }
+    body {
+      background:
+        radial-gradient(circle at 30% 0%, rgba(68, 104, 160, 0.20), transparent 42rem),
+        linear-gradient(180deg, #08101d 0%, var(--cloud-ui-bg) 100%);
+      color: var(--cloud-ui-text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+    }
+    button, input, select, textarea {
+      font: inherit;
+    }
+    button {
+      border: 1px solid var(--cloud-ui-line-strong);
+      border-radius: 10px;
+      background: rgba(132, 184, 255, 0.10);
+      color: var(--cloud-ui-text);
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: rgba(132, 184, 255, 0.18);
+    }
+    button:disabled {
+      cursor: wait;
+      opacity: 0.55;
+    }
+    input, select, textarea {
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 9px;
+      background: rgba(4, 8, 15, 0.72);
+      color: var(--cloud-ui-text);
+      padding: 7px 8px;
+      min-width: 0;
+    }
+    input[type="range"] {
+      padding: 0;
+      height: 28px;
+      accent-color: var(--cloud-ui-accent);
+    }
+    label {
+      color: var(--cloud-ui-muted);
+      font-size: 12px;
+    }
+    label > span:first-child {
+      color: var(--cloud-ui-text);
+      font-weight: 600;
+    }
+    select {
+      min-height:35px;
+    }
+    #cloud-quick-dock {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: grid;
+      gap: 10px;
+      margin: 0 auto 14px;
+      padding: 12px 14px;
+      width: min(1500px, calc(100vw - 24px));
+      box-sizing: border-box;
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 0 0 18px 18px;
+      background: linear-gradient(180deg, rgba(13, 20, 33, 0.96), rgba(10, 15, 24, 0.92));
+      backdrop-filter: blur(18px);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
+    }
+    .cloud-quick-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      font-size: 13px;
+      letter-spacing: 0.01em;
+    }
+    .cloud-quick-title strong {
+      font-size: 15px;
+    }
+    #cloud-quick-status {
+      color: var(--cloud-ui-muted);
+      text-align: right;
+    }
+    .cloud-quick-row {
+      display: grid;
+      grid-template-columns: minmax(260px, 1.4fr) minmax(170px, 0.8fr) minmax(150px, 0.65fr) minmax(180px, 0.7fr) auto auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .cloud-tabs {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .cloud-tab {
+      padding: 8px 6px;
+      white-space: nowrap;
+    }
+    .cloud-tab.active {
+      background: rgba(132, 184, 255, 0.24);
+      border-color: rgba(132, 184, 255, 0.58);
+      box-shadow: inset 0 0 0 1px rgba(132, 184, 255, 0.25);
+    }
+    .cloud-quick-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+    }
+    .cloud-quick-field select, .cloud-quick-field input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .cloud-quick-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.04);
+      white-space: nowrap;
+    }
+    .cloud-panel {
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 16px;
+      background: var(--cloud-ui-panel);
+      padding: 14px;
+      box-sizing: border-box;
+    }
+    .cloud-panel-shell {
+      width: min(1500px, calc(100vw - 24px));
+      margin: 0 auto 18px;
+      display: grid;
+      gap: 14px;
+    }
+    .cloud-panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 2px 2px 8px;
+      border-bottom: 1px solid var(--cloud-ui-line);
+      margin-bottom: 12px;
+    }
+    .cloud-panel-heading strong {
+      color: var(--cloud-ui-text);
+      font-size: 14px;
+      letter-spacing: 0.02em;
+    }
+    .cloud-panel-heading span {
+      color: var(--cloud-ui-muted);
+      font-size: 12px;
+    }
+    .cloud-panel-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .cloud-texture-panel {
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(320px, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .cloud-texture-preview-card {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.045);
+      box-sizing: border-box;
+    }
+    .cloud-debug-preview-stack {
+      display: grid;
+      gap: 12px;
+      align-items: start;
+    }
+    #cloud-texture-preview-menu {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      margin: 0 0 18px;
+      padding: 14px;
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 16px;
+      background: var(--cloud-ui-panel);
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    #cloud-texture-preview-menu .cloud-panel-heading {
+      margin: 0 0 12px;
+      padding: 2px 2px 8px;
+    }
+    #cloud-texture-preview-menu .cloud-debug-preview-stack {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 12px;
+      min-width: 0;
+    }
+    #cloud-texture-preview-menu .cloud-texture-preview-card {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      padding: 12px;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    #cloud-texture-preview-menu canvas[id^="dbg-"] {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      aspect-ratio: 1 / 1;
+      justify-self: stretch;
+    }
+    .cloud-texture-preview-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--cloud-ui-text);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .cloud-texture-preview-title small {
+      color: var(--cloud-ui-muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .cloud-persistent-texture-previews {
+      align-self: stretch;
+      justify-self: stretch;
+      min-width: 0;
+    }
+    .cloud-persistent-texture-previews * {
+      box-sizing: border-box;
+    }
+    .cloud-texture-controls {
+      min-width: 0;
+    }
+    .cloud-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+    }
+    .cloud-field input, .cloud-field select {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #gpuCanvas {
+      display: block;
+      width: min(100%, 1360px);
+      min-height: 420px;
+      margin: 0 auto 12px;
+      border-radius: 18px;
+      border: 1px solid var(--cloud-ui-line-strong);
+      background: #02050a;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+    }
+    canvas[id^="dbg-"] {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      aspect-ratio: 1 / 1;
+      border-radius: 13px;
+      border: 1px solid var(--cloud-ui-line);
+      background: #02050a;
+      image-rendering: pixelated;
+    }
+    .cloud-texture-slice-control {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px 8px;
+      align-items: center;
+      width: 100%;
+      margin: 0;
+      padding: 8px;
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.045);
+      box-sizing: border-box;
+    }
+    .cloud-texture-slice-control span {
+      font-size: 11px;
+      color: var(--cloud-ui-text);
+      font-weight: 800;
+      letter-spacing: 0.035em;
+      text-transform: uppercase;
+    }
+    .cloud-texture-slice-value {
+      color: var(--cloud-ui-muted);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .cloud-texture-slice-control input[type="range"] {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+    .cloud-texture-slice-control input[type="number"] {
+      display: none;
+    }
+    .cloud-legacy-slice-hidden,
+    .cloud-empty-original-shell,
+    #slice,
+    #sliceLabel,
+    label[for="slice"],
+    .cloud-control-group[data-cloud-control-group="Slice"],
+    .cloud-control-group:has(#slice),
+    .cloud-control-group:has(#sliceLabel),
+    .cloud-control-group:has(label[for="slice"]) {
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      min-height: 0 !important;
+      height: 0 !important;
+      overflow: hidden !important;
+    }
+    @media (max-width: 1180px) {
+      .cloud-quick-row {
+        grid-template-columns: 1fr 1fr;
+      }
+      .cloud-tabs {
+        grid-column: 1 / -1;
+      }
+      .cloud-texture-panel {
+        grid-template-columns: 1fr;
+      }
+    }
+    #cloud-quick-dock {
+      position: static;
+      top: auto;
+      z-index: auto;
+      width: 100%;
+      margin: 0 0 14px;
+      border-radius: 16px;
+      box-shadow: none;
+      background: linear-gradient(180deg, rgba(19, 28, 44, 0.96), rgba(9, 14, 24, 0.94));
+    }
+    .cloud-quick-row {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+    .cloud-tabs {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .cloud-tab {
+      text-align: center;
+    }
+    .cloud-quick-title {
+      align-items: flex-start;
+    }
+    #cloud-quick-status {
+      max-width: 13rem;
+      line-height: 1.35;
+    }
+    .cloud-control-group {
+      display: grid;
+      gap: 9px;
+      margin: 0 0 12px;
+      padding: 11px;
+      border: 1px solid var(--cloud-ui-line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .cloud-control-group-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--cloud-ui-text);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+    .cloud-control-group-hint {
+      color: var(--cloud-ui-muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .cloud-control-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      align-items: end;
+    }
+    .cloud-control-grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .cloud-control-grid-1 {
+      grid-template-columns: 1fr;
+    }
+    .cloud-control-grid label,
+    .cloud-control-grid button,
+    .cloud-control-grid select,
+    .cloud-control-grid input {
+      min-width: 0;
+    }
+    .cloud-control-grid label {
+      margin: 0;
+    }
+    .cloud-panel-fields:empty,
+    .cloud-empty-original-group,
+    .cloud-empty-original-shell,
+    #preview-look-controls.cloud-empty-original-group {
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      min-height: 0 !important;
+      height: 0 !important;
+      overflow: hidden !important;
+    }
+    #preview-look-controls {
+      margin-top: 0 !important;
+      padding-top: 0 !important;
+      border-top: 0 !important;
+    }
+    .cloud-ui-hidden-fragment,
+    .cloud-orphan-label,
+    .cloud-panel [aria-hidden="true"].cloud-legacy-slice-hidden,
+    .cloud-panel [aria-hidden="true"].cloud-empty-original-group,
+    .cloud-panel [aria-hidden="true"].cloud-empty-original-shell,
+    .cloud-panel-fields.cloud-empty-original-group,
+    #preview-look-controls.cloud-empty-original-group {
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      min-height: 0 !important;
+      height: 0 !important;
+      overflow: hidden !important;
+    }
+    #cloud-quick-dock {
+      padding: 10px;
+      gap: 8px;
+    }
+    .cloud-quick-title {
+      font-size: 12px;
+      line-height: 1.15;
+    }
+    .cloud-quick-title strong {
+      font-size: 13px;
+    }
+    #cloud-quick-status {
+      font-size: 11px;
+    }
+    .cloud-quick-row {
+      gap: 8px;
+    }
+    .cloud-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 5px;
+    }
+    .cloud-tab,
+    #quick-render-button,
+    #quick-rebake-button {
+      min-height: 30px;
+      padding: 6px 7px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    .cloud-quick-field {
+      font-size: 11px;
+    }
+    .cloud-quick-field span {
+      font-size: 10px;
+      color: var(--cloud-ui-muted);
+      font-weight: 750;
+      letter-spacing: 0.045em;
+      text-transform: uppercase;
+    }
+    .cloud-panel {
+      padding: 10px;
+      border-radius: 14px;
+    }
+    .cloud-panel-heading {
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      align-items: flex-start;
+    }
+    .cloud-panel-heading strong {
+      font-size: 12px;
+      letter-spacing: 0.045em;
+      text-transform: uppercase;
+    }
+    .cloud-panel-heading span {
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .cloud-control-group {
+      gap: 8px;
+      margin: 0 0 10px;
+      padding: 9px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.032);
+    }
+    .cloud-control-group-title {
+      min-height: 18px;
+      font-size: 10px;
+      letter-spacing: 0.075em;
+    }
+    .cloud-control-group-hint {
+      font-size: 10px;
+    }
+    .cloud-control-group-body {
+      display: grid;
+      gap: 7px;
+    }
+    .cloud-control-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 5px;
+      align-items: stretch;
+    }
+    .cloud-control-row-no-label {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .cloud-control-row-label {
+      display: block;
+      min-height: 0;
+      padding: 0 2px;
+      border: 0;
+      border-radius: 0;
+      color: var(--cloud-ui-muted);
+      background: transparent;
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.06em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .cloud-control-row-fields {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+    .cloud-control-grid-1 {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .cloud-control-grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .cloud-control-grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .cloud-control-field {
+      display: grid !important;
+      grid-template-rows: auto minmax(30px, auto);
+      gap: 4px !important;
+      min-width: 0;
+      margin: 0 !important;
+      padding: 6px;
+      border: 1px solid rgba(180, 205, 255, 0.12);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.035);
+      color: var(--cloud-ui-muted);
+      font-size: 10px;
+      box-sizing: border-box;
+    }
+    .cloud-control-field > span:first-child {
+      overflow: hidden;
+      color: var(--cloud-ui-muted) !important;
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.06em;
+      line-height: 1.05;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .cloud-control-field input,
+    .cloud-control-field select,
+    .cloud-control-field textarea {
+      display: block !important;
+      width: 100% !important;
+      min-width: 0;
+      min-height: 30px;
+      padding: 5px 6px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.1;
+      box-sizing: border-box;
+    }
+    .cloud-control-field select {
+      min-height: 32px;
+      padding-right: 20px;
+    }
+    .cloud-checkbox-field {
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: 1fr;
+      align-items: center;
+      gap: 7px !important;
+      min-height: 42px;
+    }
+    .cloud-checkbox-field > span:first-child {
+      grid-column: 2;
+      grid-row: 1;
+      white-space: normal;
+    }
+    .cloud-checkbox-field input[type="checkbox"] {
+      grid-column: 1;
+      grid-row: 1;
+      width: 16px !important;
+      height: 16px;
+      min-height: 0;
+      padding: 0;
+    }
+    .cloud-panel-fields {
+      gap: 8px;
+    }
+    .cloud-panel-fields > label:not(.cloud-control-field):not(:has(input, select, textarea, button)) {
+      display: none !important;
+    }
+
+    @media (max-width: 680px) {
+      #cloud-quick-dock {
+        width: 100%;
+        border-radius: 14px;
+      }
+      .cloud-quick-row {
+        grid-template-columns: 1fr;
+      }
+      .cloud-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .cloud-control-grid,
+      .cloud-control-grid-3 {
+        grid-template-columns: 1fr;
+      }
+      #gpuCanvas {
+        min-height: 320px;
+        border-radius: 14px;
+      }
+    }
+
+    /* Tight sidebar controls. The controls are intentionally dense because the
+       renderer needs fast numerical iteration while the canvas remains dominant. */
+    :root {
+      --cloud-ui-sidebar-pad: 6px;
+      --cloud-ui-gap-xs: 3px;
+      --cloud-ui-gap-sm: 4px;
+      --cloud-ui-field-h: 24px;
+    }
+    #cloud-quick-dock {
+      display: grid !important;
+      width: 100% !important;
+      margin: 0 0 6px !important;
+      padding: 6px !important;
+      gap: 5px !important;
+      border-radius: 10px !important;
+      background: rgba(8, 13, 22, 0.94) !important;
+      box-shadow: none !important;
+    }
+    .cloud-quick-title {
+      gap: 6px !important;
+      min-height: 0 !important;
+      font-size: 10px !important;
+      line-height: 1 !important;
+    }
+    .cloud-quick-title strong {
+      font-size: 11px !important;
+      letter-spacing: 0.04em !important;
+      text-transform: uppercase !important;
+    }
+    #cloud-quick-status {
+      max-width: 11rem !important;
+      font-size: 9px !important;
+      line-height: 1.1 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    .cloud-quick-row {
+      display: grid !important;
+      grid-template-columns: 1fr !important;
+      gap: 5px !important;
+      align-items: stretch !important;
+    }
+    .cloud-tabs {
+      display: grid !important;
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+      gap: 3px !important;
+    }
+    .cloud-tab,
+    #quick-render-button,
+    #quick-rebake-button {
+      min-height: 24px !important;
+      padding: 3px 4px !important;
+      border-radius: 6px !important;
+      font-size: 10px !important;
+      line-height: 1 !important;
+    }
+    .cloud-quick-field {
+      gap: 3px !important;
+      padding: 0 !important;
+      font-size: 9px !important;
+      background: transparent !important;
+      border: 0 !important;
+    }
+    .cloud-quick-field span {
+      font-size: 8px !important;
+      line-height: 1 !important;
+    }
+    .cloud-quick-field select,
+    .cloud-quick-field input {
+      min-height: var(--cloud-ui-field-h) !important;
+      height: var(--cloud-ui-field-h) !important;
+      padding: 3px 5px !important;
+      border-radius: 6px !important;
+      font-size: 10px !important;
+    }
+    .cloud-panel {
+      padding: var(--cloud-ui-sidebar-pad) !important;
+      border-radius: 10px !important;
+    }
+    .cloud-panel-heading {
+      margin: 0 0 5px !important;
+      padding: 0 0 5px !important;
+      gap: 5px !important;
+    }
+    .cloud-panel-heading strong {
+      font-size: 10px !important;
+      line-height: 1 !important;
+    }
+    .cloud-panel-heading span {
+      display: none !important;
+    }
+    .cloud-control-group {
+      gap: 4px !important;
+      margin: 0 0 5px !important;
+      padding: 5px !important;
+      border-radius: 8px !important;
+      background: rgba(255, 255, 255, 0.025) !important;
+    }
+    .cloud-control-group-title {
+      min-height: 0 !important;
+      font-size: 9px !important;
+      line-height: 1 !important;
+      letter-spacing: 0.06em !important;
+    }
+    .cloud-control-group-hint {
+      display: none !important;
+    }
+    .cloud-control-group-body {
+      display: grid !important;
+      gap: 4px !important;
+    }
+    .cloud-control-row {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: 3px !important;
+      align-items: stretch !important;
+    }
+    .cloud-control-row-no-label {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+    .cloud-control-row-label {
+      min-height: 0 !important;
+      padding: 0 2px !important;
+      border: 0 !important;
+      background: transparent !important;
+      font-size: 7.5px !important;
+      line-height: 1 !important;
+      letter-spacing: 0.045em !important;
+    }
+    .cloud-control-row-fields {
+      gap: 3px !important;
+    }
+    .cloud-control-grid-1,
+    .cloud-control-grid-2,
+    .cloud-control-grid-3 {
+      gap: 3px !important;
+    }
+    .cloud-control-field {
+      grid-template-rows: auto minmax(var(--cloud-ui-field-h), auto) !important;
+      gap: 2px !important;
+      padding: 3px !important;
+      border-radius: 7px !important;
+      font-size: 9px !important;
+    }
+    .cloud-control-field > span:first-child {
+      font-size: 7.5px !important;
+      line-height: 1 !important;
+      letter-spacing: 0.045em !important;
+    }
+    .cloud-control-field input,
+    .cloud-control-field select,
+    .cloud-control-field textarea {
+      min-height: var(--cloud-ui-field-h) !important;
+      height: var(--cloud-ui-field-h) !important;
+      padding: 3px 4px !important;
+      border-radius: 6px !important;
+      font-size: 10px !important;
+      line-height: 1 !important;
+    }
+    .cloud-control-field input[type="checkbox"] {
+      width: 13px !important;
+      height: 13px !important;
+      min-height: 13px !important;
+    }
+    .cloud-checkbox-field {
+      min-height: 28px !important;
+      gap: 5px !important;
+    }
+    .cloud-panel-fields {
+      gap: 4px !important;
+    }
+    .cloud-texture-panel {
+      grid-template-columns: minmax(130px, 0.55fr) minmax(0, 1fr) !important;
+      gap: 6px !important;
+    }
+    .cloud-texture-preview-card {
+      gap: 5px !important;
+      padding: 5px !important;
+      border-radius: 9px !important;
+    }
+    #cloud-texture-preview-menu {
+      width: 100% !important;
+      max-width: 100% !important;
+      min-width: 0 !important;
+      margin: 0 0 12px !important;
+      padding: 10px !important;
+      border-radius: 14px !important;
+      overflow: hidden !important;
+    }
+    #cloud-texture-preview-menu .cloud-debug-preview-stack {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: 10px !important;
+      min-width: 0 !important;
+    }
+    #cloud-texture-preview-menu .cloud-texture-preview-card {
+      width: 100% !important;
+      max-width: 100% !important;
+      min-width: 0 !important;
+      padding: 9px !important;
+      gap: 8px !important;
+      overflow: hidden !important;
+    }
+    #cloud-texture-preview-menu canvas[id^="dbg-"] {
+      width: 100% !important;
+      max-width: 100% !important;
+      min-width: 0 !important;
+      justify-self: stretch !important;
+    }
+    .cloud-texture-preview-title {
+      font-size: 9px !important;
+      line-height: 1 !important;
+    }
+    .cloud-texture-preview-title small {
+      display: none !important;
+    }
+    .cloud-texture-slice-control {
+      grid-template-columns: 1fr auto !important;
+      gap: 3px 5px !important;
+      padding: 5px !important;
+      border-radius: 8px !important;
+    }
+    .cloud-texture-slice-control span,
+    .cloud-texture-slice-value {
+      font-size: 9px !important;
+      line-height: 1 !important;
+    }
+    .cloud-texture-slice-control input[type="range"] {
+      height: 20px !important;
+    }
+    .cloud-texture-slice-control input[type="number"] {
+      min-height: 23px !important;
+      height: 23px !important;
+      padding: 2px 4px !important;
+      font-size: 10px !important;
+    }
+    #gpuCanvas {
+      border-radius: 10px !important;
+      margin-bottom: 6px !important;
+    }
+
+  `;
+  document.head.appendChild(style);
+}
+
+function addCloudUiClasses() {
+  ["p-weather", "p-shape128", "p-detail32", "p-blue", "p-cloudParams", "p-preview"].forEach((id) => {
+    const panel = $(id);
+    if (panel) panel.classList.add("cloud-panel");
+  });
+  document.querySelectorAll("label").forEach((label) => label.classList.add("cloud-field"));
+}
+
+function createCloudQuickDock() {
+  if (document.getElementById("cloud-quick-dock")) return;
+
+  const dock = document.createElement("div");
+  dock.id = "cloud-quick-dock";
+  dock.innerHTML = `
+    <div class="cloud-quick-title">
+      <strong>Cloud Lab</strong>
+      <span id="cloud-quick-status">Ready</span>
+    </div>
+    <div class="cloud-quick-row">
+      <div class="cloud-tabs" aria-label="Cloud tool panels">
+        <button type="button" class="cloud-tab" data-cloud-pass="preview">Render</button>
+        <button type="button" class="cloud-tab" data-cloud-pass="clouds">Tuning</button>
+        <button type="button" class="cloud-tab" data-cloud-pass="weather">Weather</button>
+        <button type="button" class="cloud-tab" data-cloud-pass="shape128">Shape 3D</button>
+        <button type="button" class="cloud-tab" data-cloud-pass="detail32">Detail 3D</button>
+        <button type="button" class="cloud-tab" data-cloud-pass="blue">Blue Noise</button>
+      </div>
+      <label class="cloud-quick-field"><span>Layer preset</span><select id="quick-layer-preset"></select></label>
+      <label class="cloud-quick-field"><span>Color grade</span><select id="quick-grade"></select></label>
+      <label class="cloud-quick-field"><span>Render divider <b id="quick-render-scale-label">4</b></span><input id="quick-render-scale" type="range" min="1" max="8" step="1" value="4"></label>
+      <button type="button" id="quick-render-button">Render</button>
+      <button type="button" id="quick-rebake-button">Rebake</button>
+    </div>
+  `;
+
+  const anchor = $("p-preview") || $("p-cloudParams") || $("p-weather") || document.body.firstElementChild;
+  if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(dock, anchor);
+  else document.body.prepend(dock);
+}
+
+function cloneOptions(fromId, toId) {
+  const source = $(fromId);
+  const target = $(toId);
+  if (!source || !target) return;
+  const sourceOptions = Array.from(source.options || []);
+  const targetOptions = Array.from(target.options || []);
+  const sameOptions =
+    sourceOptions.length === targetOptions.length &&
+    sourceOptions.every((option, index) => targetOptions[index]?.value === option.value && targetOptions[index]?.textContent === option.textContent);
+  if (sameOptions) return;
+  const current = target.value || source.value;
+  target.innerHTML = "";
+  sourceOptions.forEach((option) => {
+    target.appendChild(option.cloneNode(true));
+  });
+  target.value = current || source.value;
+}
+
+function setFieldValue(id, value) {
+  const el = $(id);
+  if (!el) return;
+  if (el.type === "checkbox") el.checked = !!value;
+  else el.value = String(value);
+}
+
+function dispatchInput(id) {
+  const el = $(id);
+  if (!el) return;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function populateCloudQuickDock() {
+  cloneOptions("v-layer-preset", "quick-layer-preset");
+  cloneOptions("v-grade", "quick-grade");
+  setFieldValue("quick-layer-preset", $("v-layer-preset")?.value || preview.layerPreset || "custom");
+  setFieldValue("quick-grade", $("v-grade")?.value || preview.gradeStyle || 0);
+  const scale = String($("v-render-scale-divider")?.value || preview.renderScaleDivider || 4);
+  setFieldValue("quick-render-scale", scale);
+  const scaleLabel = $("quick-render-scale-label");
+  if (scaleLabel) scaleLabel.textContent = scale;
+}
+
+function updateCloudQuickDockState() {
+  const passValue = $("pass")?.value || "preview";
+  document.querySelectorAll("[data-cloud-pass]").forEach((button) => {
+    button.classList.toggle("active", button.getAttribute("data-cloud-pass") === passValue);
+  });
+  const status = $("cloud-quick-status");
+  if (status && status.dataset.manual !== "true") {
+    const layer = $("v-layer-preset")?.selectedOptions?.[0]?.textContent || "Custom";
+    const grade = $("v-grade")?.selectedOptions?.[0]?.textContent || "Grade";
+    const fps = $("fpsDisplay")?.textContent || "-";
+    status.textContent = `${layer} | ${grade} | ${fps}`;
+  }
+  populateCloudQuickDock();
+}
+
+function wireCloudQuickDock() {
+  const dock = $("cloud-quick-dock");
+  if (!dock || dock.dataset.wired === "true") return;
+  dock.dataset.wired = "true";
+
+  dock.querySelectorAll("[data-cloud-pass]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const pass = button.getAttribute("data-cloud-pass") || "preview";
+      const select = $("pass");
+      if (select) {
+        select.value = pass;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        showPanelsFor(pass);
+      }
+      updateCloudQuickDockState();
+      refreshDebugPreviews().catch(() => {});
+    });
+  });
+
+  $("quick-layer-preset")?.addEventListener("change", () => {
+    setFieldValue("v-layer-preset", $("quick-layer-preset").value);
+    $("v-layer-preset")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
+  $("quick-grade")?.addEventListener("change", () => {
+    setFieldValue("v-grade", $("quick-grade").value);
+    $("v-grade")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
+  $("quick-render-scale")?.addEventListener("input", () => {
+    const value = $("quick-render-scale").value;
+    setFieldValue("v-render-scale-divider", value);
+    const label = $("quick-render-scale-label");
+    if (label) label.textContent = value;
+    dispatchInput("v-render-scale-divider");
+  });
+  $("quick-render-button")?.addEventListener("click", () => $("render")?.click());
+  $("quick-rebake-button")?.addEventListener("click", () => $("rebake-all")?.click());
+  ["pass", "v-layer-preset", "v-grade", "v-render-scale-divider"].forEach((id) => {
+    $(id)?.addEventListener("change", updateCloudQuickDockState);
+    $(id)?.addEventListener("input", updateCloudQuickDockState);
+  });
+  updateCloudQuickDockState();
+}
+
+function hideLegacySliceControl() {
+  const legacySlice = $("slice");
+  if (!legacySlice) return;
+
+  legacySlice.min = "0";
+  legacySlice.max = String(Math.max(0, SHAPE_SIZE - 1));
+  legacySlice.step = "1";
+  legacySlice.tabIndex = -1;
+  legacySlice.setAttribute("aria-hidden", "true");
+  legacySlice.classList.add("cloud-legacy-slice-hidden");
+
+  const label = $("sliceLabel");
+  if (label) {
+    label.setAttribute("aria-hidden", "true");
+    label.classList.add("cloud-legacy-slice-hidden");
+  }
+
+  const wrappers = [
+    legacySlice.closest(".cloud-control-field"),
+    legacySlice.closest(".cloud-field"),
+    legacySlice.closest("label"),
+    label?.closest(".cloud-control-field"),
+    label?.closest(".cloud-field"),
+    label?.closest("label"),
+  ].filter(Boolean);
+
+  wrappers.forEach((wrapper) => {
+    wrapper.classList.add("cloud-legacy-slice-hidden");
+    wrapper.setAttribute("aria-hidden", "true");
+  });
+
+  hideEmptyLegacySliceContainers();
+}
+
+function hasNonLegacyInteractiveContent(el) {
+  if (!el) return false;
+  return Array.from(el.querySelectorAll("input, select, button, textarea, canvas")).some((node) => {
+    if (node.id === "slice" || node.id === "sliceLabel") return false;
+    if (node.classList?.contains("cloud-legacy-slice-hidden")) return false;
+    if (node.closest?.(".cloud-legacy-slice-hidden")) return false;
+    return true;
+  });
+}
+
+function hideEmptyLegacySliceContainers(root = document) {
+  const legacy = [$("slice"), $("sliceLabel")].filter(Boolean);
+  const containers = new Set();
+
+  legacy.forEach((node) => {
+    [
+      node.closest(".cloud-control-row"),
+      node.closest(".cloud-control-group-body"),
+      node.closest(".cloud-control-group"),
+      node.closest(".cloud-panel-fields"),
+    ].filter(Boolean).forEach((el) => containers.add(el));
+  });
+
+  Array.from(root.querySelectorAll(".cloud-control-row, .cloud-control-group-body, .cloud-control-group, .cloud-panel-fields")).forEach((el) => {
+    if (el.querySelector?.("#slice, #sliceLabel, label[for='slice']")) containers.add(el);
+  });
+
+  containers.forEach((el) => {
+    if (!el || hasNonLegacyInteractiveContent(el)) return;
+    el.classList.add("cloud-legacy-slice-hidden");
+    el.setAttribute("aria-hidden", "true");
+  });
+
+  hideLegacySliceTextBlocks(root);
+  hideEmptyControlShells(root);
+}
+
+function normalizedUiText(el) {
+  return (el?.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function isUiNodeHidden(node) {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+  if (node.hidden) return true;
+  if (node.getAttribute?.("aria-hidden") === "true") return true;
+  if (node.classList?.contains("cloud-legacy-slice-hidden")) return true;
+  if (node.classList?.contains("cloud-ui-hidden-fragment")) return true;
+  if (node.classList?.contains("cloud-empty-original-group")) return true;
+  if (node.classList?.contains("cloud-empty-original-shell")) return true;
+  const style = node.style || {};
+  return style.display === "none" || style.visibility === "hidden" || style.height === "0px";
+}
+
+function hasVisibleControlContent(el) {
+  if (!el) return false;
+  return Array.from(el.querySelectorAll("input, select, button, textarea, canvas")).some((node) => {
+    if (node.id === "slice" || node.id === "sliceLabel") return false;
+    if (node.closest?.("#slice, #sliceLabel, label[for='slice']")) return false;
+    if (isUiNodeHidden(node)) return false;
+    if (node.closest?.(".cloud-legacy-slice-hidden, .cloud-ui-hidden-fragment, .cloud-empty-original-group, .cloud-empty-original-shell")) return false;
+    return true;
+  });
+}
+
+function visibleUiTextWithoutControls(el) {
+  if (!el) return "";
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll([
+    "input",
+    "select",
+    "button",
+    "textarea",
+    "canvas",
+    "#slice",
+    "#sliceLabel",
+    "label[for='slice']",
+    ".cloud-legacy-slice-hidden",
+    ".cloud-ui-hidden-fragment",
+    ".cloud-empty-original-group",
+    ".cloud-empty-original-shell",
+    ".cloud-texture-slice-control",
+  ].join(",")).forEach((node) => node.remove());
+  return normalizedUiText(clone);
+}
+
+function isLegacySliceTextOnly(el) {
+  if (!el) return false;
+  if (el.closest?.(".cloud-texture-slice-control")) return false;
+  if (el.querySelector?.("#shape-z-slice, #detail-z-slice, .cloud-texture-slice-control")) return false;
+
+  const text = (visibleUiTextWithoutControls(el) || normalizedUiText(el)).toLowerCase();
+  if (!text || !text.includes("slice")) return false;
+  if (text.includes("slice jitter") || text.includes("shape z") || text.includes("detail z")) return false;
+  if (hasVisibleControlContent(el)) return false;
+
+  const compact = text.replace(/[0-9]+/g, "").replace(/[/:–—-]+/g, " ").replace(/\s+/g, " ").trim();
+  return compact === "slice" || compact === "slice slice" || compact === "slice slice slice";
+}
+
+function markHiddenShell(el) {
+  if (!el) return;
+  el.classList?.add("cloud-empty-original-shell");
+  el.classList?.add("cloud-legacy-slice-hidden");
+  el.setAttribute?.("aria-hidden", "true");
+  if (el.style) {
+    el.style.display = "none";
+    el.style.margin = "0";
+    el.style.padding = "0";
+    el.style.border = "0";
+    el.style.minHeight = "0";
+    el.style.height = "0";
+    el.style.overflow = "hidden";
+  }
+}
+
+function removeLegacySliceArtifacts(root = document) {
+  const scope = root || document;
+  [$("slice"), $("sliceLabel")].filter(Boolean).forEach((node) => {
+    markHiddenShell(node);
+    [
+      node.closest("label"),
+      node.closest(".cloud-field"),
+      node.closest(".cloud-control-field"),
+      node.closest(".cloud-control-row"),
+      node.closest(".cloud-control-group-body"),
+      node.closest(".cloud-control-group"),
+      node.closest(".cloud-panel-fields"),
+    ].filter(Boolean).forEach((el) => {
+      if (!hasVisibleControlContent(el) && isLegacySliceTextOnly(el)) markHiddenShell(el);
+    });
+  });
+
+  Array.from(scope.querySelectorAll("label[for='slice'], .cloud-control-group, .cloud-control-group-body, .cloud-control-row, .cloud-panel-fields, .cloud-field, label, section, div")).forEach((el) => {
+    if (el.id === "cloud-texture-preview-menu") return;
+    if (el.closest?.("#cloud-texture-preview-menu, .cloud-texture-slice-control")) return;
+    if (isLegacySliceTextOnly(el)) markHiddenShell(el);
+  });
+
+  hideEmptyControlShells(scope);
+}
+
+function hideLegacySliceTextBlocks(root = document) {
+  Array.from(root.querySelectorAll(".cloud-control-group, .cloud-control-row, .cloud-control-group-body, .cloud-panel-fields, .cloud-field, label")).forEach((el) => {
+    if (!isLegacySliceTextOnly(el)) return;
+    el.classList.add("cloud-legacy-slice-hidden");
+    el.setAttribute("aria-hidden", "true");
+  });
+}
+
+function hideEmptyControlShells(root = document) {
+  Array.from(root.querySelectorAll(".cloud-control-group, .cloud-control-group-body, .cloud-control-row, .cloud-panel-fields")).forEach((el) => {
+    if (el.classList?.contains("cloud-debug-preview-stack")) return;
+    if (el.closest?.("#cloud-texture-preview-menu, .cloud-texture-slice-control")) return;
+    if (hasVisibleControlContent(el)) return;
+
+    const visibleText = Array.from(el.childNodes).some((node) => {
+      if (node.nodeType === Node.TEXT_NODE) return !!node.textContent.trim();
+      if (node.nodeType !== Node.ELEMENT_NODE) return false;
+      if (isUiNodeHidden(node)) return false;
+      return !!visibleUiTextWithoutControls(node);
+    });
+
+    if (!visibleText || isLegacySliceTextOnly(el)) {
+      el.classList.add("cloud-empty-original-group");
+      el.setAttribute("aria-hidden", "true");
+      if (isLegacySliceTextOnly(el)) markHiddenShell(el);
+    }
+  });
+}
+
+function isLegacySliceUi(el) {
+  if (!el) return false;
+  if (el.id === "slice" || el.id === "sliceLabel") return true;
+  if (el.classList?.contains("cloud-legacy-slice-hidden")) return true;
+  return !!el.querySelector?.("#slice, #sliceLabel");
+}
+
+function debugCanvasFallbackSize(id) {
+  if (id === "dbg-weather" || id === "dbg-weather-g" || id === "dbg-weather-b") {
+    return [WEATHER_W, WEATHER_H];
+  }
+  if (id === "dbg-blue") return [BN_W, BN_H];
+  return [DBG_SIZE, DBG_SIZE];
+}
+
+function ensureDebugCanvasElement(id) {
+  let canvas = $(id);
+  if (canvas) return canvas;
+
+  const [width, height] = debugCanvasFallbackSize(id);
+  canvas = document.createElement("canvas");
+  canvas.id = id;
+  canvas.width = width;
+  canvas.height = height;
+  canvas.setAttribute("aria-label", id);
+
+  const host = $("p-blue") || $("p-weather") || $("p-shape128") || $("p-detail32") || document.body;
+  host.appendChild(canvas);
+  return canvas;
+}
+
+
+function installTextureSliceControls() {
+  hideLegacySliceControl();
+  ensureDebugCanvasElement("dbg-r");
+  ensureDebugCanvasElement("dbg-g");
+  ensureDebugCanvasElement("dbg-blue");
+  installTextureSliceControl("dbg-r", "shape-z-slice", "Shape Z", SHAPE_SIZE - 1, "shape");
+  installTextureSliceControl("dbg-g", "detail-z-slice", "Detail Z", DETAIL_SIZE - 1, "detail");
+  hideLegacySliceControl();
+}
+
+function installTextureSliceControl(canvasId, inputId, label, maxSlice, target) {
+  const canvas = $(canvasId);
+  if (!canvas || $(inputId)) return;
+
+  const control = document.createElement("label");
+  control.className = "cloud-texture-slice-control";
+  control.innerHTML = `
+    <span>${label} slice</span>
+    <output class="cloud-texture-slice-value" id="${inputId}-value">0 / ${maxSlice}</output>
+    <input id="${inputId}" type="range" min="0" max="${maxSlice}" step="1" value="0" aria-label="${label} slice">
+    <input id="${inputId}-number" type="number" min="0" max="${maxSlice}" step="1" value="0" aria-label="${label} numeric slice">
+  `;
+  canvas.insertAdjacentElement("afterend", control);
+
+  const range = $(inputId);
+  const number = $(`${inputId}-number`);
+  const output = $(`${inputId}-value`);
+  const apply = (raw) => {
+    const value = Math.max(0, Math.min(maxSlice, Number(raw) | 0));
+    range.value = String(value);
+    number.value = String(value);
+    if (output) output.textContent = `${value} / ${maxSlice}`;
+    if (worker) {
+      rpc("setDebugSlice", { target, slice: value }).catch((e) => console.warn("setDebugSlice failed", e));
+    }
+  };
+  range.addEventListener("input", () => apply(range.value));
+  range.addEventListener("change", () => apply(range.value));
+  number.addEventListener("input", () => apply(number.value));
+  number.addEventListener("change", () => apply(number.value));
+}
+
+function syncTextureSliceControlsFromShape(shapeSlice) {
+  const shape = Math.max(0, Math.min(SHAPE_SIZE - 1, shapeSlice | 0));
+  const detail = Math.max(0, Math.min(DETAIL_SIZE - 1, Math.floor((shape * DETAIL_SIZE) / Math.max(1, SHAPE_SIZE))));
+  [
+    ["shape-z-slice", shape, SHAPE_SIZE - 1],
+    ["shape-z-slice-number", shape, SHAPE_SIZE - 1],
+    ["detail-z-slice", detail, DETAIL_SIZE - 1],
+    ["detail-z-slice-number", detail, DETAIL_SIZE - 1],
+  ].forEach(([id, value]) => setFieldValue(id, value));
+  const sv = $("shape-z-slice-value");
+  if (sv) sv.textContent = `${shape} / ${SHAPE_SIZE - 1}`;
+  const dv = $("detail-z-slice-value");
+  if (dv) dv.textContent = `${detail} / ${DETAIL_SIZE - 1}`;
+}
+
+function addPanelHeading(panelId, title, hint) {
+  const panel = $(panelId);
+  if (!panel || panel.querySelector(":scope > .cloud-panel-heading")) return;
+  const heading = document.createElement("div");
+  heading.className = "cloud-panel-heading";
+  heading.innerHTML = `<strong>${title}</strong><span>${hint || ""}</span>`;
+  panel.prepend(heading);
+}
+
+function makeFieldsGrid(panel) {
+  if (!panel || panel.querySelector(":scope > .cloud-texture-panel")) return;
+  if (panel.querySelector(":scope > .cloud-panel-fields")) return;
+  const grid = document.createElement("div");
+  grid.className = "cloud-panel-fields";
+  const movable = Array.from(panel.children).filter((el) => {
+    if (isLegacySliceUi(el)) return false;
+    if (el.classList?.contains("cloud-panel-heading")) return false;
+    if (el.id && /^dbg-/.test(el.id)) return false;
+    if (el.classList?.contains("cloud-texture-slice-control")) return false;
+    if (el.id === "preview-look-controls") return true;
+    return el.tagName === "LABEL" || el.tagName === "BUTTON" || el.tagName === "SELECT" || el.tagName === "INPUT" || el.tagName === "TEXTAREA";
+  });
+  movable.forEach((el) => grid.appendChild(el));
+  panel.appendChild(grid);
+}
+
+function debugSliceControlForCanvas(canvasId) {
+  if (canvasId === "dbg-r") return $("shape-z-slice")?.closest(".cloud-texture-slice-control") || null;
+  if (canvasId === "dbg-g") return $("detail-z-slice")?.closest(".cloud-texture-slice-control") || null;
+  return null;
+}
+
+function insertAfterNode(reference, node) {
+  if (!reference?.parentElement || !node) return false;
+  reference.parentElement.insertBefore(node, reference.nextSibling);
+  return true;
+}
+
+function placePersistentTexturePreviewPanel(panel) {
+  if (!panel) return;
+  panel.classList.add("cloud-panel", "cloud-persistent-texture-previews");
+
+  const panels = ["p-preview", "p-cloudParams", "p-weather", "p-shape128", "p-detail32", "p-blue"]
+    .map((id) => $(id))
+    .filter((el) => el && el !== panel && el.parentElement);
+
+  const anchor = panels.reduce((latest, el) => {
+    if (!latest) return el;
+    return latest.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING ? el : latest;
+  }, null);
+
+  if (anchor?.parentElement) {
+    insertAfterNode(anchor, panel);
+    return;
+  }
+
+  const dock = $("cloud-quick-dock");
+  if (dock?.parentElement) {
+    insertAfterNode(dock, panel);
+    return;
+  }
+
+  document.body.appendChild(panel);
+}
+
+function createPersistentTexturePreviewPanel() {
+  let panel = $("cloud-texture-preview-menu");
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "cloud-texture-preview-menu";
+    panel.innerHTML = `
+      <div class="cloud-panel-heading">
+        <strong>Texture previews</strong>
+        <span>Shape, detail, and blue-noise debug textures</span>
+      </div>
+    `;
+  }
+
+  placePersistentTexturePreviewPanel(panel);
+  panel.style.display = "";
+  return panel;
+}
+
+function debugTexturePreviewHost() {
+  return createPersistentTexturePreviewPanel();
+}
+
+
+function ensureDebugPreviewStack(host) {
+  if (!host) return null;
+  let stack = host.querySelector(":scope > .cloud-debug-preview-stack");
+  if (stack) return stack;
+
+  stack = document.createElement("div");
+  stack.className = "cloud-debug-preview-stack";
+  const heading = host.querySelector(":scope > .cloud-panel-heading");
+  const fields = host.querySelector(":scope > .cloud-panel-fields");
+  if (fields) host.insertBefore(stack, fields);
+  else if (heading?.nextSibling) host.insertBefore(stack, heading.nextSibling);
+  else host.appendChild(stack);
+  return stack;
+}
+
+function nearbyDebugHeadingFor(canvas, title) {
+  const titleNeedle = String(title || "").split(" ")[0]?.toLowerCase() || "";
+  let el = canvas?.previousElementSibling || null;
+  while (el && el.classList?.contains("cloud-texture-slice-control")) el = el.previousElementSibling;
+  if (!el || el.querySelector?.("input, select, textarea, button, canvas")) return null;
+  const text = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (!text || (titleNeedle && !text.includes(titleNeedle))) return null;
+  return el;
+}
+
+function removeOrphanDebugHeadings(host) {
+  if (!host) return;
+  const needles = ["weather r", "weather g", "weather b", "weather map", "shape128", "shape volume", "detail32", "detail volume", "blue noise"];
+  Array.from(host.children).forEach((el) => {
+    if (el.classList?.contains("cloud-panel-heading")) return;
+    if (el.classList?.contains("cloud-debug-preview-stack")) return;
+    if (el.classList?.contains("cloud-texture-preview-card")) return;
+    if (isLegacySliceUi(el)) {
+      el.classList.add("cloud-legacy-slice-hidden");
+      return;
+    }
+    if (el.querySelector?.("input, select, textarea, button, canvas")) return;
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (needles.some((needle) => text.includes(needle))) el.remove();
+  });
+}
+
+function cleanupTexturePreviewSourcePanels() {
+  ["p-weather", "p-blue", "p-shape128", "p-detail32", "p-preview", "p-cloudParams"].forEach((id) => {
+    const panel = $(id);
+    if (!panel) return;
+    removeOrphanDebugHeadings(panel);
+    Array.from(panel.querySelectorAll(".cloud-texture-preview-card")).forEach((card) => {
+      if (!card.querySelector("canvas")) card.remove();
+    });
+    Array.from(panel.querySelectorAll(".cloud-legacy-slice-hidden")).forEach((el) => {
+      el.setAttribute("aria-hidden", "true");
+    });
+    hideLegacySliceTextBlocks(panel);
+    hideEmptyControlShells(panel);
+  });
+  hideLegacySliceControl();
+  hideEmptyLegacySliceContainers();
+  removeLegacySliceArtifacts(document);
+}
+
+
+function createTexturePreviewCard(canvasId, title, hint, stack) {
+  const canvas = ensureDebugCanvasElement(canvasId);
+  if (!canvas || !stack) return null;
+
+  const slice = debugSliceControlForCanvas(canvasId);
+  const heading = nearbyDebugHeadingFor(canvas, title);
+  const existing = canvas.closest(".cloud-texture-preview-card");
+  const card = existing || document.createElement("div");
+  card.className = "cloud-texture-preview-card";
+
+  let titleEl = card.querySelector(":scope > .cloud-texture-preview-title");
+  if (!titleEl) {
+    titleEl = document.createElement("div");
+    titleEl.className = "cloud-texture-preview-title";
+    card.insertBefore(titleEl, card.firstChild);
+  }
+  titleEl.innerHTML = `<span>${title}</span><small>${hint || ""}</small>`;
+
+  if (heading) heading.remove();
+  if (card.parentElement !== stack) stack.appendChild(card);
+  if (titleEl.parentElement !== card) card.insertBefore(titleEl, card.firstChild);
+  if (canvas.parentElement !== card) card.appendChild(canvas);
+  if (slice && slice.parentElement !== card) card.appendChild(slice);
+  return card;
+}
+
+
+function organizeDebugTexturePreviews() {
+  ensureDebugCanvasElement("dbg-weather");
+  ensureDebugCanvasElement("dbg-weather-g");
+  ensureDebugCanvasElement("dbg-weather-b");
+  ensureDebugCanvasElement("dbg-r");
+  ensureDebugCanvasElement("dbg-g");
+  ensureDebugCanvasElement("dbg-blue");
+
+  const host = debugTexturePreviewHost();
+  const stack = ensureDebugPreviewStack(host);
+  if (!host || !stack) return;
+
+  host.classList.add("cloud-debug-preview-panel");
+  createTexturePreviewCard("dbg-weather", "Weather R Map", `${WEATHER_W} x ${WEATHER_H}`, stack);
+  createTexturePreviewCard("dbg-weather-g", "Weather G Map", `${WEATHER_W} x ${WEATHER_H}`, stack);
+  createTexturePreviewCard("dbg-weather-b", "Weather B Map", `${WEATHER_W} x ${WEATHER_H}`, stack);
+  createTexturePreviewCard("dbg-r", "Shape128 - R channel", `Z slice 0-${SHAPE_SIZE - 1}`, stack);
+  createTexturePreviewCard("dbg-g", "Detail32 - R channel", `Z slice 0-${DETAIL_SIZE - 1}`, stack);
+  createTexturePreviewCard("dbg-blue", "Blue Noise 2D", `${BN_W} x ${BN_H}`, stack);
+  cleanupTexturePreviewSourcePanels();
+  removeOrphanDebugHeadings(host);
+  hideEmptyLegacySliceContainers();
+}
+
+function organizeCloudPanels() {
+  normalizeAllCloudControls();
+  addPanelHeading("p-preview", "Render", "Camera, box, lighting, and performance controls");
+  addPanelHeading("p-cloudParams", "Cloud tuning", "Density, lighting, anvil, rain shelf, and march controls");
+  addPanelHeading("p-weather", "Weather texture", "Large scale coverage masks");
+  addPanelHeading("p-shape128", "Shape 3D texture", "Base cloud volume controls");
+  addPanelHeading("p-detail32", "Detail 3D texture", "Small scale erosion volume controls");
+  addPanelHeading("p-blue", "Blue noise", "Dither texture controls and generated noise source");
+
+  organizeDebugTexturePreviews();
+  ["p-preview", "p-cloudParams", "p-weather", "p-shape128", "p-detail32", "p-blue"].forEach((id) => makeFieldsGrid($(id)));
+  cleanupTexturePreviewSourcePanels();
+  removeLegacySliceArtifacts(document);
+}
+
+function controlLabelTextFromId(id) {
+  return String(id || "")
+    .replace(/^v-/, "")
+    .replace(/^p-/, "")
+    .replace(/^t-/, "")
+    .replace(/^we-/, "")
+    .replace(/^sh-/, "")
+    .replace(/^de-/, "")
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function textFromLooseLabel(label) {
+  if (!label) return "";
+  const clone = label.cloneNode(true);
+  clone.querySelectorAll("input, select, textarea, button").forEach((node) => node.remove());
+  return clone.textContent.trim();
+}
+
+function ensureControlLabelWrapper(id, labelText) {
+  const el = $(id);
+  if (!el) return null;
+
+  let wrapper = el.closest("label");
+  let text = labelText || textFromLooseLabel(wrapper) || "";
+
+  if (!wrapper) {
+    const looseFor = document.querySelector(`label[for="${id}"]`);
+    const loosePrev = el.previousElementSibling?.tagName === "LABEL" ? el.previousElementSibling : null;
+    const looseLabel = looseFor || loosePrev;
+    text = text || textFromLooseLabel(looseLabel) || controlLabelTextFromId(id);
+
+    wrapper = document.createElement("label");
+    wrapper.className = "cloud-field cloud-control-field";
+    if (looseLabel && looseLabel.parentElement) {
+      looseLabel.parentElement.insertBefore(wrapper, looseLabel);
+      looseLabel.remove();
+    } else if (el.parentElement) {
+      el.parentElement.insertBefore(wrapper, el);
+    }
+    wrapper.appendChild(el);
+  }
+
+  wrapper.classList.add("cloud-field", "cloud-control-field");
+  wrapper.dataset.controlId = id;
+  wrapper.removeAttribute("style");
+
+  let span = Array.from(wrapper.children).find((child) => child.tagName === "SPAN" && !child.contains(el));
+  if (!span) {
+    span = document.createElement("span");
+    wrapper.insertBefore(span, wrapper.firstChild);
+  }
+  Array.from(wrapper.childNodes).forEach((node) => {
+    if (node !== span && node.nodeType === Node.TEXT_NODE && node.textContent.trim()) node.remove();
+  });
+  span.textContent = text || textFromLooseLabel(wrapper) || controlLabelTextFromId(id);
+
+  if (el.type === "checkbox") wrapper.classList.add("cloud-checkbox-field");
+  return wrapper;
+}
+
+function normalizePanelLooseControls(panel) {
+  if (!panel) return;
+  Array.from(panel.querySelectorAll("input[id], select[id], textarea[id]")).forEach((el) => {
+    if (isLegacySliceUi(el)) {
+      hideLegacySliceControl();
+      return;
+    }
+    if (el.id && !el.closest(".cloud-texture-slice-control")) ensureControlLabelWrapper(el.id);
+  });
+  Array.from(panel.querySelectorAll("label")).forEach((label) => {
+    if (!label.querySelector("input, select, textarea, button")) label.classList.add("cloud-orphan-label");
+  });
+}
+
+function normalizeAllCloudControls() {
+  ["p-preview", "p-cloudParams", "p-weather", "p-shape128", "p-detail32", "p-blue"].forEach((id) => normalizePanelLooseControls($(id)));
+}
+
+function controlElementForId(id, labelText) {
+  return ensureControlLabelWrapper(id, labelText);
+}
+
+function makeControlRow(row) {
+  const fields = (row.fields || []).map((field) => {
+    const spec = typeof field === "string" ? { id: field } : field;
+    return controlElementForId(spec.id, spec.label);
+  }).filter(Boolean);
+  if (!fields.length) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "cloud-control-row";
+  if (row.label) {
+    const label = document.createElement("div");
+    label.className = "cloud-control-row-label";
+    label.textContent = row.label;
+    wrap.appendChild(label);
+  } else {
+    wrap.classList.add("cloud-control-row-no-label");
+  }
+
+  const grid = document.createElement("div");
+  const columns = row.columns || Math.min(3, fields.length || 1);
+  grid.className = `cloud-control-row-fields cloud-control-grid-${columns}`;
+  fields.forEach((field) => grid.appendChild(field));
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function makeControlGroup(title, rows, options = {}) {
+  const group = document.createElement("section");
+  group.className = "cloud-control-group";
+  if (options.dense) group.classList.add("cloud-control-group-dense");
+
+  const heading = document.createElement("div");
+  heading.className = "cloud-control-group-title";
+  heading.innerHTML = `<span>${title}</span>${options.hint ? `<span class="cloud-control-group-hint">${options.hint}</span>` : ""}`;
+  group.appendChild(heading);
+
+  const body = document.createElement("div");
+  body.className = "cloud-control-group-body";
+  rows.forEach((row) => {
+    const rowEl = makeControlRow(row);
+    if (rowEl) body.appendChild(rowEl);
+  });
+  if (!body.children.length) return null;
+  group.appendChild(body);
+  return group;
+}
+
+function appendControlGroup(panel, title, rows, options) {
+  if (!panel || panel.querySelector(`[data-cloud-control-group="${title}"]`)) return;
+  const group = makeControlGroup(title, rows, options);
+  if (!group) return;
+  group.dataset.cloudControlGroup = title;
+  panel.appendChild(group);
+}
+
+function hideOriginalControlFragments(panel) {
+  if (!panel) return;
+  Array.from(panel.querySelectorAll(".cloud-panel-fields, #preview-look-controls")).forEach((el) => {
+    if (!el.querySelector("input, select, button, textarea, canvas")) el.classList.add("cloud-empty-original-group");
+  });
+  Array.from(panel.children).forEach((el) => {
+    if (isLegacySliceUi(el) || isLegacySliceTextOnly(el)) {
+      el.classList?.add("cloud-legacy-slice-hidden");
+      el.setAttribute?.("aria-hidden", "true");
+      return;
+    }
+    if (el.classList?.contains("cloud-panel-heading")) return;
+    if (el.classList?.contains("cloud-control-group")) return;
+    if (el.classList?.contains("cloud-texture-panel")) return;
+    if (el.id === "cloud-quick-dock") return;
+    if (el.querySelector?.("input, select, button, textarea, canvas")) return;
+    el.classList?.add("cloud-ui-hidden-fragment");
+  });
+  Array.from(panel.querySelectorAll(".cloud-orphan-label")).forEach((label) => label.classList.add("cloud-ui-hidden-fragment"));
+  hideLegacySliceTextBlocks(panel);
+  hideEmptyControlShells(panel);
+}
+
+function rgbRow(label, prefix, labels = ["R", "G", "B"]) {
+  return {
+    label,
+    columns: 3,
+    fields: [
+      { id: `${prefix}-r`, label: labels[0] },
+      { id: `${prefix}-g`, label: labels[1] },
+      { id: `${prefix}-b`, label: labels[2] },
+    ],
+  };
+}
+
+function xyzRow(label, prefix, labels = ["X", "Y", "Z"]) {
+  return {
+    label,
+    columns: 3,
+    fields: [
+      { id: `${prefix}-x`, label: labels[0] },
+      { id: `${prefix}-y`, label: labels[1] },
+      { id: `${prefix}-z`, label: labels[2] },
+    ],
+  };
+}
+
+function organizeSidebarControlGroups() {
+  normalizeAllCloudControls();
+
+  const previewPanel = $("p-preview");
+  appendControlGroup(previewPanel, "Scene", [
+    { label: "Preset", columns: 1, fields: [{ id: "v-layer-preset", label: "Layer" }] },
+    { label: "Grade", columns: 1, fields: [{ id: "v-grade", label: "Color" }] },
+    { label: "Render", columns: 2, fields: [{ id: "v-render-scale-divider", label: "Divider" }, { id: "v-temporal-cell-rate", label: "Temporal" }] },
+  ]);
+  appendControlGroup(previewPanel, "Camera", [
+    { label: "Cam", columns: 3, fields: [{ id: "v-cx", label: "X" }, { id: "v-cy", label: "Y" }, { id: "v-cz", label: "Z" }] },
+    { label: "Look", columns: 3, fields: [{ id: "v-yaw", label: "Yaw" }, { id: "v-pitch", label: "Pitch" }, { id: "v-fov", label: "FOV" }] },
+  ], { hint: "world camera" });
+  appendControlGroup(previewPanel, "Cloud Box", [
+    { label: "Center", columns: 3, fields: [{ id: "v-box-cx", label: "X" }, { id: "v-box-cy", label: "Y" }, { id: "v-box-cz", label: "Z" }] },
+    { label: "Half", columns: 3, fields: [{ id: "v-box-hx", label: "X" }, { id: "v-box-hy", label: "Y" }, { id: "v-box-hz", label: "Z" }] },
+    { label: "Map", columns: 1, fields: [{ id: "v-box-uv", label: "UV scale" }] },
+  ]);
+  appendControlGroup(previewPanel, "Sun and Sky", [
+    { label: "Sun", columns: 3, fields: [{ id: "c-az", label: "Az" }, { id: "c-el", label: "El" }, { id: "c-bloom", label: "Bloom" }] },
+    rgbRow("Sky", "v-s", ["R", "G", "B"]),
+    rgbRow("Sun tint", "v-sun", ["R", "G", "B"]),
+  ]);
+  appendControlGroup(previewPanel, "Resolve", [
+    { label: "Image", columns: 3, fields: [{ id: "v-exposure", label: "Exposure" }, { id: "v-alpha-floor", label: "Alpha floor" }, { id: "t-minOutputAlpha", label: "Min alpha" }] },
+    { label: "Contrast", columns: 3, fields: [{ id: "v-shadow-strength", label: "Strength" }, { id: "v-shadow-edge", label: "Edge" }, { id: "v-shadow-darkness", label: "Dark" }] },
+    { label: "Grade", columns: 3, fields: [{ id: "v-color-lift", label: "Lift" }, { id: "v-saturation", label: "Sat" }, { id: "v-mid-lift", label: "Mid" }] },
+    { label: "Rim", columns: 3, fields: [{ id: "v-rim-strength", label: "Rim" }, { id: "v-sun-bleed", label: "Bleed" }, { id: "v-god-rays-enabled", label: "God rays" }] },
+    { label: "Rays", columns: 3, fields: [{ id: "v-god-ray-strength", label: "Strength" }, { id: "v-god-ray-length", label: "Length" }, { id: "v-god-ray-falloff", label: "Falloff" }] },
+  ]);
+  appendControlGroup(previewPanel, "Color", [
+    rgbRow("Trans", "v-trans"),
+    rgbRow("Front", "v-front"),
+    rgbRow("Vol shad", "v-vol-shad"),
+    rgbRow("Lit", "v-lit"),
+    rgbRow("Shadow", "v-shad"),
+    rgbRow("Edge", "v-edge"),
+  ], { hint: "RGB triples" });
+  hideOriginalControlFragments(previewPanel);
+
+  const tuningPanel = $("p-cloudParams");
+  appendControlGroup(tuningPanel, "Density", [
+    { label: "Body", columns: 3, fields: [{ id: "p-coverage", label: "Coverage" }, { id: "p-density", label: "Density" }, { id: "p-anvil", label: "Anvil" }] },
+    { label: "Shell", columns: 3, fields: [{ id: "t-fluffFactor", label: "Fluff" }, { id: "t-baseJitter", label: "Base" }, { id: "t-topJitter", label: "Top" }] },
+    { label: "Alpha", columns: 3, fields: [{ id: "t-alphaCutoff", label: "Cutoff" }, { id: "t-alphaBoostThreshold", label: "Boost min" }, { id: "t-alphaBoostAmount", label: "Boost add" }] },
+  ]);
+  appendControlGroup(tuningPanel, "Lighting", [
+    { label: "Scatter", columns: 3, fields: [{ id: "p-ins", label: "In" }, { id: "p-outs", label: "Out" }, { id: "p-ivo", label: "Mix" }] },
+    { label: "Silver", columns: 3, fields: [{ id: "p-sI", label: "Int" }, { id: "p-sE", label: "Exp" }, { id: "p-beer", label: "Beer" }] },
+    { label: "Ambient", columns: 3, fields: [{ id: "p-ambMin", label: "Min" }, { id: "p-ambOut", label: "Out" }, { id: "p-clamp", label: "Clamp" }] },
+    { label: "Direct", columns: 2, fields: [{ id: "t-directLightBlend", label: "Blend" }, { id: "t-directLightBoost", label: "Boost" }] },
+  ]);
+  appendControlGroup(tuningPanel, "Vertical Form", [
+    { label: "Layer", columns: 3, fields: [{ id: "t-verticalTextureHomogeneity", label: "Homo" }, { id: "t-verticalLayerDecorrelation", label: "Decorr" }, { id: "t-sliceJitterStrength", label: "Jitter" }] },
+    { label: "Steps", columns: 2, fields: [{ id: "t-verticalStepBoost", label: "March" }, { id: "t-verticalLightingStepBoost", label: "Light" }] },
+  ]);
+  appendControlGroup(tuningPanel, "March", [
+    { label: "Steps", columns: 3, fields: [{ id: "t-maxSteps", label: "Max" }, { id: "t-minStep", label: "Min" }, { id: "t-maxStep", label: "Step" }] },
+    { label: "Far", columns: 3, fields: [{ id: "t-farStepMult", label: "Mult" }, { id: "t-farStart", label: "Start" }, { id: "t-farFull", label: "Full" }] },
+    { label: "LOD", columns: 2, fields: [{ id: "t-lodBiasWeather", label: "Weather" }, { id: "t-lodBlendThreshold", label: "Blend" }] },
+    { label: "Jitter", columns: 2, fields: [{ id: "t-stepJitter", label: "Step" }, { id: "t-phaseJitter", label: "Phase" }] },
+    { label: "Near", columns: 2, fields: [{ id: "t-nearFluffDist", label: "Dist" }, { id: "t-nearDensityMult", label: "Density" }] },
+  ]);
+  appendControlGroup(tuningPanel, "Lighting Performance", [
+    { label: "Sun", columns: 2, fields: [{ id: "t-sunSteps", label: "Steps" }, { id: "t-sunStride", label: "Stride" }] },
+    { label: "Smooth", columns: 2, fields: [{ id: "t-raySmoothDens", label: "Density" }, { id: "t-raySmoothSun", label: "Sun" }] },
+    { label: "Occlusion", columns: 3, fields: [{ id: "t-frontOcclusionStrength", label: "Strength" }, { id: "t-frontOcclusionAlpha", label: "Alpha" }, { id: "t-frontOcclusionStepBoost", label: "Boost" }] },
+  ]);
+  hideOriginalControlFragments(tuningPanel);
+
+  const weatherPanel = $("p-weather");
+  appendControlGroup(weatherPanel, "Weather R", [
+    { label: "Mode", columns: 1, fields: [{ id: "we-mode", label: "Mode" }] },
+    { label: "Seed", columns: 2, fields: [{ id: "we-seed", label: "Seed" }, { id: "we-seedAngle", label: "Angle" }] },
+    { label: "FBM", columns: 3, fields: [{ id: "we-zoom", label: "Zoom" }, { id: "we-freq", label: "Freq" }, { id: "we-oct", label: "Oct" }] },
+    { label: "Shape", columns: 3, fields: [{ id: "we-lac", label: "Lac" }, { id: "we-gain", label: "Gain" }, { id: "we-bias", label: "Bias" }] },
+    { label: "Cut", columns: 3, fields: [{ id: "we-scale", label: "Scale" }, { id: "we-thr", label: "Thr" }, { id: "we-edgeK", label: "Edge" }] },
+    { label: "Warp", columns: 2, fields: [{ id: "we-voroMode", label: "Voro" }, { id: "we-warpAmp", label: "Warp" }] },
+  ]);
+  appendControlGroup(weatherPanel, "Billow G", [
+    { label: "Use", columns: 1, fields: [{ id: "we-billow-enable", label: "Enabled" }] },
+    { label: "Seed", columns: 2, fields: [{ id: "we-billow-seed", label: "Seed" }, { id: "we-billow-seedAngle", label: "Angle" }] },
+    { label: "FBM", columns: 3, fields: [{ id: "we-billow-zoom", label: "Zoom" }, { id: "we-billow-freq", label: "Freq" }, { id: "we-billow-oct", label: "Oct" }] },
+    { label: "Shape", columns: 3, fields: [{ id: "we-billow-lac", label: "Lac" }, { id: "we-billow-gain", label: "Gain" }, { id: "we-billow-thr", label: "Thr" }] },
+    { label: "Warp", columns: 3, fields: [{ id: "we-billow-edgeK", label: "Edge" }, { id: "we-billow-voroMode", label: "Voro" }, { id: "we-billow-warpAmp", label: "Warp" }] },
+  ]);
+  appendControlGroup(weatherPanel, "Band B", [
+    { label: "Use", columns: 1, fields: [{ id: "we-bandb-enable", label: "Enabled" }] },
+    { label: "Seed", columns: 2, fields: [{ id: "we-bandb-seed", label: "Seed" }, { id: "we-bandb-seedAngle", label: "Angle" }] },
+    { label: "FBM", columns: 3, fields: [{ id: "we-bandb-zoom", label: "Zoom" }, { id: "we-bandb-freq", label: "Freq" }, { id: "we-bandb-oct", label: "Oct" }] },
+    { label: "Shape", columns: 3, fields: [{ id: "we-bandb-lac", label: "Lac" }, { id: "we-bandb-gain", label: "Gain" }, { id: "we-bandb-thr", label: "Thr" }] },
+    { label: "Warp", columns: 3, fields: [{ id: "we-bandb-edgeK", label: "Edge" }, { id: "we-bandb-voroMode", label: "Voro" }, { id: "we-bandb-warpAmp", label: "Warp" }] },
+  ]);
+  appendControlGroup(weatherPanel, "Weather Transform", [
+    xyzRow("Axis", "we-axis"),
+    xyzRow("Offset", "we-pos"),
+    xyzRow("Velocity", "we-vel"),
+    { label: "Time", columns: 1, fields: [{ id: "we-time", label: "Time" }] },
+  ]);
+  hideOriginalControlFragments(weatherPanel);
+
+  const shapePanel = $("p-shape128")?.querySelector(".cloud-texture-controls") || $("p-shape128");
+  appendControlGroup(shapePanel, "Shape Modes", [
+    { label: "Base", columns: 2, fields: [{ id: "sh-mode-a", label: "A" }, { id: "sh-mode-b", label: "B" }] },
+    { label: "Bands", columns: 3, fields: [{ id: "sh-mode-2", label: "2" }, { id: "sh-mode-3", label: "3" }, { id: "sh-mode-4", label: "4" }] },
+  ]);
+  appendControlGroup(shapePanel, "Shape Noise", [
+    { label: "Seed", columns: 2, fields: [{ id: "sh-seed", label: "Seed" }, { id: "sh-seedAngle", label: "Angle" }] },
+    { label: "FBM", columns: 3, fields: [{ id: "sh-zoom", label: "Zoom" }, { id: "sh-freq", label: "Freq" }, { id: "sh-oct", label: "Oct" }] },
+    { label: "Shape", columns: 3, fields: [{ id: "sh-lac", label: "Lac" }, { id: "sh-gain", label: "Gain" }, { id: "sh-thr", label: "Thr" }] },
+    { label: "Warp", columns: 3, fields: [{ id: "sh-edgeK", label: "Edge" }, { id: "sh-voroMode", label: "Voro" }, { id: "sh-warpAmp", label: "Warp" }] },
+  ]);
+  appendControlGroup(shapePanel, "Shape Transform", [
+    { label: "Map", columns: 2, fields: [{ id: "sh-scale", label: "Scale" }, { id: "sh-bias", label: "Bias" }] },
+    xyzRow("Axis", "sh-axis"),
+    xyzRow("Offset", "sh-pos"),
+    xyzRow("Velocity", "sh-vel"),
+    { label: "Time", columns: 1, fields: [{ id: "sh-time", label: "Time" }] },
+  ]);
+  hideOriginalControlFragments(shapePanel);
+
+  const detailPanel = $("p-detail32")?.querySelector(".cloud-texture-controls") || $("p-detail32");
+  appendControlGroup(detailPanel, "Detail Modes", [
+    { label: "Modes", columns: 3, fields: [{ id: "de-mode-1", label: "1" }, { id: "de-mode-2", label: "2" }, { id: "de-mode-3", label: "3" }] },
+  ]);
+  appendControlGroup(detailPanel, "Detail Noise", [
+    { label: "Seed", columns: 2, fields: [{ id: "de-seed", label: "Seed" }, { id: "de-seedAngle", label: "Angle" }] },
+    { label: "FBM", columns: 3, fields: [{ id: "de-zoom", label: "Zoom" }, { id: "de-freq", label: "Freq" }, { id: "de-oct", label: "Oct" }] },
+    { label: "Shape", columns: 3, fields: [{ id: "de-lac", label: "Lac" }, { id: "de-gain", label: "Gain" }, { id: "de-thr", label: "Thr" }] },
+    { label: "Warp", columns: 3, fields: [{ id: "de-edgeK", label: "Edge" }, { id: "de-voroMode", label: "Voro" }, { id: "de-warpAmp", label: "Warp" }] },
+  ]);
+  appendControlGroup(detailPanel, "Detail Transform", [
+    { label: "Map", columns: 2, fields: [{ id: "de-scale", label: "Scale" }, { id: "de-bias", label: "Bias" }] },
+    xyzRow("Axis", "de-axis"),
+    xyzRow("Offset", "de-pos"),
+    xyzRow("Velocity", "de-vel"),
+    { label: "Time", columns: 1, fields: [{ id: "de-time", label: "Time" }] },
+  ]);
+  hideOriginalControlFragments(detailPanel);
+  organizeDebugTexturePreviews();
+  cleanupTexturePreviewSourcePanels();
+}
+
+let _debugRefreshRafPending = false;
+let _debugRefreshQueuedKind = "all";
+
+function refreshDebugPreviewsSoon(kind = "all") {
+  if (kind === "all" || !_debugRefreshQueuedKind) _debugRefreshQueuedKind = "all";
+  else if (_debugRefreshQueuedKind !== "all") _debugRefreshQueuedKind = kind;
+  if (_debugRefreshRafPending) return;
+  _debugRefreshRafPending = true;
+  requestAnimationFrame(() => {
+    _debugRefreshRafPending = false;
+    const queuedKind = _debugRefreshQueuedKind || "all";
+    _debugRefreshQueuedKind = "all";
+    sendSizes();
+    flushQueuedResize()
+      .catch(() => {})
+      .finally(() => refreshDebugPreviews(queuedKind).catch(() => {}));
+  });
+}
+
 const $ = (id) => document.getElementById(id);
 const num = (id, fallback) => {
   const el = $(id);
@@ -561,7 +2485,7 @@ const CLOUD_LAYER_PRESETS = {
     values: {
       "p-coverage": 1.0,
       "p-density": 12.5,
-      "p-anvil": 0.72,
+      "p-anvil": 0.5,
       "p-beer": 7.2,
       "p-sI": 13.5,
       "p-sE": 14.0,
@@ -572,6 +2496,11 @@ const CLOUD_LAYER_PRESETS = {
       "t-verticalLayerDecorrelation": 0.70,
       "t-sliceJitterStrength": 0.08,
       "t-alphaCutoff": 0.955,
+      "t-sunSteps": 4,
+      "t-sunStride": 4,
+      "t-frontOcclusionStrength": 0.82,
+      "t-frontOcclusionAlpha": 0.58,
+      "t-frontOcclusionStepBoost": 3.6,
       "t-alphaBoostThreshold": 0.18,
       "t-alphaBoostAmount": 0.22,
       "we-zoom": 3.1,
@@ -637,7 +2566,7 @@ function injectPreviewLookControls() {
           <option value="9">Ash Gold</option>
           <option value="10">Rose Storm</option>
           <option value="11">Deep Ocean</option>
-          <option value="12">Natural White</option>
+          <option value="12">Natural Daylight</option>
           <option value="13">Silver Daylight</option>
           <option value="14">Soft Overcast</option>
           <option value="15">RGB Spectrum</option>
@@ -645,7 +2574,8 @@ function injectPreviewLookControls() {
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider / Coarse Factor</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Compute coarse factor for still and animated renders. 1 = full resolution, 4 is the default coarse compute scale, then upsampled to the full presentation canvas."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Composite Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Step Boost</span><input id="t-frontOcclusionStepBoost" type="number" step="0.05" min="1" max="8" title="Maximum behind-front-cloud step multiplier."></label>
@@ -655,7 +2585,6 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Direct Light Boost</span><input id="t-directLightBoost" type="number" step="0.01" min="0" max="2" title="Brightness boost for the direct-light profile used when looking at sunlit cloud tops and faces."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Min</span><input id="t-alphaBoostThreshold" type="number" step="0.01" min="0" max="1" title="Only cloud pixels with final alpha above this threshold receive the additive end-stage alpha boost."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Add</span><input id="t-alphaBoostAmount" type="number" step="0.01" min="0" max="1" title="Additive alpha applied after cloud lighting and transmission, ramped from the Alpha Boost Min threshold upward."></label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Min Cutoff</span><input id="t-alphaMinCutoff" type="number" step="0.005" min="0" max="0.5" title="Final cloud alpha below this threshold is faded out inside the cloud buffer itself before temporal history and sky compositing. Use this to remove barely translucent wisps and horizontal haze cuts."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="5"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Edge</span><input id="v-shadow-edge" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Darkness</span><input id="v-shadow-darkness" type="number" step="0.01" min="0" max="6"></label>
@@ -999,54 +2928,54 @@ const GRADE_PRESETS = {
     godRayFalloff: 2.14,
   },
   12: {
-    sky: [0.66, 0.80, 1.00],
+    sky: [0.46, 0.70, 1.16],
     sunBloom: 0.22,
-    sunTint: [1.00, 0.99, 0.97],
-    transmissiveLightTint: [1.04, 1.00, 1.14],
-    frontLightTint: [1.26, 1.20, 1.14],
-    volumeShadowTint: [0.62, 0.72, 0.92],
+    sunTint: [0.98, 1.00, 1.03],
+    transmissiveLightTint: [0.92, 1.00, 1.22],
+    frontLightTint: [1.14, 1.20, 1.32],
+    volumeShadowTint: [0.50, 0.68, 1.00],
     directLightBlend: 0.86,
-    directLightBoost: 0.72,
-    cloudLitTint: [1.16, 1.12, 1.08],
-    cloudShadowTint: [0.74, 0.82, 0.96],
-    edgeTint: [1.12, 1.08, 1.04],
-    styleShadowStrength: 1.82,
+    directLightBoost: 0.76,
+    cloudLitTint: [1.06, 1.10, 1.18],
+    cloudShadowTint: [0.60, 0.76, 1.08],
+    edgeTint: [1.04, 1.08, 1.18],
+    styleShadowStrength: 1.74,
     styleShadowEdge: 0.30,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.22,
-    styleSaturation: 0.96,
+    styleColorLift: 1.20,
+    styleSaturation: 1.08,
     styleRimStrength: 1.18,
-    styleSunBleed: 0.38,
+    styleSunBleed: 0.40,
     styleMidLift: 1.16,
     godRaysEnabled: true,
-    godRayStrength: 0.42,
+    godRayStrength: 0.44,
     godRayLength: 0.98,
-    godRayFalloff: 1.66,
+    godRayFalloff: 1.62,
   },
   13: {
-    sky: [0.60, 0.74, 0.98],
+    sky: [0.40, 0.66, 1.18],
     sunBloom: 0.26,
-    sunTint: [1.02, 1.00, 0.98],
-    transmissiveLightTint: [1.00, 1.04, 1.16],
-    frontLightTint: [1.30, 1.28, 1.24],
-    volumeShadowTint: [0.56, 0.66, 0.84],
+    sunTint: [0.98, 1.00, 1.04],
+    transmissiveLightTint: [0.88, 1.04, 1.28],
+    frontLightTint: [1.16, 1.24, 1.42],
+    volumeShadowTint: [0.44, 0.62, 0.98],
     directLightBlend: 0.90,
-    directLightBoost: 0.82,
-    cloudLitTint: [1.22, 1.22, 1.20],
-    cloudShadowTint: [0.68, 0.78, 0.92],
-    edgeTint: [1.16, 1.16, 1.14],
-    styleShadowStrength: 1.58,
+    directLightBoost: 0.86,
+    cloudLitTint: [1.10, 1.16, 1.28],
+    cloudShadowTint: [0.56, 0.72, 1.08],
+    edgeTint: [1.08, 1.14, 1.26],
+    styleShadowStrength: 1.54,
     styleShadowEdge: 0.24,
     styleShadowDarkness: 0.0,
     styleColorLift: 1.28,
-    styleSaturation: 0.90,
-    styleRimStrength: 1.24,
-    styleSunBleed: 0.46,
+    styleSaturation: 1.06,
+    styleRimStrength: 1.28,
+    styleSunBleed: 0.48,
     styleMidLift: 1.22,
     godRaysEnabled: true,
-    godRayStrength: 0.48,
+    godRayStrength: 0.50,
     godRayLength: 1.02,
-    godRayFalloff: 1.50,
+    godRayFalloff: 1.48,
   },
   14: {
     sky: [0.70, 0.76, 0.94],
@@ -1074,29 +3003,29 @@ const GRADE_PRESETS = {
     godRayFalloff: 1.86,
   },
   15: {
-    sky: [0.48, 0.56, 0.82],
-    sunBloom: 0.52,
-    sunTint: [1.00, 1.00, 1.00],
-    transmissiveLightTint: [0.22, 1.04, 0.76],
-    frontLightTint: [1.48, 0.42, 0.84],
-    volumeShadowTint: [0.16, 0.24, 1.08],
-    directLightBlend: 0.92,
-    directLightBoost: 1.08,
-    cloudLitTint: [1.28, 0.72, 0.96],
-    cloudShadowTint: [0.18, 0.22, 0.86],
-    edgeTint: [1.08, 0.96, 1.42],
-    styleShadowStrength: 1.44,
-    styleShadowEdge: 0.22,
+    sky: [0.18, 0.24, 0.72],
+    sunBloom: 0.50,
+    sunTint: [1.08, 1.00, 0.94],
+    transmissiveLightTint: [0.10, 1.34, 0.28],
+    frontLightTint: [1.78, 0.22, 0.18],
+    volumeShadowTint: [0.08, 0.18, 1.34],
+    directLightBlend: 0.72,
+    directLightBoost: 0.98,
+    cloudLitTint: [1.52, 0.28, 0.24],
+    cloudShadowTint: [0.08, 0.16, 1.16],
+    edgeTint: [0.20, 1.42, 0.34],
+    styleShadowStrength: 1.62,
+    styleShadowEdge: 0.26,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.22,
-    styleSaturation: 1.82,
-    styleRimStrength: 1.34,
-    styleSunBleed: 0.78,
-    styleMidLift: 1.08,
+    styleColorLift: 1.18,
+    styleSaturation: 2.08,
+    styleRimStrength: 1.38,
+    styleSunBleed: 0.74,
+    styleMidLift: 0.98,
     godRaysEnabled: true,
-    godRayStrength: 0.54,
+    godRayStrength: 0.52,
     godRayLength: 1.04,
-    godRayFalloff: 1.42,
+    godRayFalloff: 1.38,
   },
 };
 
@@ -1139,11 +3068,6 @@ function lightingProfileForGrade(style) {
   };
 }
 
-function setFieldValue(id, val) {
-  const el = $(id);
-  if (!el) return;
-  el.value = `${val}`;
-}
 
 function setControlValue(id, val) {
   const el = $(id);
@@ -1214,7 +3138,9 @@ async function applyCloudLayerPreset(key, render = true) {
     };
     useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
+    payload.skipFinalDebug = true;
     await runFrameLatest(payload);
+    await refreshDebugPreviews();
   } finally {
     setBusy(false);
   }
@@ -1225,7 +3151,7 @@ function syncPreviewLookInputs() {
   setFieldValue("v-grade", preview.gradeStyle);
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
   setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
-  setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.085);
+  setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.10);
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
@@ -1351,39 +3277,6 @@ async function setTileTransformsRPC(tt) {
   return rpc("setTileTransforms", { tileTransforms: safeClone(tt) });
 }
 
-async function getWorkerFrameState() {
-  try {
-    return await rpc("getFrameState", {});
-  } catch {
-    return null;
-  }
-}
-
-function mergeAnimatedOffsetsForPayload(workerFrameState = null) {
-  const out = safeClone(tileTransforms);
-  const src = workerFrameState?.transforms || null;
-  const copyOffset = (dstKey, srcKey) => {
-    const v = src?.[srcKey];
-    if (!Array.isArray(v) || v.length < 3) return;
-    const a = [Number(v[0]) || 0, Number(v[1]) || 0, Number(v[2]) || 0];
-    out[dstKey] = a;
-    out[`${dstKey}World`] = a.slice(0, 3);
-  };
-
-  copyOffset("weatherOffset", "weatherOffsetWorld");
-  copyOffset("shapeOffset", "shapeOffsetWorld");
-  copyOffset("detailOffset", "detailOffsetWorld");
-
-  out.explicit = true;
-  out.explicitPositions = true;
-  return out;
-}
-
-function isPositionControlEvent(ev) {
-  const id = ev?.target?.id || "";
-  return /-pos-[xyz]$/.test(id);
-}
-
 // ---- entry-point helpers ----
 function isEntry4D(ep) {
   return typeof ep === "string" && /4D/.test(ep);
@@ -1477,8 +3370,8 @@ function readTuning() {
     maxSteps: +($("t-maxSteps")?.value || 256) | 0,
     minStep: +($("t-minStep")?.value || 0.003),
     maxStep: +($("t-maxStep")?.value || 0.16),
-    sunSteps: +($("t-sunSteps")?.value || 6) | 0,
-    sunStride: +($("t-sunStride")?.value || 3) | 0,
+    sunSteps: +($("t-sunSteps")?.value || 4) | 0,
+    sunStride: +($("t-sunStride")?.value || 4) | 0,
     phaseJitter: +($("t-phaseJitter")?.value || 1.0),
     stepJitter: +($("t-stepJitter")?.value || 0.3),
     baseJitterFrac: +($("t-baseJitter")?.value || 0.02),
@@ -1490,23 +3383,23 @@ function readTuning() {
     farStart: +($("t-farStart")?.value || 1.05),
     farFull: +($("t-farFull")?.value || 4.2),
     farStepMult: +($("t-farStepMult")?.value || 2.05),
-    raySmoothDens: +($("t-raySmoothDens")?.value || 0.34),
-    raySmoothSun: +($("t-raySmoothSun")?.value || 0.34),
+    raySmoothDens: +($("t-raySmoothDens")?.value || 0.40),
+    raySmoothSun: +($("t-raySmoothSun")?.value || 0.40),
     fluffFactor: +($("t-fluffFactor")?.value || 4.0),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
     verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
     verticalTextureHomogeneity: +($("t-verticalTextureHomogeneity")?.value || 0.0),
     verticalLightingStepBoost: +($("t-verticalLightingStepBoost")?.value || 1.35),
-    frontOcclusionStrength: +($("t-frontOcclusionStrength")?.value || 0.72),
-    frontOcclusionAlpha: +($("t-frontOcclusionAlpha")?.value || 0.66),
-    frontOcclusionStepBoost: +($("t-frontOcclusionStepBoost")?.value || 3.0),
+    frontOcclusionStrength: +($("t-frontOcclusionStrength")?.value || 0.82),
+    frontOcclusionAlpha: +($("t-frontOcclusionAlpha")?.value || 0.58),
+    frontOcclusionStepBoost: +($("t-frontOcclusionStepBoost")?.value || 3.6),
     sliceJitterStrength: +($("t-sliceJitterStrength")?.value || 0.08),
     verticalLayerDecorrelation: +($("t-verticalLayerDecorrelation")?.value || 0.35),
     directLightBlend: +($("t-directLightBlend")?.value || preview.directLightBlend || 0.78),
     directLightBoost: +($("t-directLightBoost")?.value || preview.directLightBoost || 0.58),
     alphaBoostThreshold: +($("t-alphaBoostThreshold")?.value || 0.22),
     alphaBoostAmount: +($("t-alphaBoostAmount")?.value || 0.16),
-    alphaMinCutoff: +($("t-alphaMinCutoff")?.value || 0.04),
+    minOutputAlpha: +($("t-minOutputAlpha")?.value || 0.10),
   };
 }
 
@@ -1832,7 +3725,7 @@ function readPreview() {
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
   preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 4));
   preview.temporalCellRate = normalizeTemporalCellRate(u32("v-temporal-cell-rate", preview.temporalCellRate ?? 1));
-  preview.alphaFloor = Math.max(0, Math.min(0.24, num("v-alpha-floor", preview.alphaFloor ?? 0.085)));
+  preview.alphaFloor = Math.max(0, Math.min(0.24, num("v-alpha-floor", preview.alphaFloor ?? 0.10)));
   preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));
   preview.sunTint[1] = clamp01(num("v-sun-g", preview.sunTint[1]));
   preview.sunTint[2] = clamp01(num("v-sun-b", preview.sunTint[2]));
@@ -2009,28 +3902,23 @@ function buildLiveAnimationPayload(options = {}) {
   };
 
   if (options.includeTransforms) {
-    payload.tileTransforms = Object.assign(safeClone(tileTransforms), {
-      explicit: !!options.explicitPositions,
-      explicitPositions: !!options.explicitPositions,
-    });
+    payload.tileTransforms = Object.assign(safeClone(tileTransforms), { explicit: true });
   }
 
   return payload;
 }
 
 let _liveAnimationUpdateIncludeTransforms = false;
-let _liveAnimationUpdateExplicitPositions = false;
 
-function queueLiveAnimationUpdate(_delayMs = 90, options = {}) {
+function queueLiveAnimationUpdate(delayMs = 90, options = {}) {
   if (!animRunning) return false;
   _liveAnimationUpdateQueued = true;
   _liveAnimationUpdateIncludeTransforms = _liveAnimationUpdateIncludeTransforms || !!options.includeTransforms;
-  _liveAnimationUpdateExplicitPositions = _liveAnimationUpdateExplicitPositions || !!options.explicitPositions;
-  if (_liveAnimationUpdateTimer) return true;
-  _liveAnimationUpdateTimer = requestAnimationFrame(() => {
+  if (_liveAnimationUpdateTimer) clearTimeout(_liveAnimationUpdateTimer);
+  _liveAnimationUpdateTimer = setTimeout(() => {
     _liveAnimationUpdateTimer = 0;
     flushLiveAnimationUpdate().catch((err) => console.warn("live animation update failed", err));
-  });
+  }, delayMs);
   return true;
 }
 
@@ -2045,10 +3933,8 @@ async function flushLiveAnimationUpdate() {
     do {
       _liveAnimationUpdateQueued = false;
       const includeTransforms = _liveAnimationUpdateIncludeTransforms;
-      const explicitPositions = _liveAnimationUpdateExplicitPositions;
       _liveAnimationUpdateIncludeTransforms = false;
-      _liveAnimationUpdateExplicitPositions = false;
-      const payload = buildLiveAnimationPayload({ includeTransforms, explicitPositions });
+      const payload = buildLiveAnimationPayload({ includeTransforms });
       await rpc("setLiveFrameState", payload);
       lastTuningSent = cloneTuning(payload.tuning);
     } while (_liveAnimationUpdateQueued && animRunning);
@@ -2122,51 +4008,6 @@ function debounceAsync(fn, delayMs = 90) {
   return wrapped;
 }
 
-function frameCoalescedAsync(fn) {
-  let frame = 0;
-  let running = false;
-  let rerun = false;
-  let lastArgs = [];
-
-  const run = async () => {
-    frame = 0;
-    if (running) {
-      rerun = true;
-      return;
-    }
-    running = true;
-    try {
-      do {
-        rerun = false;
-        await fn(...lastArgs);
-      } while (rerun);
-    } finally {
-      running = false;
-    }
-  };
-
-  const wrapped = (...args) => {
-    lastArgs = args;
-    if (frame) return;
-    frame = requestAnimationFrame(() => {
-      run().catch((err) => console.warn("live UI task failed", err));
-    });
-  };
-
-  wrapped.cancel = () => {
-    if (frame) cancelAnimationFrame(frame);
-    frame = 0;
-  };
-
-  wrapped.flush = (...args) => {
-    lastArgs = args;
-    wrapped.cancel();
-    return run();
-  };
-
-  return wrapped;
-}
-
 function attachByIds(ids, handler, opts = {}) {
   const delayMs = opts.delayMs ?? 90;
   const onInput = debounceAsync(handler, delayMs);
@@ -2184,24 +4025,10 @@ function attachByIds(ids, handler, opts = {}) {
 
 function attachPanelInputs(panel, handler, delayMs = 90) {
   if (!panel) return;
-  const debouncedInput = debounceAsync(handler, delayMs);
-  const liveInput = frameCoalescedAsync(handler);
-
-  const onInput = (ev) => {
-    if (animRunning) {
-      debouncedInput.cancel();
-      liveInput(ev);
-      return;
-    }
-    liveInput.cancel();
-    debouncedInput(ev);
-  };
-
+  const onInput = debounceAsync(handler, delayMs);
   const onChange = (ev) => {
-    const runner = animRunning ? liveInput : debouncedInput;
-    runner.flush(ev).catch((err) => console.warn("panel change handler failed", err));
+    onInput.flush(ev).catch((err) => console.warn("panel change handler failed", err));
   };
-
   panel.querySelectorAll("input,select,textarea").forEach((inp) => {
     inp.addEventListener("input", onInput);
     inp.addEventListener("change", onChange);
@@ -2237,39 +4064,84 @@ function attachTuningInputs() {
   });
 }
 
-async function runAfterBakeAndTuning(
+const _latestBakeJobs = new Map();
+let _latestBakePumpActive = false;
+
+function latestBakeKey(bakeRpcType) {
+  return String(bakeRpcType || "bake");
+}
+
+function runAfterBakeAndTuning(
   bakeRpcType,
   bakePayload = {},
   extraPayload = {},
 ) {
+  return new Promise((resolve, reject) => {
+    const key = latestBakeKey(bakeRpcType);
+    const existing = _latestBakeJobs.get(key);
+    if (existing) existing.resolve({ skipped: true, replaced: true });
+    _latestBakeJobs.set(key, {
+      key,
+      bakeRpcType,
+      bakePayload: safeClone(bakePayload),
+      extraPayload: safeClone(extraPayload || {}),
+      resolve,
+      reject,
+    });
+    pumpLatestBakeJobs().catch((err) => console.warn("latest bake pump failed", err));
+  });
+}
+
+async function pumpLatestBakeJobs() {
+  if (_latestBakePumpActive) return;
+  _latestBakePumpActive = true;
   setBusy(true, "Baking...");
   try {
-    await rpc(bakeRpcType, safeClone(bakePayload));
-    await sendTuningNow();
-    readPreview();
-
-    const cloudParams = readCloudParams();
-    const payload = Object.assign(
-      {
-        weatherParams: safeClone(weatherParams),
-        billowParams: safeClone(billowParams),
-        weatherBParams: safeClone(weatherBParams),
-        shapeParams: safeClone(shapeParams),
-        detailParams: safeClone(detailParams),
-        tileTransforms: safeClone(tileTransforms),
-        preview: safeClone(preview),
-        cloudParams,
-      },
-      extraPayload || {},
-    );
-
-    useFreshFullFrameReproj(payload);
-    ensureCoarseInPayload(payload);
-    await runFrameLatest(payload);
+    while (_latestBakeJobs.size) {
+      const [key, job] = _latestBakeJobs.entries().next().value;
+      _latestBakeJobs.delete(key);
+      try {
+        await runBakeJobAndFrame(job);
+        job.resolve({ ok: true });
+      } catch (err) {
+        job.reject(err);
+      }
+      await nextAnimationFrame();
+    }
   } finally {
+    _latestBakePumpActive = false;
     setBusy(false);
+    if (_latestBakeJobs.size) {
+      pumpLatestBakeJobs().catch((err) => console.warn("latest bake pump failed", err));
+    }
   }
 }
+
+async function runBakeJobAndFrame(job) {
+  await rpc(job.bakeRpcType, safeClone(job.bakePayload));
+  await sendTuningNow();
+  readPreview();
+
+  const cloudParams = readCloudParams();
+  const payload = Object.assign(
+    {
+      weatherParams: safeClone(weatherParams),
+      billowParams: safeClone(billowParams),
+      weatherBParams: safeClone(weatherBParams),
+      shapeParams: safeClone(shapeParams),
+      detailParams: safeClone(detailParams),
+      tileTransforms: safeClone(tileTransforms),
+      preview: safeClone(preview),
+      cloudParams,
+    },
+    job.extraPayload || {},
+  );
+
+  useFreshFullFrameReproj(payload);
+  ensureCoarseInPayload(payload);
+  await runFrameLatest(payload);
+}
+
 
 async function runFrameEnsuringTuning(payload = {}) {
   await sendTuningNow();
@@ -2290,6 +4162,12 @@ function setBusy(on, msg = "Working...") {
   if (!ov) return;
   if (m) m.textContent = msg;
   ov.style.display = on ? "flex" : "none";
+  const status = $("cloud-quick-status");
+  if (status) {
+    status.dataset.manual = on ? "true" : "false";
+    if (on) status.textContent = msg;
+    else updateCloudQuickDockState();
+  }
 
   [
     "bake-weather",
@@ -2298,6 +4176,9 @@ function setBusy(on, msg = "Working...") {
     "bake-detail32",
     "rebake-all",
     "render",
+    "reproj-anim-toggle",
+    "quick-render-button",
+    "quick-rebake-button",
   ].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = on;
@@ -2322,8 +4203,14 @@ function currentSlice() {
 }
 
 function refreshSliceLabel() {
+  const value = currentSlice();
   const s = $("sliceLabel");
-  if (s) s.textContent = String(currentSlice());
+  if (s) s.textContent = String(value);
+}
+
+async function refreshDebugPreviews(kind = "all") {
+  if (!worker || !STARTUP_PROFILE.debugCanvases) return;
+  await rpc("refreshDebug", { kind });
 }
 
 // ---- UI utilities ----
@@ -2338,7 +4225,16 @@ function showPanelsFor(pass) {
   vis("p-blue", pass === "blue");
   vis("p-cloudParams", pass === "clouds");
   vis("p-preview", pass === "preview");
+
+  organizeDebugTexturePreviews();
+  removeLegacySliceArtifacts(document);
+  const textureMenu = $("cloud-texture-preview-menu");
+  if (textureMenu) textureMenu.style.display = "";
+
+  updateCloudQuickDockState();
+  if (STARTUP_PROFILE.debugCanvases) refreshDebugPreviewsSoon();
 }
+
 
 function clampCanvasPixelSize(pixelW, pixelH) {
   let w = Math.max(1, Math.floor(pixelW));
@@ -2507,19 +4403,11 @@ async function wireUI() {
         console.warn("Failed setReproj", e);
       }
 
-      readWeather();
-      readWeatherG();
-      readWeatherB();
-      readShape();
-      readShapeTransform();
-      readDetail();
-      readDetailTransform();
       readPreview();
       const cloudParams = readCloudParams();
 
       setBusy(true, "Seeding animation...");
       try {
-        const workerFrameState = await getWorkerFrameState();
         await sendTuningNow();
         const payload = {
           weatherParams: safeClone(weatherParams),
@@ -2527,12 +4415,13 @@ async function wireUI() {
           weatherBParams: safeClone(weatherBParams),
           shapeParams: safeClone(shapeParams),
           detailParams: safeClone(detailParams),
-          tileTransforms: mergeAnimatedOffsetsForPayload(workerFrameState),
+          tileTransforms: safeClone(tileTransforms),
           preview: safeClone(preview),
           cloudParams,
-          reproj: getFreshFullFrameReprojPayload(),
+          reproj: rp,
         };
         ensureCoarseInPayload(payload);
+        payload.skipFinalDebug = true;
         await runFrameLatest(payload);
         const loopReproj = getReprojPayload();
         await rpc("setReproj", { reproj: loopReproj, perf: null });
@@ -2592,7 +4481,6 @@ async function wireUI() {
       readPreview();
       const cloudParams = readCloudParams();
       await sendTuningNow();
-      const workerFrameState = await getWorkerFrameState();
 
       const payload = {
         weatherParams: safeClone(weatherParams),
@@ -2600,7 +4488,7 @@ async function wireUI() {
         weatherBParams: safeClone(weatherBParams),
         shapeParams: safeClone(shapeParams),
         detailParams: safeClone(detailParams),
-        tileTransforms: mergeAnimatedOffsetsForPayload(workerFrameState),
+        tileTransforms: safeClone(tileTransforms),
         preview: safeClone(preview),
         cloudParams,
       };
@@ -2696,10 +4584,10 @@ async function wireUI() {
       "we-axis-y",
       "we-axis-z",
     ],
-    async (ev) => {
+    async () => {
       try {
         readWeatherTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -2718,6 +4606,7 @@ async function wireUI() {
         };
         useFreshFullFrameReproj(payload);
         ensureCoarseInPayload(payload);
+        payload.skipFinalDebug = true;
         await runFrameLatest(payload);
       } catch (e) {
         console.warn("weather transform update failed", e);
@@ -2807,10 +4696,10 @@ async function wireUI() {
       "sh-axis-y",
       "sh-axis-z",
     ],
-    async (ev) => {
+    async () => {
       try {
         readShapeTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -2829,6 +4718,7 @@ async function wireUI() {
         };
         useFreshFullFrameReproj(payload);
         ensureCoarseInPayload(payload);
+        payload.skipFinalDebug = true;
         await runFrameLatest(payload);
       } catch (e) {
         console.warn("shape transform update failed", e);
@@ -2850,10 +4740,10 @@ async function wireUI() {
       "de-axis-y",
       "de-axis-z",
     ],
-    async (ev) => {
+    async () => {
       try {
         readDetailTransform();
-        if (queueLiveAnimationUpdate(80, { includeTransforms: true, explicitPositions: isPositionControlEvent(ev) })) return;
+        if (queueLiveAnimationUpdate(80, { includeTransforms: true })) return;
         await setTileTransformsRPC(tileTransforms);
 
         await sendTuningNow();
@@ -2872,6 +4762,7 @@ async function wireUI() {
         };
         useFreshFullFrameReproj(payload);
         ensureCoarseInPayload(payload);
+        payload.skipFinalDebug = true;
         await runFrameLatest(payload);
       } catch (e) {
         console.warn("detail transform update failed", e);
@@ -2898,6 +4789,7 @@ async function wireUI() {
     };
     useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
+    payload.skipFinalDebug = true;
     try {
       await runFrameLatest(payload);
       lastTuningSent = cloneTuning(tuning);
@@ -2926,6 +4818,7 @@ async function wireUI() {
     };
     useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
+    payload.skipFinalDebug = true;
     try {
       await runFrameLatest(payload);
       if (cloudHistoryEnabled()) {
@@ -3103,10 +4996,89 @@ async function wireUI() {
   }
 }
 
+let initialBakePromise = null;
+
+function scheduleInitialBakeAndRender() {
+  if (initialBakePromise) return initialBakePromise;
+
+  initialBakePromise = (async () => {
+    await nextPaint();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    setBusy(true, MOBILE_PROFILE ? "Preparing mobile cloud preview..." : "Preparing cloud preview...");
+    try {
+      refreshSliceLabel();
+      readWeather();
+      readWeatherG();
+      readWeatherB();
+      readShape();
+      readShapeTransform();
+      readDetail();
+      readDetailTransform();
+      readPreview();
+
+      await rpc("bakeAll", {
+        weatherParams: safeClone(weatherParams),
+        billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
+        blueParams: safeClone(blueParams),
+        shapeParams: safeClone(shapeParams),
+        detailParams: safeClone(detailParams),
+        tileTransforms: safeClone(tileTransforms),
+        progressive: true,
+        skipDebug: !!STARTUP_PROFILE.skipStartupDebug,
+        skipFinalDebug: false,
+      });
+
+      await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
+      try {
+        await sendTuningNow(true);
+      } catch (e) {
+        console.warn("initial sendTuningNow failed", e);
+      }
+
+      const cloudParams = readCloudParams();
+      const payload = {
+        weatherParams: safeClone(weatherParams),
+        billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
+        shapeParams: safeClone(shapeParams),
+        detailParams: safeClone(detailParams),
+        tileTransforms: safeClone(tileTransforms),
+        preview: safeClone(preview),
+        cloudParams,
+      };
+
+      useFreshFullFrameReproj(payload);
+      ensureCoarseInPayload(payload);
+
+      const { timings } = await rpc("runFrame", payload);
+      await refreshDebugPreviews();
+      console.log("[BENCH] init frame timings:", timings);
+    } catch (err) {
+      console.error("initial cloud bake/render failed", err);
+      const pre = document.createElement("pre");
+      pre.textContent = err && err.stack ? err.stack : String(err);
+      document.body.appendChild(pre);
+    } finally {
+      setBusy(false);
+    }
+  })();
+
+  return initialBakePromise;
+}
+
 // ---- init ----
 async function init() {
-  document.body.insertAdjacentHTML("beforeend", html);
+  mountCloudHtml();
+  installCloudUiPolish();
   injectPreviewLookControls();
+  addCloudUiClasses();
+  createCloudQuickDock();
+  installTextureSliceControls();
+  organizeCloudPanels();
+  removeLegacySliceArtifacts(document);
+  organizeSidebarControlGroups();
   applyGradePreset(preview.gradeStyle, false);
 
   const setIf = (id, val) => {
@@ -3240,13 +5212,13 @@ async function init() {
   setIf("p-sE", 12.0);
   setIf("p-ambOut", 0.08);
   setIf("p-ambMin", 0.045);
-  setIf("p-anvil", 0.1);
+  setIf("p-anvil", 0.5);
 
   setIf("t-maxSteps", 256);
   setIf("t-minStep", 0.003);
   setIf("t-maxStep", 0.16);
-  setIf("t-sunSteps", 6);
-  setIf("t-sunStride", 3);
+  setIf("t-sunSteps", 4);
+  setIf("t-sunStride", 4);
   setIf("t-phaseJitter", 1.0);
   setIf("t-stepJitter", 0.3);
   setIf("t-baseJitter", 0.02);
@@ -3258,24 +5230,24 @@ async function init() {
   setIf("t-farStart", 1.05);
   setIf("t-farFull", 4.2);
   setIf("t-farStepMult", 2.05);
-  setIf("t-raySmoothDens", 0.34);
-  setIf("t-raySmoothSun", 0.34);
+  setIf("t-raySmoothDens", 0.40);
+  setIf("t-raySmoothSun", 0.40);
   setIf("t-fluffFactor", 2.0);
   setIf("t-anvilLift", 0.6);
   setIf("t-alphaCutoff", 0.98);
   setIf("t-verticalStepBoost", 3.0);
   setIf("t-verticalTextureHomogeneity", 0.0);
   setIf("t-verticalLightingStepBoost", 1.35);
-  setIf("t-frontOcclusionStrength", 0.72);
-  setIf("t-frontOcclusionAlpha", 0.66);
-  setIf("t-frontOcclusionStepBoost", 3.0);
+  setIf("t-frontOcclusionStrength", 0.82);
+  setIf("t-frontOcclusionAlpha", 0.58);
+  setIf("t-frontOcclusionStepBoost", 3.6);
   setIf("t-sliceJitterStrength", 0.08);
   setIf("t-verticalLayerDecorrelation", 0.35);
   setIf("t-directLightBlend", preview.directLightBlend ?? 0.78);
   setIf("t-directLightBoost", preview.directLightBoost ?? 0.58);
   setIf("t-alphaBoostThreshold", 0.22);
   setIf("t-alphaBoostAmount", 0.16);
-  setIf("t-alphaMinCutoff", 0.04);
+  setIf("t-minOutputAlpha", 0.10);
 
   const anvilInput = $("p-anvil");
   if (anvilInput) {
@@ -3327,6 +5299,11 @@ async function init() {
     if (type === "log") console.log(...(data || []));
     if (type === "progress") {
       const msg = data?.message || data || "Working...";
+      const status = $("cloud-quick-status");
+      if (status) {
+        status.dataset.manual = "true";
+        status.textContent = msg;
+      }
       const ov = $("busyOverlay");
       if (ov && ov.style.display !== "none") setBusy(true, msg);
     }
@@ -3339,6 +5316,7 @@ async function init() {
           const loop = fmt(info.loopFps ?? info.fps);
           fpsEl.textContent = `${loop} fps`;
         }
+        updateCloudQuickDockState();
       }
     }
     if (type === "loop-stopped") {
@@ -3444,58 +5422,20 @@ async function init() {
 
   sendSizes();
   await nextPaint();
+  await flushQueuedResize();
 
   try {
     await setTileTransformsRPC(tileTransforms);
   } catch {}
 
-  setBusy(true, MOBILE_PROFILE ? "Initializing mobile profile..." : "Initializing...");
-  await nextPaint();
-  try {
-    refreshSliceLabel();
-
-    await rpc("bakeAll", {
-      weatherParams: safeClone(weatherParams),
-      billowParams: safeClone(billowParams),
-      weatherBParams: safeClone(weatherBParams),
-      blueParams: safeClone(blueParams),
-      shapeParams: safeClone(shapeParams),
-      detailParams: safeClone(detailParams),
-      tileTransforms: safeClone(tileTransforms),
-      progressive: true,
-      skipDebug: !STARTUP_PROFILE.debugCanvases,
-    });
-
-    readPreview();
-    await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
-    try {
-      await sendTuningNow(true);
-    } catch (e) {
-      console.warn("initial sendTuningNow failed", e);
-    }
-
-    const cloudParams = readCloudParams();
-    const payload = {
-      weatherParams: safeClone(weatherParams),
-      billowParams: safeClone(billowParams),
-      weatherBParams: safeClone(weatherBParams),
-      shapeParams: safeClone(shapeParams),
-      detailParams: safeClone(detailParams),
-      tileTransforms: safeClone(tileTransforms),
-      preview: safeClone(preview),
-      cloudParams,
-    };
-
-    useFreshFullFrameReproj(payload);
-    ensureCoarseInPayload(payload);
-
-    const { timings } = await rpc("runFrame", payload);
-    console.log("[BENCH] init frame timings:", timings);
-  } finally {
-    setBusy(false);
-  }
-
   await wireUI();
+  removeLegacySliceArtifacts(document);
+  populateCloudQuickDock();
+  wireCloudQuickDock();
+  updateCloudQuickDockState();
+  refreshSliceLabel();
+  setBusy(false);
+  scheduleInitialBakeAndRender();
 }
 
 // start

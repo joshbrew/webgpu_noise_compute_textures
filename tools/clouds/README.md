@@ -632,6 +632,14 @@ Use `setNoiseTransforms()` for animation and style adjustment. Do not re-bake 3D
 
 These are the tuned starting points in `cloudTestThreaded.js`.
 
+## Playground UI
+
+The playground now starts with a sticky quick dock above the renderer. Use it for the high-frequency controls: render tab, tuning tab, texture tabs, layer preset, color grade, render divider, render, rebake, and advanced-control visibility. The original detailed panels are still present underneath. With Advanced off, lower-priority lighting and tuning fields are tucked away so the main workflow stays focused.
+
+The 3D shape and detail texture previews each have their own Z slice slider directly under the canvas. The old shared slice slider still works and drives both previews together, but the per-texture sliders are easier for inspecting the actual volume textures.
+
+Texture preview canvases render once after startup baking and can be refreshed from the worker with `refreshDebug`, so they should no longer stay blank after the first frame.
+
 ## Preview
 
 | Parameter | Default | Meaning |
@@ -1026,7 +1034,9 @@ Common commands:
 | `setNoiseTransforms` | Update offsets, scales, biases, axis scales, and velocities. |
 | `setTileTransforms` | Compatibility alias for `setNoiseTransforms`. |
 | `setTuning` | Update cloud raymarch tuning. |
-| `setSlice` | Update debug slice index for shape/detail preview canvases. |
+| `setSlice` | Compatibility shared debug slice index for shape/detail preview canvases. |
+| `setDebugSlice` | Update the shape or detail debug preview slice independently. |
+| `refreshDebug` | Repaint weather, shape, detail, and blue-noise preview canvases without rebaking. |
 | `setReproj` | Update reprojection settings. |
 | `setLiveFrameState` | Coalesced live preview, cloud, tuning, transform, and reprojection updates consumed by the animation loop. |
 | `runFrame` | Dispatch one cloud frame and composite. |
@@ -1067,27 +1077,6 @@ Key runtime rules:
 
 The playground default is `4`. This computes one quarter resolution per axis and upsamples the current cloud buffer to the full presentation canvas. Coarse rendering does not sample temporal history by default, so it avoids stale coarse-cell reprojection streaks.
 
-
-## Mobile and first-load behavior
-
-The playground chooses a lighter startup profile on mobile-like devices. It keeps the same renderer and visual controls, but caps canvas pixel count, limits DPR, uses smaller startup procedural textures, and disables debug texture previews on mobile. Desktop defaults remain uncapped for performance testing.
-
-Startup baking is also staged through the worker with small yields between weather, blue-noise, shape, and detail texture creation. This lets the loading overlay paint before large GPU work starts and reduces the apparent browser freeze on first load.
-
-Mobile startup defaults:
-
-- Shape volume: `96³` instead of `128³`.
-- Weather map: `384²` instead of `512²`.
-- Blue noise: `128²` instead of `256²`.
-- Main canvas cap: about `900k` pixels and max side `1280`.
-- DPR cap: `1.35`.
-- Render Scale Divider: `4`.
-- Temporal Interleave: `1 / 4 rays per frame`.
-
-Desktop startup defaults keep the `128³` shape volume, `512²` weather map, `256²` blue noise, Render Scale Divider `4`, Temporal Interleave `1 / 4 rays per frame`, and use the full browser canvas size at the browser/device DPR.
-
-Use `?mobile=1` or `?profile=mobile` to force the mobile profile for testing. Use `?desktop=1` or `?profile=desktop` to force the uncapped desktop profile.
-
 ## Screen interleave
 
 Screen Interleave is a full-resolution temporal sampling mode. When `Render Scale Divider` is `1`, temporal history can compact-dispatch only the owned 8x8-cell subset for the current phase, so `1 / 4 rays per frame` launches roughly one quarter of the cloud ray work instead of launching all pixels and branching inside the shader.
@@ -1098,7 +1087,7 @@ The first full-resolution history-seeding frame always renders all active pixels
 
 ## Tall boxes
 
-Increasing `Box Half Y` is expensive because rays can spend more time inside the vertical cloud slab. The renderer reduces this cost with active-Y ray clipping, a global active-Y early-out, weather-derived column bounds, empty weather skipping, adaptive thick-box stepping, and far-proxy sampling. Still, very tall boxes should use:
+This is WIP along with better storm cell formation. Increasing `Box Half Y` is expensive because rays can spend more time inside the vertical cloud slab. The renderer reduces this cost with active-Y ray clipping, a global active-Y early-out, weather-derived column bounds, empty weather skipping, adaptive thick-box stepping, and far-proxy sampling. Still, very tall boxes should use:
 
 - Render Scale Divider `4` or `5`.
 - Reprojection enabled while animating.
@@ -1116,7 +1105,7 @@ When cloud coverage fills the screen, front opacity should save work instead of 
 
 ## Horizon boxes
 
-For clouds stretching to the horizon, prefer larger X/Z cloud boxes plus tiled 4D weather. Do not make the 3D shape/detail textures huge just because the box is huge. The noise transforms and tiling handle the scale.
+For clouds stretching to the horizon, prefer larger X/Z cloud boxes plus tiled 4D weather. Do not make the 3D shape/detail textures huge just because the box is huge. The noise transforms and tiling handle the scale and randomness.
 
 ## Noise baking
 
@@ -1137,31 +1126,6 @@ Animate with:
 - `weatherVel`
 - `time`, when intentionally using 4D noise animation
 
-## Visual stability
-
-If close clouds sparkle:
-
-1. Reduce `stepJitter`.
-2. Reduce `baseJitterFrac` or `topJitterFrac`.
-3. Increase `raySmoothDens` slightly.
-4. Check blue-noise filtering before reducing detail globally.
-
-If distant clouds disappear:
-
-1. Check `maxSteps`, `maxStep`, `farStepMult`, and box reach.
-2. Avoid hard distance culling in visible density.
-3. Keep weather rejection conservative.
-4. Check camera vectors and FOV math.
-
-If lighting cards or flat planes appear:
-
-1. Keep the protected near/edge lighting behavior.
-2. Do not apply far/interior lighting shortcuts near silhouettes.
-3. Increase `sunSteps` or reduce `sunStride` for debugging.
-4. Reduce `thickLightSkip` temporarily if testing thick boxes.
-
----
-
 
 ---
 ## Coarse rendering and temporal interleave
@@ -1176,3 +1140,4 @@ WebGPU implementation by Joshua Brewster (MIT License)
 Inspired by Fredrik Häggström's [Real-time rendering of volumetric clouds](https://www.diva-portal.org/smash/record.jsf?pid=diva2:1223894&dswid=7420).
 
 This implementation uses the companion WebGPU procedural texture work in [webgpu_noise_compute_textures](https://github.com/joshbrew/webgpu_noise_compute_textures).
+
