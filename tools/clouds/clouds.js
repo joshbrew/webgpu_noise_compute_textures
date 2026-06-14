@@ -24,6 +24,25 @@ function getCloudGpuCache(device) {
 }
 
 const _has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
+const DEG_TO_RAD = Math.PI / 180;
+const radDeg = (d) => d * DEG_TO_RAD;
+const cross3 = (a, b) => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const norm3 = (a) => {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+};
+function writeVec3Padded(dv, ofs, v) {
+  dv.setFloat32(ofs, v[0], true);
+  dv.setFloat32(ofs + 4, v[1], true);
+  dv.setFloat32(ofs + 8, v[2], true);
+  dv.setFloat32(ofs + 12, 0.0, true);
+}
+
 const normalizeTemporalRate = (value) => {
   const n = Math.max(1, Number(value) | 0);
   if (n >= 64) return 64;
@@ -76,6 +95,7 @@ export class CloudComputeBuilder {
     // GPU objects filled in _init*
     this.module = null;
     this.pipeline = null;
+    this._computePipelineKey = -1;
     this._computePipelineLayout = null;
     this._computePipelines = new Map();
     this._historyCopy = null;
@@ -143,7 +163,6 @@ export class CloudComputeBuilder {
     this.optionsBuffer = null;
     this.paramsBuffer = null;
     this.nTransformBuffer = null;
-    this.dummyBuffer = null;
     this.posBuffer = null;
     this.frameBuffer = null;
     this.lightBuffer = null;
@@ -427,7 +446,9 @@ export class CloudComputeBuilder {
       this.bgl0 = cachedCompute.bgl0;
       this._computePipelineLayout = cachedCompute.layout;
       this._computePipelines = cachedCompute.pipelines || new Map();
-      this.pipeline = this._computePipelines.get(this._currentComputeVariantKey()) || null;
+      this._computePipelineKey = this._currentComputeVariantKey();
+      this.pipeline = this._computePipelines.get(this._computePipelineKey) || null;
+      if (!this.pipeline) this._computePipelineKey = -1;
 
       this._destroyDummyHistory();
       this._createDummyHistory();
@@ -438,7 +459,7 @@ export class CloudComputeBuilder {
     }
 
     // group(0) bindings must match updated shader:
-    // 0 opt, 1 C, 2 unused storage, 3 NTransform, 4 outTex, 5 posBuf, 6 frame, 7 historyOut, 8 reproj, 9 perf, 10 TUNE
+    // 0 opt, 1 C, 3 NTransform, 4 outTex, 5 posBuf, 6 frame, 7 historyOut, 8 reproj, 9 perf, 10 TUNE
     this.bgl0 = d.createBindGroupLayout({
       entries: [
         {
@@ -450,11 +471,6 @@ export class CloudComputeBuilder {
           binding: 1,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: "uniform" },
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "read-only-storage" },
         },
         {
           binding: 3,
@@ -512,6 +528,7 @@ export class CloudComputeBuilder {
     });
     this._computePipelines = new Map();
     this.pipeline = null;
+    this._computePipelineKey = -1;
 
     deviceCache.computeByFormat.set(this.outFormat, {
       bgl0: this.bgl0,
@@ -546,13 +563,17 @@ export class CloudComputeBuilder {
     if (cached) return cached;
 
     const mode = key & 3;
+    const isSpherical = mode !== 0;
+    const isAurora = mode === 2;
+    const entryPoint = isAurora ? "computeCloudAurora" : isSpherical ? "computeCloudSphere" : "computeCloudBox";
     const pipeline = this.device.createComputePipeline({
       layout: this._computePipelineLayout,
       compute: {
         module: this.module,
-        entryPoint: "computeCloud",
+        entryPoint,
         constants: {
-          CLOUD_RENDER_MODE: mode,
+          CLOUD_IS_SPHERICAL: isSpherical ? 1 : 0,
+          CLOUD_IS_AURORA: isAurora ? 1 : 0,
           CLOUD_USE_CUSTOM_POS: (key & 4) ? 1 : 0,
           CLOUD_WRITE_RGB: (key & 8) ? 1 : 0,
         },
@@ -563,7 +584,10 @@ export class CloudComputeBuilder {
   }
 
   ensureComputePipelineReady() {
-    this.pipeline = this._ensureComputePipelineForKey(this._currentComputeVariantKey());
+    const key = this._currentComputeVariantKey();
+    if (this.pipeline && this._computePipelineKey === key) return this.pipeline;
+    this.pipeline = this._ensureComputePipelineForKey(key);
+    this._computePipelineKey = key;
     return this.pipeline;
   }
 
@@ -629,7 +653,7 @@ export class CloudComputeBuilder {
 
     // group(1) must match updated shader:
     // 0 weather2D, 1 samp2D, 2 shape3D, 3 sampShape, 4 blueTex, 5 sampBN, 6 detail3D, 7 sampDetail,
-    // 8 L, 9 V, 10 B, 11 historyPrev, 12 sampHistory, 13 motionTex, 14 sampMotion, 15 depthPrev, 16 sampDepth
+    // 8 L, 9 V, 10 B, 11 historyPrev, 13 motionTex, 15 depthPrev
     if (!deviceCache.bgl1) {
       deviceCache.bgl1 = d.createBindGroupLayout({
         entries: [
@@ -694,29 +718,14 @@ export class CloudComputeBuilder {
             texture: { sampleType: "float", viewDimension: "2d-array" },
           },
           {
-            binding: 12,
-            visibility: GPUShaderStage.COMPUTE,
-            sampler: { type: "filtering" },
-          },
-          {
             binding: 13,
             visibility: GPUShaderStage.COMPUTE,
             texture: { sampleType: "float", viewDimension: "2d" },
           },
           {
-            binding: 14,
-            visibility: GPUShaderStage.COMPUTE,
-            sampler: { type: "filtering" },
-          },
-          {
             binding: 15,
             visibility: GPUShaderStage.COMPUTE,
             texture: { sampleType: "float", viewDimension: "2d" },
-          },
-          {
-            binding: 16,
-            visibility: GPUShaderStage.COMPUTE,
-            sampler: { type: "filtering" },
           },
         ],
       });
@@ -797,28 +806,17 @@ export class CloudComputeBuilder {
 
     this.optionsBuffer = d.createBuffer({
       size: 32,
-      usage:
-        GPUBufferUsage.UNIFORM |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.paramsBuffer = d.createBuffer({
       size: this._abParams.byteLength,
-      usage:
-        GPUBufferUsage.UNIFORM |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.nTransformBuffer = d.createBuffer({
       size: 128,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    this.dummyBuffer = d.createBuffer({
-      size: 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
     this.posBuffer = d.createBuffer({
@@ -833,10 +831,7 @@ export class CloudComputeBuilder {
 
     this.lightBuffer = d.createBuffer({
       size: 32,
-      usage:
-        GPUBufferUsage.UNIFORM |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.viewBuffer = d.createBuffer({
@@ -874,8 +869,6 @@ export class CloudComputeBuilder {
       size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
-    this.queue.writeBuffer(this.dummyBuffer, 0, new Uint8Array(4));
   }
 
   // -------------------- UBO setters --------------------
@@ -1738,7 +1731,6 @@ export class CloudComputeBuilder {
       this._getResId(this.outView),
       this._getResId(this.optionsBuffer),
       this._getResId(this.paramsBuffer),
-      this._getResId(this.dummyBuffer),
       this._getResId(this.nTransformBuffer),
       this._getResId(this.posBuffer),
       this._getResId(this.frameBuffer),
@@ -1766,11 +1758,8 @@ export class CloudComputeBuilder {
       this._getResId(this.viewBuffer),
       this._getResId(this.boxBuffer),
       this._getResId(this.historyPrevView || this._dummyHistoryPrevView),
-      this._getResId(this._samp2D),
       this._getResId(this.motionView || this._dummy2DMotionView),
-      this._getResId(this._samp2D),
       this._getResId(this.depthPrevView || this._dummy2DDepthView),
-      this._getResId(this._samp2D),
     ];
     return ids.join("|");
   }
@@ -1819,7 +1808,6 @@ export class CloudComputeBuilder {
       entries: [
         { binding: 0, resource: { buffer: this.optionsBuffer } },
         { binding: 1, resource: { buffer: this.paramsBuffer } },
-        { binding: 2, resource: { buffer: this.dummyBuffer } },
         { binding: 3, resource: { buffer: this.nTransformBuffer } },
         { binding: 4, resource: this.outView },
         { binding: 5, resource: { buffer: this.posBuffer } },
@@ -1866,11 +1854,8 @@ export class CloudComputeBuilder {
         { binding: 9, resource: { buffer: this.viewBuffer } },
         { binding: 10, resource: { buffer: this.boxBuffer } },
         { binding: 11, resource: historyPrev },
-        { binding: 12, resource: this._samp2D },
         { binding: 13, resource: motionView },
-        { binding: 14, resource: this._samp2D },
         { binding: 15, resource: depthView },
-        { binding: 16, resource: this._samp2D },
       ],
     });
   }
@@ -1925,7 +1910,7 @@ export class CloudComputeBuilder {
 
     const cf = Math.max(1, coarseFactor | 0);
     if (cf < 2 || !this.outTexture)
-      return await this.dispatchRectNoCoarse({
+      return this.dispatchRectNoCoarse({
         x: baseX,
         y: baseY,
         w: tw,
@@ -1936,9 +1921,6 @@ export class CloudComputeBuilder {
     const cW = Math.max(1, Math.ceil(tw / cf));
     const cH = Math.max(1, Math.ceil(th / cf));
     this._ensureCoarseTexture(cW, cH, this.layers);
-
-    const savedFullW = cW;
-    const savedFullH = cH;
 
     const savedOutTexture = this.outTexture;
     const savedOutView = this.outView;
@@ -1968,9 +1950,9 @@ export class CloudComputeBuilder {
 
     const curFW = this._dvReproj.getUint32(32, true) || 0;
     const curFH = this._dvReproj.getUint32(36, true) || 0;
-    if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
-      this._dvReproj.setUint32(32, savedFullW >>> 0, true);
-      this._dvReproj.setUint32(36, savedFullH >>> 0, true);
+    if (curFW !== cW >>> 0 || curFH !== cH >>> 0) {
+      this._dvReproj.setUint32(32, cW >>> 0, true);
+      this._dvReproj.setUint32(36, cH >>> 0, true);
       this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
       this._bg0Dirty = true;
     }
@@ -2119,7 +2101,7 @@ export class CloudComputeBuilder {
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, this._currentBg0);
       pass.setBindGroup(1, this._currentBg1);
-        pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
+      pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
       pass.end();
     }
     this.queue.submit([enc.finish()]);
@@ -2196,10 +2178,7 @@ export class CloudComputeBuilder {
     if (this._historyCopy && this._historyCopy.format === "rgba16float") return this._historyCopy;
     const deviceCache = getCloudGpuCache(this.device);
     if (deviceCache.historyCopy) {
-      this._historyCopy = {
-        ...deviceCache.historyCopy,
-        bgCache: new Map(),
-      };
+      this._historyCopy = deviceCache.historyCopy;
       this._historyCopyBgCache.clear();
       this._historyCopyBgKeys.length = 0;
       return this._historyCopy;
@@ -2266,7 +2245,7 @@ export class CloudComputeBuilder {
       compute: { module, entryPoint: "main" },
     });
     deviceCache.historyCopy = { format: "rgba16float", bgl, pipe };
-    this._historyCopy = { ...deviceCache.historyCopy, bgCache: new Map() };
+    this._historyCopy = deviceCache.historyCopy;
     this._historyCopyBgCache.clear();
     this._historyCopyBgKeys.length = 0;
     return this._historyCopy;
@@ -2369,8 +2348,6 @@ export class CloudComputeBuilder {
 
       // Coarse compute keeps temporal history in coarse space. Presentation
       // reconstructs onto the full-resolution canvas without displaying the coarse target.
-      const savedFullW = cW;
-      const savedFullH = cH;
       const savedOutTexture = this.outTexture;
       const savedOutView = this.outView;
       const savedWidth = this.width;
@@ -2400,9 +2377,9 @@ export class CloudComputeBuilder {
 
       const curFW = this._dvReproj.getUint32(32, true) || 0;
       const curFH = this._dvReproj.getUint32(36, true) || 0;
-      if (curFW !== savedFullW >>> 0 || curFH !== savedFullH >>> 0) {
-        this._dvReproj.setUint32(32, savedFullW >>> 0, true);
-        this._dvReproj.setUint32(36, savedFullH >>> 0, true);
+      if (curFW !== cW >>> 0 || curFH !== cH >>> 0) {
+        this._dvReproj.setUint32(32, cW >>> 0, true);
+        this._dvReproj.setUint32(36, cH >>> 0, true);
         this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
       }
 
@@ -2415,10 +2392,8 @@ export class CloudComputeBuilder {
       this.outFormat = savedFormat;
       this._bg0Dirty = true;
 
-      var usedPresentationReconstruction = false;
       if (reconstructAtPresentation) {
         this._renderSourceView = this._coarseView;
-        usedPresentationReconstruction = true;
       } else {
         const preparedUpsample = this._prepareUpsamplePass({
           srcW: cW,
@@ -2435,8 +2410,7 @@ export class CloudComputeBuilder {
 
       return {
         coarseFactor: cf,
-        directFullResReconstruction: usedPresentationReconstruction,
-        directPreview: usedPresentationReconstruction,
+        directFullResReconstruction: !!reconstructAtPresentation,
         previewView: this._renderSourceView,
         interleaveStats: this._lastInterleaveStats,
         restoreAfterSubmit: () => {
@@ -2687,26 +2661,6 @@ export class CloudComputeBuilder {
     pass.end();
   }
 
-  async _upsampleCoarseToOut({
-    srcW,
-    srcH,
-    dstX,
-    dstY,
-    dstW,
-    dstH,
-    wait = false,
-  } = {}) {
-    const prepared = this._prepareUpsamplePass({ srcW, srcH, dstX, dstY, dstW, dstH });
-    if (!prepared) return;
-
-    const enc = this.device.createCommandEncoder();
-    this._encodeUpsamplePass(enc, prepared);
-    this.queue.submit([enc.finish()]);
-
-    if (wait && typeof this.queue.onSubmittedWorkDone === "function")
-      await this.queue.onSubmittedWorkDone();
-  }
-
   // -------------------- preview render --------------------
   _ensureRenderPipeline(format = "bgra8unorm") {
     if (this._render && this._render.format === format) return this._render;
@@ -2858,25 +2812,6 @@ export class CloudComputeBuilder {
     const boxCenter = renderBox.center ?? [0, 0, 0];
     const boxHalf = renderBox.half ?? [18, 0.6, 18];
 
-    const rad = (d) => (d * Math.PI) / 180;
-    const cross = (a, b) => [
-      a[1] * b[2] - a[2] * b[1],
-      a[2] * b[0] - a[0] * b[2],
-      a[0] * b[1] - a[1] * b[0],
-    ];
-    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    const len = (a) => Math.hypot(a[0], a[1], a[2]) || 1;
-    const norm = (a) => {
-      const L = len(a);
-      return [a[0] / L, a[1] / L, a[2] / L];
-    };
-    const wv3 = (ofs, v) => {
-      dv.setFloat32(ofs, v[0], true);
-      dv.setFloat32(ofs + 4, v[1], true);
-      dv.setFloat32(ofs + 8, v[2], true);
-      dv.setFloat32(ofs + 12, 0.0, true);
-    };
-
     let camPos, right, up, fwd, fovYRad, aspect, sunDir;
 
     if (
@@ -2890,29 +2825,29 @@ export class CloudComputeBuilder {
       right = opts.cam.right;
       up = opts.cam.up;
       fwd = opts.cam.fwd;
-      fovYRad = ((opts.cam.fovYDeg ?? 60) * Math.PI) / 180;
+      fovYRad = radDeg(opts.cam.fovYDeg ?? 60);
       aspect = opts.cam.aspect ?? 1.0;
       sunDir = opts.sunDir ?? [0, 1, 0];
     } else {
-      const yaw = rad(opts.yawDeg ?? 0);
-      const pitch = rad(opts.pitchDeg ?? 0);
+      const yaw = radDeg(opts.yawDeg ?? 0);
+      const pitch = radDeg(opts.pitchDeg ?? 0);
       const cp = Math.cos(pitch),
         sp = Math.sin(pitch);
       const cy = Math.cos(yaw),
         sy = Math.sin(yaw);
-      fwd = norm([sy * cp, sp, cy * cp]);
+      fwd = norm3([sy * cp, sp, cy * cp]);
       const upRef =
-        Math.abs(dot(fwd, [0, 1, 0])) > 0.999 ? [0, 0, 1] : [0, 1, 0];
-      right = norm(cross(upRef, fwd));
-      up = cross(fwd, right);
+        Math.abs(dot3(fwd, [0, 1, 0])) > 0.999 ? [0, 0, 1] : [0, 1, 0];
+      right = norm3(cross3(upRef, fwd));
+      up = cross3(fwd, right);
       const zoom = opts.zoom ?? 3.0;
       camPos = [-fwd[0] * zoom, -fwd[1] * zoom, -fwd[2] * zoom];
-      fovYRad = rad(opts.fovYDeg ?? 60);
+      fovYRad = radDeg(opts.fovYDeg ?? 60);
       aspect = opts.aspect ?? 1.0;
-      const sAz = rad(opts.sunAzimuthDeg ?? 45);
-      const sEl = rad(opts.sunElevationDeg ?? 20);
+      const sAz = radDeg(opts.sunAzimuthDeg ?? 45);
+      const sEl = radDeg(opts.sunElevationDeg ?? 20);
       const cel = Math.cos(sEl);
-      sunDir = norm([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
+      sunDir = norm3([cel * Math.sin(sAz), Math.sin(sEl), cel * Math.cos(sAz)]);
     }
 
     const compositeQuality = Math.max(0, Math.min(2, opts.compositeQuality ?? 2)) >>> 0;
@@ -2922,24 +2857,24 @@ export class CloudComputeBuilder {
     dv.setUint32(4, compositeQuality, true);
     dv.setFloat32(8, styleShadowDarkness, true);
     dv.setFloat32(12, 0.0, true);
-    wv3(16, camPos);
-    wv3(32, right);
-    wv3(48, up);
-    wv3(64, fwd);
+    writeVec3Padded(dv, 16, camPos);
+    writeVec3Padded(dv, 32, right);
+    writeVec3Padded(dv, 48, up);
+    writeVec3Padded(dv, 64, fwd);
     dv.setFloat32(80, fovYRad, true);
     dv.setFloat32(84, aspect, true);
     dv.setFloat32(88, exposure, true);
     dv.setFloat32(92, sunBloom, true);
-    wv3(96, sunDir);
-    wv3(112, skyColor);
+    writeVec3Padded(dv, 96, sunDir);
+    writeVec3Padded(dv, 112, skyColor);
     dv.setUint32(128, gradeStyle, true);
     dv.setFloat32(132, styleShadowStrength, true);
     dv.setFloat32(136, styleColorLift, true);
     dv.setFloat32(140, styleSaturation, true);
-    wv3(144, sunColorTint);
-    wv3(160, lightTint);
-    wv3(176, shadowTint);
-    wv3(192, edgeTint);
+    writeVec3Padded(dv, 144, sunColorTint);
+    writeVec3Padded(dv, 160, lightTint);
+    writeVec3Padded(dv, 176, shadowTint);
+    writeVec3Padded(dv, 192, edgeTint);
     dv.setFloat32(208, styleRimStrength, true);
     dv.setFloat32(212, styleSunBleed, true);
     dv.setFloat32(216, styleShadowEdge, true);
@@ -2956,8 +2891,8 @@ export class CloudComputeBuilder {
     dv.setFloat32(260, silverExponent, true);
     dv.setFloat32(264, outputWidth, true);
     dv.setFloat32(268, outputHeight, true);
-    wv3(272, boxCenter);
-    wv3(288, boxHalf);
+    writeVec3Padded(dv, 272, boxCenter);
+    writeVec3Padded(dv, 288, boxHalf);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }

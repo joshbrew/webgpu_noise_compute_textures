@@ -87,7 +87,6 @@ let workerReproj = null,
 // tuning
 let workerTuning = null;
 let workerTuningVersion = 0;
-let lastAppliedTuningVersion = -1;
 let lastAppliedTuningSignature = "";
 
 // loop and transform state
@@ -134,7 +133,6 @@ const LOOP_TARGET_MS = 1000 / 60;
 const FRAME_LOG_EVERY = 240;
 const LOOP_MAX_GPU_FRAMES_IN_FLIGHT = 3;
 const CAMERA_RESET_FRAMES = 1;
-const CAMERA_SIG_EPS = 1e-4;
 let submittedFrameCount = 0;
 let loopGpuFences = [];
 let lastViewSignature = null;
@@ -151,9 +149,7 @@ let reprojResetFrames = 0;
 // -----------------------------------------------------------------------------
 // startup deferral helpers
 // -----------------------------------------------------------------------------
-const STARTUP_DEFER_MS = 0;
-
-function deferToBrowser(ms = STARTUP_DEFER_MS) {
+function deferToBrowser(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -1238,11 +1234,6 @@ function normalizeReproj(r) {
   return out;
 }
 
-function getReprojCoarseFactor(r, fallback = 1) {
-  const rp = r && typeof r === "object" ? r : null;
-  return Math.max(1, (rp?.coarseFactor || rp?.subsample || fallback || 1) | 0);
-}
-
 function normalizeRenderScaleDivider(value, fallback = 3) {
   const v = Number.isFinite(+value) ? Math.floor(+value) : fallback;
   return Math.max(1, Math.min(8, v));
@@ -1250,10 +1241,6 @@ function normalizeRenderScaleDivider(value, fallback = 3) {
 
 function previewRenderScaleDivider(preview) {
   return normalizeRenderScaleDivider(preview?.renderScaleDivider, 3);
-}
-
-function renderScaleDividerCoarseFactor(preview) {
-  return previewRenderScaleDivider(preview);
 }
 
 function finiteNumber(v, fallback) {
@@ -1287,82 +1274,120 @@ function signatureScalar(v, digits = 5) {
   return Math.round(n * scale) / scale;
 }
 
-function signatureValue(v) {
-  if (Array.isArray(v)) return v.map((x) => signatureValue(x));
-  if (v && typeof v === "object") {
-    return Object.keys(v)
-      .sort()
-      .map((k) => [k, signatureValue(v[k])]);
-  }
-  return typeof v === "number" ? signatureScalar(v) : v;
+function signatureVec3(v, fallback) {
+  const a = Array.isArray(v) ? v : fallback;
+  return `${signatureScalar(a?.[0] ?? fallback[0])},${signatureScalar(a?.[1] ?? fallback[1])},${signatureScalar(a?.[2] ?? fallback[2])}`;
+}
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function signatureParam(params, key) {
+  return hasOwn(params, key) ? signatureScalar(params[key]) : "";
+}
+
+function signatureParamVec3(params, key, fallback) {
+  return hasOwn(params, key) ? signatureVec3(params[key], fallback) : "";
+}
+
+function cloudParamSignature(params = {}) {
+  return [
+    signatureParam(params, "globalCoverage"),
+    signatureParam(params, "globalDensity"),
+    signatureParam(params, "cloudAnvilAmount"),
+    signatureParam(params, "cloudBeer"),
+    signatureParam(params, "attenuationClamp"),
+    signatureParam(params, "inScatterG"),
+    signatureParam(params, "silverIntensity"),
+    signatureParam(params, "silverExponent"),
+    signatureParam(params, "outScatterG"),
+    signatureParam(params, "inVsOut"),
+    signatureParam(params, "outScatterAmbientAmt"),
+    signatureParam(params, "ambientMinimum"),
+    signatureParamVec3(params, "sunColor", [1.0, 0.985, 0.95]),
+    signatureParam(params, "densityDivMin"),
+    signatureParam(params, "silverDirectionBias"),
+    signatureParam(params, "silverHorizonBoost"),
+    signatureParamVec3(params, "frontLightColor", [1.0, 1.0, 1.0]),
+    signatureParamVec3(params, "shadowLightColor", [0.62, 0.68, 0.78]),
+  ].join("|");
 }
 
 function cloudSceneSignature(box, params) {
-  return JSON.stringify({
-    box: signatureValue(box),
-    params: signatureValue(params || {}),
-  });
+  return [
+    signatureVec3(box.center, [0, 0, 0]),
+    signatureVec3(box.half, [18, 0.3, 18]),
+    signatureScalar(box.uvScale ?? 1),
+    cloudParamSignature(params || {}),
+  ].join("|");
 }
 
 function cloudViewSignature(preview, box, aspect) {
   const cam = preview?.cam || {};
   const sun = preview?.sun || {};
-  return JSON.stringify({
-    cam: {
-      x: signatureScalar(cam.x || 0),
-      y: signatureScalar(cam.y || 0),
-      z: signatureScalar(cam.z || 0),
-      yawDeg: signatureScalar(cam.yawDeg || 0),
-      pitchDeg: signatureScalar(cam.pitchDeg || 0),
-      fovYDeg: signatureScalar(cam.fovYDeg || 60),
-      aspect: signatureScalar(aspect),
-    },
-    sun: {
-      azDeg: signatureScalar(sun.azDeg || 0),
-      elDeg: signatureScalar(sun.elDeg || 0),
-    },
-    boxY: [
-      signatureScalar(box.center[1] - box.half[1]),
-      signatureScalar(box.center[1] + box.half[1]),
-      signatureScalar(box.uvScale),
-    ],
-  });
+  return [
+    signatureScalar(cam.x || 0),
+    signatureScalar(cam.y || 0),
+    signatureScalar(cam.z || 0),
+    signatureScalar(cam.yawDeg || 0),
+    signatureScalar(cam.pitchDeg || 0),
+    signatureScalar(cam.fovYDeg || 60),
+    signatureScalar(aspect),
+    signatureScalar(sun.azDeg || 0),
+    signatureScalar(sun.elDeg || 0),
+    signatureScalar(box.center[1] - box.half[1]),
+    signatureScalar(box.center[1] + box.half[1]),
+    signatureScalar(box.uvScale),
+  ].join("|");
 }
 
-function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, outputWidth = MAIN_W, outputHeight = MAIN_H) {
-  return JSON.stringify({
+function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, cloudBox = null, outputWidth = MAIN_W, outputHeight = MAIN_H) {
+  const cam = preview?.cam || {};
+  const sun = preview?.sun || {};
+  const renderBox = cloudBox || previewCloudBox(preview || {});
+  return [
     layerIndex,
-    cam: signatureValue(preview?.cam || {}),
-    sun: signatureValue(preview?.sun || {}),
-    aspect: signatureScalar(aspect),
-    exposure: signatureScalar(preview?.exposure || 1.0),
-    sky: signatureValue(preview?.sky || [0.5, 0.6, 0.8]),
-    gradeStyle: preview?.gradeStyle ?? 1,
-    sunTint: signatureValue(preview?.sunTint || [1.0, 1.0, 1.0]),
-    cloudLitTint: signatureValue(preview?.cloudLitTint || [1.0, 1.0, 1.0]),
-    cloudShadowTint: signatureValue(preview?.cloudShadowTint || [1.0, 1.0, 1.0]),
-    edgeTint: signatureValue(preview?.edgeTint || [1.0, 1.0, 1.0]),
-    styleShadowStrength: signatureScalar(preview?.styleShadowStrength ?? 0.88),
-    styleShadowEdge: signatureScalar(preview?.styleShadowEdge ?? 0.0),
-    styleShadowDarkness: signatureScalar(preview?.styleShadowDarkness ?? 0.0),
-    styleColorLift: signatureScalar(preview?.styleColorLift ?? 1.08),
-    styleSaturation: signatureScalar(preview?.styleSaturation ?? 1.02),
-    styleRimStrength: signatureScalar(preview?.styleRimStrength ?? 0.86),
-    styleSunBleed: signatureScalar(preview?.styleSunBleed ?? 0.82),
-    styleMidLift: signatureScalar(preview?.styleMidLift ?? 0.88),
-    godRaysEnabled: !!preview?.godRaysEnabled,
-    godRayStrength: signatureScalar(preview?.godRayStrength ?? 0.0),
-    godRayLength: signatureScalar(preview?.godRayLength ?? 1.0),
-    godRayFalloff: signatureScalar(preview?.godRayFalloff ?? 1.55),
-    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.0),
-    fogDensity: signatureScalar(preview?.fogDensity ?? 0.34),
-    fogHorizon: signatureScalar(preview?.fogHorizon ?? 0.30),
-    fogSun: signatureScalar(preview?.fogSun ?? 1.50),
-    silverIntensity: signatureScalar(cloudParams?.silverIntensity ?? 1.15),
-    silverExponent: signatureScalar(cloudParams?.silverExponent ?? 1.65),
-    outputWidth: outputWidth | 0,
-    outputHeight: outputHeight | 0,
-  });
+    signatureScalar(cam.x || 0),
+    signatureScalar(cam.y || 0),
+    signatureScalar(cam.z || 0),
+    signatureScalar(cam.yawDeg || 0),
+    signatureScalar(cam.pitchDeg || 0),
+    signatureScalar(cam.fovYDeg || 60),
+    signatureScalar(sun.azDeg || 0),
+    signatureScalar(sun.elDeg || 0),
+    signatureScalar(sun.bloom || 0),
+    signatureScalar(aspect),
+    signatureScalar(preview?.exposure || 1.0),
+    signatureVec3(preview?.sky, [0.5, 0.6, 0.8]),
+    preview?.gradeStyle ?? 1,
+    signatureVec3(preview?.sunTint, [1.0, 1.0, 1.0]),
+    signatureVec3(preview?.cloudLitTint, [1.0, 1.0, 1.0]),
+    signatureVec3(preview?.cloudShadowTint, [1.0, 1.0, 1.0]),
+    signatureVec3(preview?.edgeTint, [1.0, 1.0, 1.0]),
+    signatureVec3(renderBox.center, [0, 0, 0]),
+    signatureVec3(renderBox.half, [18, 0.6, 18]),
+    signatureScalar(preview?.styleShadowStrength ?? 0.88),
+    signatureScalar(preview?.styleShadowEdge ?? 0.0),
+    signatureScalar(preview?.styleShadowDarkness ?? 0.0),
+    signatureScalar(preview?.styleColorLift ?? 1.08),
+    signatureScalar(preview?.styleSaturation ?? 1.02),
+    signatureScalar(preview?.styleRimStrength ?? 0.86),
+    signatureScalar(preview?.styleSunBleed ?? 0.82),
+    signatureScalar(preview?.styleMidLift ?? 0.88),
+    preview?.godRaysEnabled ? 1 : 0,
+    signatureScalar(preview?.godRayStrength ?? 0.0),
+    signatureScalar(preview?.godRayLength ?? 1.0),
+    signatureScalar(preview?.godRayFalloff ?? 1.55),
+    signatureScalar(preview?.alphaFloor ?? 0.0),
+    signatureScalar(preview?.fogDensity ?? 0.34),
+    signatureScalar(preview?.fogHorizon ?? 0.30),
+    signatureScalar(preview?.fogSun ?? 1.50),
+    signatureScalar(cloudParams?.silverIntensity ?? 1.15),
+    signatureScalar(cloudParams?.silverExponent ?? 1.65),
+    outputWidth | 0,
+    outputHeight | 0,
+  ].join("|");
 }
 
 function resetFrameStateCaches() {
@@ -1483,21 +1508,20 @@ function mergeTuningPatch(patch) {
 function applyWorkerTuning(cloudBox = null) {
   const base = workerTuning && typeof workerTuning === "object" ? workerTuning : {};
   const autoThick = autoThickBoxTuning(cloudBox || previewCloudBox(lastRunPayload?.preview || {}));
-  const appliedTuning = Object.assign({}, autoThick, base);
-  const tuningSignature = JSON.stringify([
+  const tuningSignature = [
     workerTuningVersion,
     autoThick.thickBoxPerf,
     autoThick.thickStepBoost,
     autoThick.thickDetailSkip,
     autoThick.thickLightSkip,
-  ]);
+  ].join("|");
 
   if (tuningSignature === lastAppliedTuningSignature) return false;
 
   try {
     if (cb && typeof cb.setTuning === "function") {
+      const appliedTuning = Object.assign({}, autoThick, base);
       cb.setTuning(appliedTuning);
-      lastAppliedTuningVersion = workerTuningVersion;
       lastAppliedTuningSignature = tuningSignature;
 
       if (typeof appliedTuning.lodBiasWeather === "number" && typeof cb?.setPerfParams === "function") {
@@ -1539,9 +1563,9 @@ function roundSig(v, scale = 10000) {
   return Number.isFinite(n) ? Math.round(n * scale) / scale : 0;
 }
 
-function makeColorSignatureArray(arr, fallback = [1, 1, 1]) {
+function makeColorSignature(arr, fallback = [1, 1, 1]) {
   const a = Array.isArray(arr) ? arr : fallback;
-  return [roundSig(a[0], 1000), roundSig(a[1], 1000), roundSig(a[2], 1000)];
+  return `${roundSig(a[0], 1000)},${roundSig(a[1], 1000)},${roundSig(a[2], 1000)}`;
 }
 
 function makeViewSignature(preview, w, h) {
@@ -1560,11 +1584,11 @@ function makeViewSignature(preview, w, h) {
     roundSig(preview?.exposure, 1000),
     previewRenderScaleDivider(preview),
     preview?.gradeStyle ?? 0,
-    ...makeColorSignatureArray(preview?.sky, [0.5, 0.6, 0.8]),
-    ...makeColorSignatureArray(preview?.sunTint, [1, 1, 1]),
-    ...makeColorSignatureArray(preview?.cloudLitTint, [1, 1, 1]),
-    ...makeColorSignatureArray(preview?.cloudShadowTint, [1, 1, 1]),
-    ...makeColorSignatureArray(preview?.edgeTint, [1, 1, 1]),
+    makeColorSignature(preview?.sky, [0.5, 0.6, 0.8]),
+    makeColorSignature(preview?.sunTint, [1, 1, 1]),
+    makeColorSignature(preview?.cloudLitTint, [1, 1, 1]),
+    makeColorSignature(preview?.cloudShadowTint, [1, 1, 1]),
+    makeColorSignature(preview?.edgeTint, [1, 1, 1]),
     roundSig(preview?.styleShadowStrength ?? 0.88, 1000),
     roundSig(preview?.styleShadowEdge ?? 0.0, 1000),
     roundSig(preview?.styleShadowDarkness ?? 0.0, 1000),
@@ -1718,7 +1742,7 @@ async function runFrame({
   syncBaseInputMaps();
 
   const workerTemporalCellRate = normalizeTemporalCellRate(workerReproj?.temporalCellRate);
-  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, renderScaleDividerCoarseFactor(preview));
+  let effectiveCoarseFactor = Math.max(1, coarseFactor | 0, previewRenderScaleDivider(preview));
   const coarseComputeMode = effectiveCoarseFactor >= 2;
   const useReproj = !!(workerReproj && workerReproj.enabled && !coarseComputeMode);
   const useTemporalCells = workerTemporalCellRate > 1;
@@ -1912,7 +1936,7 @@ async function runFrame({
   const shouldWaitForGpu = !!waitForGpu;
   const tP0 = performance.now();
   if (typeof cb.ensureComputePipelineReady === "function") {
-    await cb.ensureComputePipelineReady();
+    cb.ensureComputePipelineReady();
   }
   const tP1 = performance.now();
   const tAll0 = performance.now();
@@ -1933,15 +1957,12 @@ async function runFrame({
   }
   const tC1 = performance.now();
 
-  const presentDivider = 1;
-  const presentW = MAIN_W;
-  const presentH = MAIN_H;
-  ensureMainPresentSize(presentW, presentH);
+  ensureMainPresentSize(MAIN_W, MAIN_H);
 
   const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
 
   const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
-  const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, MAIN_W, MAIN_H);
+  const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, cloudBox, MAIN_W, MAIN_H);
   if (renderSig !== lastRenderUniformSignature) {
     cb._writeRenderUniforms({
       layerIndex,
@@ -1954,6 +1975,7 @@ async function runFrame({
         aspect,
       },
       sunDir,
+      box: cloudBox,
       exposure: preview?.exposure || 1.0,
       skyColor: preview?.sky || [0.5, 0.6, 0.8],
       sunBloom: preview?.sun?.bloom || 0.0,
@@ -2051,10 +2073,9 @@ async function runFrame({
     waitedForGpu: shouldWaitForGpu,
     coarseFactor: cf,
     directFullResReconstruction: !!encodedDispatch.directFullResReconstruction,
-    directPreview: !!encodedDispatch.directPreview,
-    presentDivider,
-    presentWidth: presentW,
-    presentHeight: presentH,
+    presentDivider: 1,
+    presentWidth: MAIN_W,
+    presentHeight: MAIN_H,
     resetReprojection: resetReprojThisFrame,
     temporalCellRate: workerTemporalCellRate,
     temporalCellPhase: workerReproj?.temporalCellPhase ?? 0,
@@ -2188,7 +2209,7 @@ function startLoop() {
         if (lastRunPayload) {
           lastRunPayload.tileTransforms = null;
           lastRunPayload.noiseTransforms = null;
-          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview);
+          const qCoarse = previewRenderScaleDivider(lastRunPayload.preview);
           if (workerReproj) {
             lastRunPayload.reproj = Object.assign({}, workerReproj, { resetHistory: false });
             lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
@@ -2530,7 +2551,7 @@ async function _handleMessage(ev) {
         lastRunPayload.reproj = workerReproj
           ? Object.assign({}, workerReproj, { resetHistory: false })
           : workerReproj;
-        const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload.preview);
+        const qCoarse = previewRenderScaleDivider(lastRunPayload.preview);
         if (workerReproj) {
           lastRunPayload.coarseFactor = Math.max(1, qCoarse | 0);
           lastRunPayload.reproj.coarseFactor = lastRunPayload.coarseFactor;
@@ -2543,7 +2564,7 @@ async function _handleMessage(ev) {
       if (cb) {
         if (workerPerf) cb.setPerfParams(workerPerf);
         if (workerReproj) {
-          const qCoarse = renderScaleDividerCoarseFactor(lastRunPayload?.preview);
+          const qCoarse = previewRenderScaleDivider(lastRunPayload?.preview);
           const cf = Math.max(1, qCoarse | 0);
           workerReproj.coarseFactor = cf;
           workerReproj.scale = 1 / Math.max(1, cf * cf);
@@ -2573,7 +2594,7 @@ async function _handleMessage(ev) {
             cloudParams: incomingCloudParams || {},
             tileTransforms: incomingTransforms || null,
             reproj: incomingReproj || workerReproj || null,
-            coarseFactor: renderScaleDividerCoarseFactor(incomingPreview || {}),
+            coarseFactor: previewRenderScaleDivider(incomingPreview || {}),
           };
         }
 
@@ -2621,7 +2642,7 @@ async function _handleMessage(ev) {
         }
 
         const previewForCoarse = lastRunPayload.preview || incomingPreview || {};
-        const qCoarse = renderScaleDividerCoarseFactor(previewForCoarse);
+        const qCoarse = previewRenderScaleDivider(previewForCoarse);
         lastRunPayload.coarseFactor = Math.max(1, qCoarse);
         if (workerReproj) {
           workerReproj.coarseFactor = lastRunPayload.coarseFactor;
