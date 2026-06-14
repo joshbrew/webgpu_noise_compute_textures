@@ -5123,7 +5123,7 @@ function scheduleInitialBakeAndRender() {
         tileTransforms: safeClone(tileTransforms),
         progressive: true,
         skipDebug: !!STARTUP_PROFILE.skipStartupDebug,
-        skipFinalDebug: false,
+        skipFinalDebug: true,
       });
 
       await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
@@ -5149,7 +5149,9 @@ function scheduleInitialBakeAndRender() {
       ensureCoarseInPayload(payload);
 
       const { timings } = await rpc("runFrame", payload);
-      await refreshDebugPreviews();
+      setTimeout(() => {
+        refreshDebugPreviews().catch((e) => console.warn("startup debug refresh failed", e));
+      }, 0);
       console.log("[BENCH] init frame timings:", timings);
     } catch (err) {
       console.error("initial cloud bake/render failed", err);

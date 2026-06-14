@@ -6,6 +6,13 @@ const VIEW_EXTINCTION_SCALE: f32 = 0.075;
 const SUN_EXTINCTION_SCALE: f32 = 0.014;
 const DENSITY_LIGHT_SCALE: f32 = 0.01;
 
+// 0 = local AABB clouds, 1 = spherical planet clouds, 2 = aurora shell.
+// The JavaScript side builds one full-detail pipeline per active mode. This is
+// compile-time specialization only; it does not change the visual quality path.
+override CLOUD_RENDER_MODE: u32 = 0u;
+override CLOUD_USE_CUSTOM_POS: u32 = 0u;
+override CLOUD_WRITE_RGB: u32 = 1u;
+
 // ---------------------- TUNING UNIFORM
 struct CloudTuning {
   maxSteps: i32,
@@ -499,12 +506,36 @@ fn intersectAABB_robust(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec
 }
 
 fn sphericalCloudMode() -> bool {
-  return opt._r0 >= 0.5;
+  return CLOUD_RENDER_MODE != 0u;
 }
 
 
 fn auroraLayerMode() -> bool {
-  return V.volumeLayers > 1.5;
+  return CLOUD_RENDER_MODE == 2u;
+}
+
+fn cloudModeF32(boxVal: f32, sphereVal: f32, auroraVal: f32) -> f32 {
+  if (auroraLayerMode()) {
+    return auroraVal;
+  }
+  if (sphericalCloudMode()) {
+    return sphereVal;
+  }
+  return boxVal;
+}
+
+fn auroraModeF32(baseVal: f32, auroraVal: f32) -> f32 {
+  if (auroraLayerMode()) {
+    return auroraVal;
+  }
+  return baseVal;
+}
+
+fn normalizeOr(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+  if (dot(v, v) > EPS) {
+    return normalize(v);
+  }
+  return fallback;
 }
 
 fn auroraPoleDir() -> vec3<f32> {
@@ -691,11 +722,7 @@ fn sphericalDriftedWorld(posWorld: vec3<f32>, offset: vec3<f32>) -> vec3<f32> {
 }
 
 fn sphereUVFromWorld(posWorld: vec3<f32>) -> vec2<f32> {
-  let rel = posWorld - B.center;
-  var n = vec3<f32>(0.0, 1.0, 0.0);
-  if (dot(rel, rel) > EPS) {
-    n = normalize(rel);
-  }
+  let n = normalizeOr(posWorld - B.center, vec3<f32>(0.0, 1.0, 0.0));
 
   // Planet mesh parity: Babylon world Y is the planet polar axis, and longitude
   // runs around X/Z. This matches the CPU/GPU planet lat/lon mesh convention.
@@ -703,6 +730,13 @@ fn sphereUVFromWorld(posWorld: vec3<f32>) -> vec2<f32> {
   let u = fract(phi / (2.0 * PI));
   let v = acos(clamp(n.y, -1.0, 1.0)) / PI;
   return vec2<f32>(u, clamp(v, 0.0, 1.0));
+}
+
+fn shellUVFromWorld(posWorld: vec3<f32>) -> vec2<f32> {
+  if (auroraLayerMode()) {
+    return auroraUVFromWorld(posWorld);
+  }
+  return sphereUVFromWorld(posWorld);
 }
 
 fn sphericalWarpDampingFromUV(uv: vec2<f32>) -> f32 {
@@ -1071,7 +1105,7 @@ fn weatherUV_from(pos_world: vec3<f32>, wScale: f32) -> vec2<f32> {
   let wAxis = axisOrOne3(NTransform.weatherAxisScale);
 
   if (sphericalCloudMode()) {
-    let uv = select(sphereUVFromWorld(pos_world), auroraUVFromWorld(pos_world), auroraLayerMode());
+    let uv = shellUVFromWorld(pos_world);
     let uvOffset = NTransform.weatherOffsetWorld.xz;
     let centered = (uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(wAxis.x, wAxis.z) * max(wScale, EPS);
     return centered + vec2<f32>(0.5, 0.5) + uvOffset;
@@ -1182,7 +1216,10 @@ fn activeColumnYRange(wm: vec4<f32>) -> vec2<f32> {
 }
 
 fn activeColumnGuard() -> f32 {
-  let boxH = select(max(B.half.y * 2.0, EPS), shellHeight(), sphericalCloudMode());
+  var boxH = max(B.half.y * 2.0, EPS);
+  if (sphericalCloudMode()) {
+    boxH = shellHeight();
+  }
   let jitterRoom = abs(TUNE.baseJitterFrac) + abs(TUNE.topJitterFrac) * 0.75;
   return clamp(boxH * (0.055 + jitterRoom) + wg_finestWorld * 2.0, 0.02, max(boxH * 0.48, 0.03));
 }
@@ -1213,7 +1250,7 @@ fn verticalColumnSkipDistance(
     let guard = activeColumnGuard();
     let rel = p - B.center;
     let r = length(rel);
-    let n = select(vec3<f32>(0.0, 1.0, 0.0), rel / max(r, EPS), r > EPS);
+    let n = normalizeOr(rel, vec3<f32>(0.0, 1.0, 0.0));
     let radialVel = dot(rd, n);
     let activeMinR = rr.x - guard;
     let activeMaxR = rr.y + guard;
@@ -1684,7 +1721,7 @@ fn auroraCurtainDensity(ph: f32, wm: vec4<f32>, s: vec4<f32>, det: vec3<f32>, po
 
 fn auroraEmissionColor(pos: vec3<f32>, ph: f32, viewDir: vec3<f32>, sunDir: vec3<f32>, auroraMask: f32) -> vec3<f32> {
   let relShell = pos - B.center;
-  let shellN = normalize(select(vec3<f32>(0.0, 1.0, 0.0), relShell, dot(relShell, relShell) > EPS));
+  let shellN = normalizeOr(relShell, vec3<f32>(0.0, 1.0, 0.0));
   let nightBoost = 1.0 - smoothstep(-0.18, 0.42, dot(shellN, sunDir));
   let limb = pow(1.0 - saturate(dot(shellN, viewDir)), 1.85);
   let phs = saturate(ph);
@@ -2288,8 +2325,8 @@ fn insideFaceFade(p: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> f32 {
     let outer = 1.0 - smoothstep(radii.y - feather, radii.y + feather, r);
 
     let camRel = V.camPos - B.center;
-    let shellN = normalize(select(vec3<f32>(0.0, 1.0, 0.0), rel, r > EPS));
-    let camN = normalize(select(vec3<f32>(0.0, 0.0, 1.0), camRel, dot(camRel, camRel) > EPS));
+    let shellN = normalizeOr(rel, vec3<f32>(0.0, 1.0, 0.0));
+    let camN = normalizeOr(camRel, vec3<f32>(0.0, 0.0, 1.0));
     let hemiDot = dot(shellN, camN);
     let visibleHemisphere = select(
       smoothstep(-0.075, 0.025, hemiDot),
@@ -2379,7 +2416,7 @@ fn sunTransmittance(
   let sideA = normalize(sideARaw);
   let sideB = normalize(cross(sideA, sunDir));
   let jitterAmpBase = min(lightStep * 0.16, max(wg_finestWorld * 0.85, verticalReferenceHalfY() * 0.010));
-  let jitterAmp = jitterAmpBase * select(1.0, select(0.42, 0.05, auroraLayerMode()), sphericalCloudMode());
+  let jitterAmp = jitterAmpBase * cloudModeF32(1.0, 0.42, 0.05);
 
   for (var i: i32 = 0; i < steps; i = i + 1) {
     let jf = f32(i) + jitter01 * 23.17;
@@ -2502,6 +2539,7 @@ fn computeCloud(
 
   // pixel and guard
   let temporalRate = temporalCellRateNormalized();
+  let temporalHistoryActive = reproj.enabled == 1u || temporalRate > 1u || reproj.temporalBlend > 0.0001;
   let compactInterleave = reproj.compactInterleave != 0u && temporalRate > 1u && reproj.frameIndex > 0u;
 
   var pixI = vec2<i32>(i32(gid_in.x), i32(gid_in.y)) + vec2<i32>(frame.originX, frame.originY);
@@ -2532,7 +2570,7 @@ fn computeCloud(
 
   // ray origin
   var rayRo = V.camPos;
-  if (opt.useCustomPos == 1u) {
+  if (CLOUD_USE_CUSTOM_POS != 0u) {
     let idx = u32(pixI.x) + u32(pixI.y) * frame.fullWidth;
     rayRo = posBuf[idx].xyz;
   }
@@ -2546,7 +2584,10 @@ fn computeCloud(
   let jitterPixScreen = vec2<f32>(rayJx, rayJy) * 0.18;
   // Spherical planet clouds must stay locked to world/sphere coordinates.
   // Screen-space subpixel jitter makes the volume crawl relative to the camera.
-  let jitterPix = select(jitterPixScreen, vec2<f32>(0.0, 0.0), sphericalCloudMode());
+  var jitterPix = jitterPixScreen;
+  if (sphericalCloudMode()) {
+    jitterPix = vec2<f32>(0.0, 0.0);
+  }
   let jitteredUvPix = (vec2<f32>(pixI) + 0.5 + jitterPix) / fullResF;
   let ndc = jitteredUvPix * 2.0 - vec2<f32>(1.0, 1.0);
   let tanY = tan(0.5 * V.fovY);
@@ -2565,7 +2606,7 @@ fn computeCloud(
   if (ti.x > ti.y || ti.y <= 0.0) {
     let z = vec4<f32>(0.0);
     textureStore(outTex, pixI, frame.layerIndex, z);
-    if (reproj.enabled == 1u || temporalRate > 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
+    if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
     return;
   }
 
@@ -2574,7 +2615,7 @@ fn computeCloud(
   if (t0 >= t1) {
     let z = vec4<f32>(0.0);
     textureStore(outTex, pixI, frame.layerIndex, z);
-    if (reproj.enabled == 1u || temporalRate > 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
+    if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
     return;
   }
 
@@ -2584,7 +2625,7 @@ fn computeCloud(
   if (max(segY0, segY1) < globalYR.x || min(segY0, segY1) > globalYR.y) {
     let z = vec4<f32>(0.0);
     textureStore(outTex, pixI, frame.layerIndex, z);
-    if (reproj.enabled == 1u || temporalRate > 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
+    if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
     return;
   }
 
@@ -2604,7 +2645,7 @@ fn computeCloud(
     if (t0 >= t1) {
       let z = vec4<f32>(0.0);
       textureStore(outTex, pixI, frame.layerIndex, z);
-      if (reproj.enabled == 1u || temporalRate > 1u) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
+      if (temporalHistoryActive) { store_history_full_res_if_owner(pixI, frame.layerIndex, z); }
       return;
     }
   }
@@ -2646,12 +2687,14 @@ fn computeCloud(
   // noise and jitter
   let bnPix = distanceBlueScreen(pixI, entryRayDistance, effectiveNearFluffDist);
   let entryWorldForNoise = rayRo + rayRd * max(t0, 0.0);
-  let entryUvForNoise = select(sphereUVFromWorld(entryWorldForNoise), auroraUVFromWorld(entryWorldForNoise), auroraLayerMode());
   // World/sphere-locked smooth noise. Do not include frameIndex here:
   // frame-varying jitter turns x4 interleave into visible flicker.
-  let worldRandFreq = select(128.0, 56.0, auroraLayerMode());
-  let worldRand0 = smoothCellHash2D(entryUvForNoise + vec2<f32>(13.71, 4.23), worldRandFreq);
-  let rand0 = select(bnPix, worldRand0, sphericalCloudMode());
+  var rand0 = bnPix;
+  if (sphericalCloudMode()) {
+    let entryUvForNoise = shellUVFromWorld(entryWorldForNoise);
+    let worldRandFreq = auroraModeF32(128.0, 56.0);
+    rand0 = smoothCellHash2D(entryUvForNoise + vec2<f32>(13.71, 4.23), worldRandFreq);
+  }
   let entryNearF = 1.0 - smoothstep(0.0, max(effectiveNearFluffDist, EPS), entryRayDistance);
   let nearJitterScale = mix_f(1.0, 0.32, entryNearF);
 
@@ -2673,7 +2716,7 @@ fn computeCloud(
 
   var baseStep = clamp(V.stepBase, TUNE.minStep, effectiveMaxStep);
   baseStep = min(baseStep, voxelBound * mix_f(1.0, 1.65, thickPerfF));
-  let sphericalJitterScale = select(1.0, select(0.46, 0.18, auroraLayerMode()), sphericalCloudMode());
+  let sphericalJitterScale = cloudModeF32(1.0, 0.46, 0.18);
   baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter * nearJitterScale * sphericalJitterScale, rand0 * 2.0 - 1.0);
   baseStep = clamp(baseStep, TUNE.minStep, effectiveMaxStep);
 
@@ -2723,7 +2766,10 @@ fn computeCloud(
 
   var iter: i32 = 0;
 
-  let maxMarchSteps = select(TUNE.maxSteps, min(TUNE.maxSteps, 56), auroraLayerMode());
+  var maxMarchSteps = TUNE.maxSteps;
+  if (auroraLayerMode()) {
+    maxMarchSteps = min(TUNE.maxSteps, 56);
+  }
 
   loop {
     if (iter >= maxMarchSteps) { break; }
@@ -2734,7 +2780,7 @@ fn computeCloud(
     }
 
     let rayShallowF = 1.0 - smoothstep(0.025, 0.22, abs(rayRd.y));
-    let planetSliceJitterScale = select(1.0, select(0.58, 0.36, auroraLayerMode()), sphericalCloudMode());
+    let planetSliceJitterScale = cloudModeF32(1.0, 0.58, 0.36);
     let sliceJitter = saturate(TUNE.sliceJitterStrength) * mix_f(1.0, 1.55, rayShallowF) * sphericalJitterScale * planetSliceJitterScale;
     let sliceHashScreen = hash11Fast(
       f32(fullPix.x) * 0.071324 +
@@ -2767,17 +2813,17 @@ fn computeCloud(
     if (sphericalCloudMode()) {
       let sliceProbeT = clamp(t + stepLen * 0.50, t0, t1);
       let sliceProbeP = rayRo + rayRd * sliceProbeT;
-      let sliceProbeUv = select(sphereUVFromWorld(sliceProbeP), auroraUVFromWorld(sliceProbeP), auroraLayerMode());
+      let sliceProbeUv = shellUVFromWorld(sliceProbeP);
       let sliceShellPhase = shellPhase01FromWorld(sliceProbeP);
       let sliceHashWorldA = smoothCellHash2D(
         sliceProbeUv + vec2<f32>(sliceShellPhase * 0.173 + rand0 * 0.019, sliceShellPhase * 0.311),
-        select(176.0, 104.0, auroraLayerMode())
+        auroraModeF32(176.0, 104.0)
       );
       let sliceHashWorldB = smoothCellHash2D(
         vec2<f32>(sliceProbeUv.x * 2.7 + sliceShellPhase * 9.0, sliceProbeUv.y * 2.1 - sliceShellPhase * 6.0),
-        select(72.0, 48.0, auroraLayerMode())
+        auroraModeF32(72.0, 48.0)
       );
-      sliceHash = mix_f(sliceHashWorldA, sliceHashWorldB, select(0.28, 0.42, auroraLayerMode()));
+      sliceHash = mix_f(sliceHashWorldA, sliceHashWorldB, auroraModeF32(0.28, 0.42));
     }
 
     // Keep the same march coverage, but de-correlate where each interval is
@@ -2795,8 +2841,8 @@ fn computeCloud(
         let midT = clamp(t + jitterWindow * 0.50, t0, sampleWindowEnd);
         let midP = rayRo + rayRd * midT;
         let midShellPhase = shellPhase01FromWorld(midP);
-        let shellStepPhase = select(1.0 / 56.0, 1.0 / 44.0, auroraLayerMode());
-        let shellJitter = (sliceHash - 0.5) * select(0.42, 0.30, auroraLayerMode());
+        let shellStepPhase = 1.0 / 44.0;
+        let shellJitter = (sliceHash - 0.5) * 0.30;
         let stableShellPhase = clamp((floor(midShellPhase / shellStepPhase) + 0.5 + shellJitter) * shellStepPhase, 0.0, 1.0);
         let shellRadii = shellNominalRadii();
         let stableRadius = mix_f(shellRadii.x, shellRadii.y, stableShellPhase);
@@ -2808,7 +2854,7 @@ fn computeCloud(
           let db = abs(shellHit.y - midT);
           let useB = hasB && (!hasA || db < da);
           let shellSampleT = select(shellHit.x, shellHit.y, useB);
-          sampleT = mix_f(sampleT, shellSampleT, detailedNearF * select(0.82, 0.62, auroraLayerMode()));
+          sampleT = mix_f(sampleT, shellSampleT, detailedNearF * 0.62);
         }
       }
     }
@@ -3027,20 +3073,23 @@ fn computeCloud(
     var planetCardF = 0.0;
     if (auroraLayerMode()) {
       let relShellStep = p - B.center;
-      let shellNStep = normalize(select(vec3<f32>(0.0, 1.0, 0.0), relShellStep, dot(relShellStep, relShellStep) > EPS));
+      let shellNStep = normalizeOr(relShellStep, vec3<f32>(0.0, 1.0, 0.0));
       let shellTangentF = 1.0 - smoothstep(0.055, 0.32, abs(dot(rayRd, shellNStep)));
       let shellInteriorF = smoothstep(0.045, 0.24, ph) * (1.0 - smoothstep(0.76, 0.98, ph));
       planetCardF = shellTangentF * shellInteriorF * 0.26;
     }
     let viewFrontOccF = frontOcclusionFactor(Tr, sampleRayDistance, effectiveNearFluffDist, densMacroSmoothed);
     let shellFrontOccF = planetCardF * smoothstep(0.040, 0.20, densMacroSmoothed) * frontOcclusionStrength() * 0.58;
-    let frontOccF = select(viewFrontOccF, max(viewFrontOccF * 0.18, shellFrontOccF), sphericalCloudMode());
-    let cloudApproachProtect = select(
-      0.0,
-      (1.0 - smoothstep(effectiveNearFluffDist * 1.10, effectiveNearFluffDist * 3.40, sampleRayDistance)) *
-        (1.0 - smoothstep(0.22, 0.74, max(farF, screenFarF))),
-      sphericalCloudMode() && !auroraLayerMode()
-    );
+    var frontOccF = viewFrontOccF;
+    if (sphericalCloudMode()) {
+      frontOccF = max(viewFrontOccF * 0.18, shellFrontOccF);
+    }
+    var cloudApproachProtect = 0.0;
+    if (sphericalCloudMode() && !auroraLayerMode()) {
+      cloudApproachProtect =
+        (1.0 - smoothstep(effectiveNearFluffDist * 1.10, effectiveNearFluffDist * 3.40, sampleRayDistance)) *
+        (1.0 - smoothstep(0.22, 0.74, max(farF, screenFarF)));
+    }
     let adaptiveStepF = max(max(max(denseInteriorStepF, farProxyStepF * 0.72), weatherProxyStepF * 0.86), frontOccF) *
       (1.0 - straightThroughViewF * 0.46) *
       (1.0 - cloudApproachProtect * 0.88);
@@ -3048,7 +3097,10 @@ fn computeCloud(
     let stepBoostMax = max(max(1.0, TUNE.thickStepBoost * 0.88), occlusionStepBoost);
     let stepBoost = mix_f(1.0, stepBoostMax, adaptiveStepF);
     let occStepLimit = max(effectiveMaxStep, effectiveMaxStep * mix_f(1.0, occlusionStepBoost, frontOccF));
-    let auroraStepLimit = select(occStepLimit, max(occStepLimit, stepLen), auroraLayerMode());
+    var auroraStepLimit = occStepLimit;
+    if (auroraLayerMode()) {
+      auroraStepLimit = max(occStepLimit, stepLen);
+    }
     let sampleStepLen = clamp(stepLen * stepBoost, TUNE.minStep, auroraStepLimit);
 
     if (densSmoothed > 0.00008) {
@@ -3081,13 +3133,15 @@ fn computeCloud(
         f32(iter) * 0.217873 +
         rand0 * 23.731
       );
-      let localUvForNoise = select(sphereUVFromWorld(p), auroraUVFromWorld(p), auroraLayerMode());
-      let localNoiseWorld = smoothCellHash2D(
-        localUvForNoise + vec2<f32>(f32(iter) * 0.0173 + rand0 * 0.047, f32(iter) * 0.0119),
-        select(256.0, 160.0, auroraLayerMode())
-      );
-      let localNoise = select(localNoiseScreen, localNoiseWorld, sphericalCloudMode());
-      let bnLocal = mix_f(rand0, localNoise, select(0.12, 0.06, auroraLayerMode()));
+      var localNoise = localNoiseScreen;
+      if (sphericalCloudMode()) {
+        let localUvForNoise = shellUVFromWorld(p);
+        localNoise = smoothCellHash2D(
+          localUvForNoise + vec2<f32>(f32(iter) * 0.0173 + rand0 * 0.047, f32(iter) * 0.0119),
+          auroraModeF32(256.0, 160.0)
+        );
+      }
+      let bnLocal = mix_f(rand0, localNoise, 0.12);
       let shadowInteriorProbe = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0));
       let proxyPerfF = max(proxyOnlyF, saturate(remap(max(farF, screenFarF), 0.45, 0.95, 0.0, 1.0)));
       let closeRayProtect = 1.0 - smoothstep(effectiveNearFluffDist * 1.00, effectiveNearFluffDist * 2.40, sampleRayDistance);
@@ -3175,7 +3229,10 @@ fn computeCloud(
       let frontCardEdge = smoothstep(0.0008, 0.045, densSmoothed);
       let viewFrontCardOcclusion = rayShallowF * frontCardWindow * frontCardDensity * frontCardEdge;
       let shellFrontCardOcclusion = planetCardF * frontCardDensity * frontCardEdge * 0.46;
-      let frontCardOcclusion = select(viewFrontCardOcclusion, shellFrontCardOcclusion, sphericalCloudMode());
+      var frontCardOcclusion = viewFrontCardOcclusion;
+      if (sphericalCloudMode()) {
+        frontCardOcclusion = shellFrontCardOcclusion;
+      }
       let cardOcclusionStrength = 1.0 + frontCardOcclusion * mix_f(1.15, 2.65, saturate(TUNE.frontOcclusionStrength));
       let cardMacroFill = max(densSmoothed, densMacroSmoothed * mix_f(0.72, 1.28, frontCardOcclusion));
       let densForOpacity = mix_f(densSmoothed, cardMacroFill, frontCardOcclusion * 0.74);
@@ -3209,7 +3266,7 @@ fn computeCloud(
 
       if (sphericalCloudMode()) {
         let relShell = p - B.center;
-        let shellN = normalize(select(vec3<f32>(0.0, 1.0, 0.0), relShell, dot(relShell, relShell) > EPS));
+        let shellN = normalizeOr(relShell, vec3<f32>(0.0, 1.0, 0.0));
         let sunDotShell = dot(shellN, sunDir);
         let spaceDay = smoothstep(-0.18, 0.42, sunDotShell);
         let spaceTerminator = smoothstep(-0.30, 0.12, sunDotShell) * (1.0 - smoothstep(0.48, 0.92, sunDotShell));
@@ -3244,7 +3301,7 @@ fn computeCloud(
 
       if (auroraLayerMode()) {
         let relShell2 = p - B.center;
-        let shellN2 = normalize(select(vec3<f32>(0.0, 1.0, 0.0), relShell2, dot(relShell2, relShell2) > EPS));
+        let shellN2 = normalizeOr(relShell2, vec3<f32>(0.0, 1.0, 0.0));
         let nightBoost2 = 1.0 - smoothstep(-0.18, 0.42, dot(shellN2, sunDir));
         let auroraPalette2 = max(mix_v3(C.frontLightColor * 1.06, C.shadowLightColor, 0.22), vec3<f32>(0.0));
         let emissiveFloor = auroraPalette2 * alpha * mix_f(0.85, 2.10, nightBoost2) * mix_f(0.80, 1.25, auroraMask);
@@ -3303,8 +3360,11 @@ fn computeCloud(
   );
   let aBoosted = min(1.0, aLifted + alphaBoostAmount * alphaBoostRamp);
   let minOutputAlphaRaw = clamp(TUNE.minOutputAlpha, 0.0, 0.45);
-  let minOutputAlpha = select(minOutputAlphaRaw, min(minOutputAlphaRaw, 0.006), auroraLayerMode());
-  let alphaGateWidth = max(minOutputAlpha * 2.25, select(0.030, 0.055, auroraLayerMode()));
+  var minOutputAlpha = minOutputAlphaRaw;
+  if (auroraLayerMode()) {
+    minOutputAlpha = min(minOutputAlphaRaw, 0.006);
+  }
+  let alphaGateWidth = max(minOutputAlpha * 2.25, auroraModeF32(0.030, 0.055));
   let outputAlphaGate = select(
     1.0,
     smoothstep(minOutputAlpha, min(minOutputAlpha + alphaGateWidth, 1.0), aBoosted),
@@ -3319,7 +3379,7 @@ fn computeCloud(
   let outputRGB = rgb * outputAlphaGate * premulLift;
 
   var newCol: vec4<f32>;
-  if (opt.writeRGB == 1u) {
+  if (CLOUD_WRITE_RGB != 0u) {
     newCol = vec4<f32>(outputRGB, outputAlpha);
   } else {
     let a = outputAlpha;
@@ -3412,13 +3472,17 @@ fn computeCloud(
           * exp(-rgbDiff * 6.0)
           * smoothstep(0.18, 0.86, min(prevCol.a, newCol.a));
         let interleaveFloor = screenInterleaveF * mix_f(0.30, 0.72, max(stableBody, interleaveStable));
-        let auroraHistoryFloor = select(0.0, 0.18 * stableBody * convWarm, auroraLayerMode());
+        var auroraHistoryFloor = 0.0;
+        if (auroraLayerMode()) {
+          auroraHistoryFloor = 0.18 * stableBody * convWarm;
+        }
         tbSafe = max(tbSafe, max(interleaveFloor, auroraHistoryFloor));
-        let historyMaxLo = select(0.90, 0.42, auroraLayerMode());
-        let historyMaxHi = select(0.985, 0.64, auroraLayerMode());
+        let historyMaxLo = auroraModeF32(0.90, 0.42);
+        let historyMaxHi = auroraModeF32(0.985, 0.64);
         tbSafe = min(tbSafe, mix_f(historyMaxLo, historyMaxHi, max(stableBody, interleaveStable)));
 
-        let historyA = clamp(prevCol.a, newCol.a - select(0.12, 0.08, auroraLayerMode()), newCol.a + select(0.12, 0.08, auroraLayerMode()));
+        let historyAlphaWindow = auroraModeF32(0.12, 0.08);
+        let historyA = clamp(prevCol.a, newCol.a - historyAlphaWindow, newCol.a + historyAlphaWindow);
         let historyCol = vec4<f32>(prevClampedRGB, historyA);
         let blended = mix_v4(newCol, historyCol, tbSafe);
         textureStore(outTex, pixI, frame.layerIndex, blended);
@@ -3427,6 +3491,8 @@ fn computeCloud(
     }
   } else {
     textureStore(outTex, pixI, frame.layerIndex, newCol);
-    store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);
+    if (temporalHistoryActive) {
+      store_history_full_res_if_owner(pixI, frame.layerIndex, newCol);
+    }
   }
 }

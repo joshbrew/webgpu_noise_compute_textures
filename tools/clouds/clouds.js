@@ -76,6 +76,8 @@ export class CloudComputeBuilder {
     // GPU objects filled in _init*
     this.module = null;
     this.pipeline = null;
+    this._computePipelineLayout = null;
+    this._computePipelines = new Map();
     this._historyCopy = null;
     this._historyCopyBgCache = new Map();
     this._historyCopyBgKeys = [];
@@ -246,13 +248,13 @@ export class CloudComputeBuilder {
         subsample: 1,
         sampleOffset: 0,
         motionIsNormalized: 0,
-        temporalBlend: 0.9,
+        temporalBlend: 0.0,
         depthTest: 0,
         depthTolerance: 0.0,
         frameIndex: 0,
         fullWidth: 0,
         fullHeight: 0,
-        temporalCellRate: 4,
+        temporalCellRate: 1,
         temporalCellPhase: 0,
         compactInterleave: 0,
       },
@@ -415,7 +417,7 @@ export class CloudComputeBuilder {
 
   _ensureComputeFormat(format) {
     const fmt = format || this.outFormat;
-    if (fmt === this.outFormat && this.pipeline && this.bgl0) return;
+    if (fmt === this.outFormat && this.bgl0) return;
     this.outFormat = fmt;
 
     const d = this.device;
@@ -423,7 +425,9 @@ export class CloudComputeBuilder {
     const cachedCompute = deviceCache.computeByFormat.get(this.outFormat);
     if (cachedCompute) {
       this.bgl0 = cachedCompute.bgl0;
-      this.pipeline = cachedCompute.pipeline;
+      this._computePipelineLayout = cachedCompute.layout;
+      this._computePipelines = cachedCompute.pipelines || new Map();
+      this.pipeline = this._computePipelines.get(this._currentComputeVariantKey()) || null;
 
       this._destroyDummyHistory();
       this._createDummyHistory();
@@ -503,16 +507,16 @@ export class CloudComputeBuilder {
       ],
     });
 
-    this.pipeline = d.createComputePipeline({
-      layout: d.createPipelineLayout({
-        bindGroupLayouts: [this.bgl0, this.bgl1],
-      }),
-      compute: { module: this.module, entryPoint: "computeCloud" },
+    this._computePipelineLayout = d.createPipelineLayout({
+      bindGroupLayouts: [this.bgl0, this.bgl1],
     });
+    this._computePipelines = new Map();
+    this.pipeline = null;
 
     deviceCache.computeByFormat.set(this.outFormat, {
       bgl0: this.bgl0,
-      pipeline: this.pipeline,
+      layout: this._computePipelineLayout,
+      pipelines: this._computePipelines,
     });
 
     this._destroyDummyHistory();
@@ -521,6 +525,46 @@ export class CloudComputeBuilder {
     this._clearBindGroupCaches();
 
     this._ensureUpsamplePipeline(this.outFormat);
+  }
+
+  _currentComputeMode() {
+    const spherical = this._dvOptions.getFloat32(16, true) >= 0.5;
+    const volumeLayers = this._dvView.getFloat32(92, true);
+    if (spherical && volumeLayers > 1.5) return 2;
+    return spherical ? 1 : 0;
+  }
+
+  _currentComputeVariantKey() {
+    const mode = Math.max(0, Math.min(2, this._currentComputeMode()));
+    const customPos = this._dvOptions.getUint32(0, true) !== 0;
+    const writeRGB = this._dvOptions.getUint32(8, true) !== 0;
+    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0);
+  }
+
+  _ensureComputePipelineForKey(key = this._currentComputeVariantKey()) {
+    const cached = this._computePipelines.get(key);
+    if (cached) return cached;
+
+    const mode = key & 3;
+    const pipeline = this.device.createComputePipeline({
+      layout: this._computePipelineLayout,
+      compute: {
+        module: this.module,
+        entryPoint: "computeCloud",
+        constants: {
+          CLOUD_RENDER_MODE: mode,
+          CLOUD_USE_CUSTOM_POS: (key & 4) ? 1 : 0,
+          CLOUD_WRITE_RGB: (key & 8) ? 1 : 0,
+        },
+      },
+    });
+    this._computePipelines.set(key, pipeline);
+    return pipeline;
+  }
+
+  ensureComputePipelineReady() {
+    this.pipeline = this._ensureComputePipelineForKey(this._currentComputeVariantKey());
+    return this.pipeline;
   }
 
   _destroyDummyHistory() {
@@ -2068,10 +2112,11 @@ export class CloudComputeBuilder {
     this._makeBindGroups();
 
     const enc = this.device.createCommandEncoder();
+    const pipeline = this.ensureComputePipelineReady();
     for (let layer = 0; layer < this.layers; ++layer) {
       this.setLayerIndex(layer);
       const pass = enc.beginComputePass();
-      pass.setPipeline(this.pipeline);
+      pass.setPipeline(pipeline);
       pass.setBindGroup(0, this._currentBg0);
       pass.setBindGroup(1, this._currentBg1);
         pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
@@ -2288,7 +2333,7 @@ export class CloudComputeBuilder {
       tile: compactShape ? compactShape.tile : 1,
     };
     const pass = enc.beginComputePass();
-    pass.setPipeline(this.pipeline);
+    pass.setPipeline(this.ensureComputePipelineReady());
     pass.setBindGroup(0, this._currentBg0);
     pass.setBindGroup(1, this._currentBg1);
     pass.dispatchWorkgroups(compactShape ? compactShape.wgX : this._wgX, compactShape ? compactShape.wgY : this._wgY, 1);
