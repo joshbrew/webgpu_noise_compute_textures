@@ -279,9 +279,9 @@ export class NoiseComputeBuilder {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // Params UBO: 22 * 4 bytes (matches WGSL struct with new fields)
+    // Params UBO: 24 * 4 bytes (matches WGSL struct with scalar/transform fields)
     this.paramsBuffer = this.device.createBuffer({
-      size: 22 * 4, // <- updated
+      size: 24 * 4, // <- updated
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -299,7 +299,7 @@ export class NoiseComputeBuilder {
 
     // Initialize with zeros / default perm
     this.queue.writeBuffer(this.optionsBuffer, 0, new ArrayBuffer(32));
-    this.queue.writeBuffer(this.paramsBuffer, 0, new ArrayBuffer(22 * 4)); // <- updated
+    this.queue.writeBuffer(this.paramsBuffer, 0, new ArrayBuffer(24 * 4)); // <- updated
     this.queue.writeBuffer(this.permBuffer, 0, new Uint32Array(512));
   }
 
@@ -570,6 +570,8 @@ export class NoiseComputeBuilder {
       heightScale = 1,
       useCustomPos = 0,
       ioFlags = 0,
+      sphereOffset = 0,
+      sphereOffset2 = 0,
     } = opts;
 
     this.useCustomPos = useCustomPos >>> 0;
@@ -582,8 +584,8 @@ export class NoiseComputeBuilder {
     dv.setUint32(12, ioFlags >>> 0, true);
     dv.setFloat32(16, baseRadius, true);
     dv.setFloat32(20, heightScale, true);
-    dv.setFloat32(24, 0.0, true);
-    dv.setFloat32(28, 0.0, true);
+    dv.setFloat32(24, Number.isFinite(Number(sphereOffset)) ? Number(sphereOffset) : 0.0, true);
+    dv.setFloat32(28, Number.isFinite(Number(sphereOffset2)) ? Number(sphereOffset2) : 0.0, true);
     this.queue.writeBuffer(this.optionsBuffer, 0, buf);
 
     // mark tile bind groups dirty so new options are used
@@ -655,8 +657,10 @@ export class NoiseComputeBuilder {
     const toroidal = pickBoolU32("toroidal", prev.toroidal ?? 0);
     const voroMode = pickU32("voroMode", prev.voroMode ?? 0);
     const edgeK = pickNum("edgeK", prev.edgeK ?? 0.0);
+    const scalar = pickNum("scalar", prev.scalar ?? 1.0);
+    const transform = pickNum("transform", prev.transform ?? 0.0);
 
-    const buf = new ArrayBuffer(22 * 4);
+    const buf = new ArrayBuffer(24 * 4);
     const dv = new DataView(buf);
     let base = 0;
 
@@ -683,6 +687,8 @@ export class NoiseComputeBuilder {
     dv.setUint32(base + 76, toroidal >>> 0, true);
     dv.setUint32(base + 80, voroMode >>> 0, true);
     dv.setFloat32(base + 84, edgeK, true);
+    dv.setFloat32(base + 88, scalar, true);
+    dv.setFloat32(base + 92, transform, true);
 
     this.queue.writeBuffer(this.paramsBuffer, 0, buf);
 
@@ -709,6 +715,8 @@ export class NoiseComputeBuilder {
       toroidal,
       voroMode,
       edgeK,
+      scalar,
+      transform,
     };
 
     for (const pair of this._texPairs.values()) pair.bindGroupDirty = true;
@@ -1077,12 +1085,13 @@ export class NoiseComputeBuilder {
       );
     }
 
-    const devMax = this.device?.limits?.maxBufferSize ?? 2147483648;
-    const safeMax = Math.floor(devMax * 0.98);
+    const maxBufferSize = this.device?.limits?.maxBufferSize ?? 2147483648;
+    const maxBindingSize = this.device?.limits?.maxStorageBufferBindingSize ?? 134217728;
+    const safeMax = Math.floor(Math.min(maxBufferSize, maxBindingSize) * 0.98);
 
     if (customData.byteLength > safeMax) {
       throw new Error(
-        `_buildPosBuffer: ${customData.byteLength} bytes exceeds maxBufferSize ${devMax} (w=${w}, h=${h})`,
+        `_buildPosBuffer: ${customData.byteLength} bytes exceeds the safe storage binding limit ${safeMax} (maxBufferSize=${maxBufferSize}, maxStorageBufferBindingSize=${maxBindingSize}, w=${w}, h=${h})`,
       );
     }
 
@@ -1134,9 +1143,11 @@ export class NoiseComputeBuilder {
     const pair = this._texPairs.get(tid);
     if (!pair) throw new Error("_create2DTileBindGroups: invalid tid");
 
-    const wantsCustomPos = ((options.useCustomPos ?? 0) | 0) !== 0;
+    const requestedCustomPos = ((options.useCustomPos ?? 0) | 0) >>> 0;
+    const wantsProceduralSpherePos = requestedCustomPos === 2 || requestedCustomPos === 3;
+    const wantsCustomBufferPos = requestedCustomPos !== 0 && !wantsProceduralSpherePos;
     const customData =
-      wantsCustomPos && options.customData instanceof Float32Array
+      wantsCustomBufferPos && options.customData instanceof Float32Array
         ? options.customData
         : null;
 
@@ -1145,7 +1156,9 @@ export class NoiseComputeBuilder {
     const hadCustomBefore =
       Array.isArray(pair.tiles) && pair.tiles.some((t) => t && t.posIsCustom);
 
-    if (!hasCustomData && hadCustomBefore) {
+    const wantsReuseExistingCustomPos = wantsCustomBufferPos && !hasCustomData;
+
+    if (!hasCustomData && hadCustomBefore && !wantsReuseExistingCustomPos) {
       pair.bindGroupDirty = true;
     }
 
@@ -1173,6 +1186,19 @@ export class NoiseComputeBuilder {
           );
           posIsCustom = posBuf !== this.nullPosBuffer;
         } else if (
+          wantsReuseExistingCustomPos &&
+          existingTile &&
+          existingTile.posBuf &&
+          existingTile.posIsCustom
+        ) {
+          posBuf = existingTile.posBuf;
+          posIsCustom = true;
+        } else if (wantsReuseExistingCustomPos) {
+          throw new Error(
+            "_create2DTileBindGroups: useCustomPos=1 was requested without customData and no reusable custom position buffer exists.",
+          );
+        } else if (
+          !wantsProceduralSpherePos &&
           existingTile &&
           existingTile.posBuf &&
           !existingTile.posIsCustom
@@ -1397,13 +1423,15 @@ export class NoiseComputeBuilder {
 
     const origOpts = options || {};
 
-    const wantsCustomPos = ((origOpts.useCustomPos ?? 0) | 0) !== 0;
+    const requestedCustomPos = ((origOpts.useCustomPos ?? 0) | 0) >>> 0;
+    const wantsProceduralSpherePos = requestedCustomPos === 2 || requestedCustomPos === 3;
+    const wantsCustomBufferPos = requestedCustomPos !== 0 && !wantsProceduralSpherePos;
     const customData =
-      wantsCustomPos && origOpts.customData instanceof Float32Array
+      wantsCustomBufferPos && origOpts.customData instanceof Float32Array
         ? origOpts.customData
         : null;
 
-    const useCustomPos = customData ? 1 : 0;
+    const useCustomPos = customData ? 1 : wantsProceduralSpherePos ? requestedCustomPos : wantsCustomBufferPos ? 1 : 0;
 
     this.setOptions({
       ...origOpts,

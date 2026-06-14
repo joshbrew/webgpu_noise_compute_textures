@@ -22,8 +22,11 @@ The tuning playground uses `NoiseComputeBuilder` from [`webgpu_noise_compute_tex
 
 # Screenshots
 
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/85a8a9e9-8cc8-41e1-bd49-d9fa5681ba0b" />
+<img width="800" alt="Screenshot 2026-06-06 172156" src="https://github.com/user-attachments/assets/36306a95-fda1-4f0a-8a09-7c8dc0115241" />
+<img width="800" alt="Screenshot 2026-05-29 105041" src="https://github.com/user-attachments/assets/96fae4fd-ba58-42bb-a2a0-728086c8c8b5" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/a926c419-e17f-46c3-a9c5-4ce5a9c38733" />
-<img width="800" alt="image" src="https://github.com/user-attachments/assets/1325f126-dd80-43f9-a52f-9680cae36d24" />
+<img width="800" alt="Screenshot 2026-05-28 232111" src="https://github.com/user-attachments/assets/279b50ee-960e-4b7a-bf00-42cdefcf65b7" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/52a1366b-5a81-4e0c-9fe9-1c5f00676911" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/14edd013-c56c-4cb4-8d60-d8a474a2b356" />
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/d043386e-a4e3-4c38-9b6f-1b9e8f0eb76e" />
@@ -1098,10 +1101,6 @@ This is WIP along with better storm cell formation. Increasing `Box Half Y` is e
 The default path preserves the original cloud sampling style. `verticalTextureHomogeneity` defaults to `0`, so the extra Y-domain compensation is opt-in.
 
 If you see horizontal layer bands in very tall volumes, keep `verticalTextureHomogeneity` at `0` first to confirm the original look. The slice and Y-decorrelation controls are still available as experimental visual tools, but they are no longer part of the default look.
-
-## Close opaque clouds
-
-When cloud coverage fills the screen, front opacity should save work instead of fully marching hidden material behind it. `frontOcclusionStrength` starts a conservative behind-front acceleration once the accumulated alpha passes `frontOcclusionAlpha`; it also allows a stronger transmittance cutoff and larger steps behind dense close bodies. Lower it toward `0` for exact full-depth marching, or raise `frontOcclusionStepBoost` for heavier close-up scenes where the foreground cloud mass is already opaque.
 
 ## Horizon boxes
 

@@ -100,6 +100,7 @@ let loopEnabled = false,
 
 let pendingResizePayload = null;
 let pendingResizeSerial = 0;
+let loopStopWaiters = [];
 
 // NoiseTransforms (world-space offsets/scales + per-axis scaling)
 let shapeOffsetWorld = [0, 0, 0],
@@ -110,16 +111,16 @@ let shapeVel = [0.2, 0, 0],
   detailVel = [0.05, 0, 0],
   weatherVel = [0.01, 0, 0];
 
-let shapeScale = 0.1,
-  detailScale = 1.0,
+let shapeScale = 0.13,
+  detailScale = 1.35,
   weatherScale = 1.0;
 
 let shapeBias = 0.0,
   detailBias = 0.0,
   weatherBias = 0.0;
 
-let shapeAxisScale = [1, 1, 1],
-  detailAxisScale = [1, 1, 1],
+let shapeAxisScale = [1, 1.22, 1],
+  detailAxisScale = [1, 1.48, 1],
   weatherAxisScale = [1, 1, 1];
 
 const renderBundleCache = new Map();
@@ -1339,7 +1340,7 @@ function cloudViewSignature(preview, box, aspect) {
   });
 }
 
-function renderUniformSignature(preview, aspect, layerIndex) {
+function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, outputWidth = MAIN_W, outputHeight = MAIN_H) {
   return JSON.stringify({
     layerIndex,
     cam: signatureValue(preview?.cam || {}),
@@ -1355,16 +1356,23 @@ function renderUniformSignature(preview, aspect, layerIndex) {
     styleShadowStrength: signatureScalar(preview?.styleShadowStrength ?? 0.88),
     styleShadowEdge: signatureScalar(preview?.styleShadowEdge ?? 0.0),
     styleShadowDarkness: signatureScalar(preview?.styleShadowDarkness ?? 0.0),
-    styleColorLift: signatureScalar(preview?.styleColorLift ?? 1.12),
-    styleSaturation: signatureScalar(preview?.styleSaturation ?? 1.10),
-    styleRimStrength: signatureScalar(preview?.styleRimStrength ?? 1.0),
-    styleSunBleed: signatureScalar(preview?.styleSunBleed ?? 0.85),
-    styleMidLift: signatureScalar(preview?.styleMidLift ?? 1.10),
+    styleColorLift: signatureScalar(preview?.styleColorLift ?? 1.08),
+    styleSaturation: signatureScalar(preview?.styleSaturation ?? 1.02),
+    styleRimStrength: signatureScalar(preview?.styleRimStrength ?? 0.86),
+    styleSunBleed: signatureScalar(preview?.styleSunBleed ?? 0.82),
+    styleMidLift: signatureScalar(preview?.styleMidLift ?? 0.88),
     godRaysEnabled: !!preview?.godRaysEnabled,
     godRayStrength: signatureScalar(preview?.godRayStrength ?? 0.0),
     godRayLength: signatureScalar(preview?.godRayLength ?? 1.0),
     godRayFalloff: signatureScalar(preview?.godRayFalloff ?? 1.55),
-    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.20),
+    alphaFloor: signatureScalar(preview?.alphaFloor ?? 0.0),
+    fogDensity: signatureScalar(preview?.fogDensity ?? 0.34),
+    fogHorizon: signatureScalar(preview?.fogHorizon ?? 0.30),
+    fogSun: signatureScalar(preview?.fogSun ?? 1.50),
+    silverIntensity: signatureScalar(cloudParams?.silverIntensity ?? 1.15),
+    silverExponent: signatureScalar(cloudParams?.silverExponent ?? 1.65),
+    outputWidth: outputWidth | 0,
+    outputHeight: outputHeight | 0,
   });
 }
 
@@ -1401,10 +1409,10 @@ function autoThickBoxTuning(box) {
   const reachF = Math.max(thickF, horizonF * 0.85);
 
   return {
-    thickBoxPerf: +(0.52 + reachF * 1.22).toFixed(4),
-    thickStepBoost: +(1.32 + reachF * 1.68).toFixed(4),
-    thickDetailSkip: +(0.060 + thickF * 0.14).toFixed(4),
-    thickLightSkip: +(0.56 + reachF * 1.20).toFixed(4),
+    thickBoxPerf: +(0.60 + reachF * 1.90).toFixed(4),
+    thickStepBoost: +(1.50 + reachF * 2.45).toFixed(4),
+    thickDetailSkip: +(0.040 + thickF * 0.15).toFixed(4),
+    thickLightSkip: +(0.58 + reachF * 1.55).toFixed(4),
   };
 }
 
@@ -1486,7 +1494,7 @@ function mergeTuningPatch(patch) {
 function applyWorkerTuning(cloudBox = null) {
   const base = workerTuning && typeof workerTuning === "object" ? workerTuning : {};
   const autoThick = autoThickBoxTuning(cloudBox || previewCloudBox(lastRunPayload?.preview || {}));
-  const appliedTuning = Object.assign({}, base, autoThick);
+  const appliedTuning = Object.assign({}, autoThick, base);
   const tuningSignature = JSON.stringify([
     workerTuningVersion,
     autoThick.thickBoxPerf,
@@ -1573,8 +1581,8 @@ function makeViewSignature(preview, w, h) {
     roundSig(preview?.styleShadowDarkness ?? 0.0, 1000),
     roundSig(preview?.styleColorLift ?? 1.12, 1000),
     roundSig(preview?.styleSaturation ?? 1.10, 1000),
-    roundSig(preview?.styleRimStrength ?? 1.0, 1000),
-    roundSig(preview?.styleSunBleed ?? 0.85, 1000),
+    roundSig(preview?.styleRimStrength ?? 0.86, 1000),
+    roundSig(preview?.styleSunBleed ?? 0.82, 1000),
     roundSig(preview?.styleMidLift ?? 1.10, 1000),
     preview?.godRaysEnabled ? 1 : 0,
     normalizeTemporalCellRate(preview?.temporalCellRate ?? 1),
@@ -1921,10 +1929,10 @@ async function runFrame({
   const cf = Math.max(1, effectiveCoarseFactor | 0);
   const enc = device.createCommandEncoder();
   const tC0 = performance.now();
-  const skipUpsampleForPreview = false;
+  const reconstructAtPresentation = cf >= 2;
   const encodedDispatch =
     typeof cb.encodeDispatchPasses === "function"
-      ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, skipUpsampleForPreview })
+      ? cb.encodeDispatchPasses(enc, { coarseFactor: cf, reconstructAtPresentation })
       : null;
   if (!encodedDispatch) {
     throw new Error("CloudComputeBuilder.encodeDispatchPasses is required for fused frame submission.");
@@ -1940,7 +1948,7 @@ async function runFrame({
   const { pipe, bgl, samp, format } = cb._ensureRenderPipeline("bgra8unorm");
 
   const layerIndex = Math.max(0, Math.min((cb?.layers || 1) - 1, preview?.layer || 0));
-  const renderSig = renderUniformSignature(preview, aspect, layerIndex);
+  const renderSig = renderUniformSignature(preview, aspect, layerIndex, cloudParams || {}, MAIN_W, MAIN_H);
   if (renderSig !== lastRenderUniformSignature) {
     cb._writeRenderUniforms({
       layerIndex,
@@ -1965,16 +1973,23 @@ async function runFrame({
       styleShadowStrength: preview?.styleShadowStrength ?? 0.88,
       styleShadowEdge: preview?.styleShadowEdge ?? 0.0,
       styleShadowDarkness: preview?.styleShadowDarkness ?? 0.0,
-      styleColorLift: preview?.styleColorLift ?? 1.12,
-      styleSaturation: preview?.styleSaturation ?? 1.10,
-      styleRimStrength: preview?.styleRimStrength ?? 1.0,
-      styleSunBleed: preview?.styleSunBleed ?? 0.85,
-      styleMidLift: preview?.styleMidLift ?? 1.10,
+      styleColorLift: preview?.styleColorLift ?? 1.08,
+      styleSaturation: preview?.styleSaturation ?? 1.02,
+      styleRimStrength: preview?.styleRimStrength ?? 0.86,
+      styleSunBleed: preview?.styleSunBleed ?? 0.82,
+      styleMidLift: preview?.styleMidLift ?? 0.88,
+      silverIntensity: cloudParams?.silverIntensity ?? 1.15,
+      silverExponent: cloudParams?.silverExponent ?? 1.65,
+      outputWidth: MAIN_W,
+      outputHeight: MAIN_H,
       godRaysEnabled: !!preview?.godRaysEnabled,
       godRayStrength: (preview?.godRayStrength ?? 0.0) * (renderFastPreview ? 0.78 : 1.0),
       godRayLength: (preview?.godRayLength ?? 1.0) * (renderFastPreview ? 0.90 : 1.0),
       godRayFalloff: preview?.godRayFalloff ?? 1.55,
-      alphaFloor: preview?.alphaFloor ?? 0.20,
+      alphaFloor: preview?.alphaFloor ?? 0.0,
+      fogDensity: preview?.fogDensity ?? 0.34,
+      fogHorizon: preview?.fogHorizon ?? 0.30,
+      fogSun: preview?.fogSun ?? 1.50,
     });
     lastRenderUniformSignature = renderSig;
   }
@@ -2041,6 +2056,7 @@ async function runFrame({
     totalMs: tAll1 - tAll0,
     waitedForGpu: shouldWaitForGpu,
     coarseFactor: cf,
+    directFullResReconstruction: !!encodedDispatch.directFullResReconstruction,
     directPreview: !!encodedDispatch.directPreview,
     presentDivider,
     presentWidth: presentW,
@@ -2067,8 +2083,8 @@ async function runFrame({
       timings.totalMs.toFixed(2),
       "coarseFactor:",
       cf,
-      "directPreview:",
-      !!encodedDispatch.directPreview,
+      "directFullResReconstruction:",
+      !!encodedDispatch.directFullResReconstruction,
       "temporalCellRate:",
       workerTemporalCellRate,
       "interleave:",
@@ -2256,12 +2272,24 @@ function startLoop() {
     loopRunning = false;
     log("animation loop stopped");
     postMessage({ type: "loop-stopped" });
+    const waiters = loopStopWaiters;
+    loopStopWaiters = [];
+    for (const resolve of waiters) {
+      try {
+        resolve();
+      } catch {}
+    }
   })();
 }
 
 function stopLoop() {
   loopEnabled = false;
   loopGpuFences.length = 0;
+}
+
+function waitForLoopStopped() {
+  if (!loopRunning) return Promise.resolve();
+  return new Promise((resolve) => loopStopWaiters.push(resolve));
 }
 
 // -----------------------------------------------------------------------------
@@ -2643,6 +2671,7 @@ async function _handleMessage(ev) {
 
     if (type === "stopLoop") {
       stopLoop();
+      await waitForLoopStopped();
       respond(true, { ok: true });
       return;
     }

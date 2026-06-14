@@ -82,6 +82,12 @@ const DPR = () => {
 let ENTRY_POINTS = [];
 
 // Default preview + noise param blocks (each has seed)
+const DEFAULT_FOG_PROFILE = Object.freeze({
+  fogDensity: 0.34,
+  fogHorizon: 0.30,
+  fogSun: 1.50,
+});
+
 const preview = {
   cam: { x: -0.75, y: -1.2, z: -0.95, yawDeg: 35, pitchDeg: 28, fovYDeg: 60 },
   exposure: 1.18,
@@ -110,10 +116,13 @@ const preview = {
   styleShadowDarkness: 0.50,
   styleColorLift: 1.28,
   styleSaturation: 1.24,
-  styleRimStrength: 1.04,
-  styleSunBleed: 0.66,
+  styleRimStrength: 0.1,
+  styleSunBleed: 0.1,
   styleMidLift: 1.26,
   alphaFloor: 0.0,
+  fogDensity: DEFAULT_FOG_PROFILE.fogDensity,
+  fogHorizon: DEFAULT_FOG_PROFILE.fogHorizon,
+  fogSun: DEFAULT_FOG_PROFILE.fogSun,
   godRaysEnabled: true,
   godRayStrength: 1.00,
   godRayLength: 1.10,
@@ -160,7 +169,7 @@ const billowParams = {
 // Weather params (B channel)
 const weatherBParams = {
   enabled: false,
-  mode: "computeBillow",
+  mode: "computeBillow4D",
   seed: 123456789003,
   scale: 1.0,
   zoom: 4.0,
@@ -184,7 +193,7 @@ const shapeParams = {
   lacunarity: 2.0,
   seedAngle: Math.PI / 2,
   gain: 0.5,
-  threshold: 0.0,
+  threshold: 0.4,
   time: 0.0,
   voroMode: 4,
   edgeK: 0.0,
@@ -222,12 +231,12 @@ const tileTransforms = {
   detailOffset: [0.0, 0.0, 0.0],
   weatherOffset: [0.0, 0.0, 0.0],
 
-  shapeScale: 0.1,
-  detailScale: 1.0,
+  shapeScale: 0.13,
+  detailScale: 1.35,
   weatherScale: 1.0,
 
-  shapeAxisScale: [1.0, 1.0, 1.0],
-  detailAxisScale: [1.0, 1.0, 1.0],
+  shapeAxisScale: [1.0, 1.22, 1.0],
+  detailAxisScale: [1.0, 1.48, 1.0],
   weatherAxisScale: [1.0, 1.0, 1.0],
 
   shapeBias: 0.4,
@@ -2081,7 +2090,7 @@ function organizeSidebarControlGroups() {
   appendControlGroup(previewPanel, "Scene", [
     { label: "Preset", columns: 1, fields: [{ id: "v-layer-preset", label: "Layer" }] },
     { label: "Grade", columns: 1, fields: [{ id: "v-grade", label: "Color" }] },
-    { label: "Render", columns: 2, fields: [{ id: "v-render-scale-divider", label: "Divider" }, { id: "v-temporal-cell-rate", label: "Temporal" }] },
+    { label: "Render", columns: 2, fields: [{ id: "v-render-scale-divider", label: "Raymarch" }, { id: "v-temporal-cell-rate", label: "Temporal" }] },
   ]);
   appendControlGroup(previewPanel, "Camera", [
     { label: "Cam", columns: 3, fields: [{ id: "v-cx", label: "X" }, { id: "v-cy", label: "Y" }, { id: "v-cz", label: "Z" }] },
@@ -2097,6 +2106,9 @@ function organizeSidebarControlGroups() {
     rgbRow("Sky", "v-s", ["R", "G", "B"]),
     rgbRow("Sun tint", "v-sun", ["R", "G", "B"]),
   ]);
+  appendControlGroup(previewPanel, "Atmosphere", [
+    { label: "Fog", columns: 3, fields: [{ id: "v-fog-density", label: "Density" }, { id: "v-fog-horizon", label: "Horizon" }, { id: "v-fog-sun", label: "Sun" }] },
+  ], { hint: "grade linked" });
   appendControlGroup(previewPanel, "Resolve", [
     { label: "Image", columns: 3, fields: [{ id: "v-exposure", label: "Exposure" }, { id: "v-alpha-floor", label: "Alpha floor" }, { id: "t-minOutputAlpha", label: "Min alpha" }] },
     { label: "Contrast", columns: 3, fields: [{ id: "v-shadow-strength", label: "Strength" }, { id: "v-shadow-edge", label: "Edge" }, { id: "v-shadow-darkness", label: "Dark" }] },
@@ -2117,8 +2129,9 @@ function organizeSidebarControlGroups() {
   const tuningPanel = $("p-cloudParams");
   appendControlGroup(tuningPanel, "Density", [
     { label: "Body", columns: 3, fields: [{ id: "p-coverage", label: "Coverage" }, { id: "p-density", label: "Density" }, { id: "p-anvil", label: "Anvil" }] },
-    { label: "Shell", columns: 3, fields: [{ id: "t-fluffFactor", label: "Fluff" }, { id: "t-baseJitter", label: "Base" }, { id: "t-topJitter", label: "Top" }] },
-    { label: "Alpha", columns: 3, fields: [{ id: "t-alphaCutoff", label: "Cutoff" }, { id: "t-alphaBoostThreshold", label: "Boost min" }, { id: "t-alphaBoostAmount", label: "Boost add" }] },
+    { label: "Shell", columns: 4, fields: [{ id: "t-fluffFactor", label: "Fluff" }, { id: "t-sparsity", label: "Sparse" }, { id: "t-definition", label: "Define" }, { id: "t-topJitter", label: "Top" }] },
+    { label: "Grain", columns: 1, fields: [{ id: "t-baseJitter", label: "Base" }] },
+    { label: "Alpha", columns: 4, fields: [{ id: "t-alphaCutoff", label: "Cutoff" }, { id: "t-alphaBoostThreshold", label: "Boost min" }, { id: "t-alphaBoostAmount", label: "Boost add" }, { id: "t-outputAlphaFeather", label: "Surface" }] },
   ]);
   appendControlGroup(tuningPanel, "Lighting", [
     { label: "Scatter", columns: 3, fields: [{ id: "p-ins", label: "In" }, { id: "p-outs", label: "Out" }, { id: "p-ivo", label: "Mix" }] },
@@ -2128,7 +2141,7 @@ function organizeSidebarControlGroups() {
   ]);
   appendControlGroup(tuningPanel, "Vertical Form", [
     { label: "Layer", columns: 3, fields: [{ id: "t-verticalTextureHomogeneity", label: "Homo" }, { id: "t-verticalLayerDecorrelation", label: "Decorr" }, { id: "t-sliceJitterStrength", label: "Jitter" }] },
-    { label: "Steps", columns: 2, fields: [{ id: "t-verticalStepBoost", label: "March" }, { id: "t-verticalLightingStepBoost", label: "Light" }] },
+    { label: "Anvil", columns: 3, fields: [{ id: "t-anvilLift", label: "Exag" }, { id: "t-verticalStepBoost", label: "March" }, { id: "t-verticalLightingStepBoost", label: "Light" }] },
   ]);
   appendControlGroup(tuningPanel, "March", [
     { label: "Steps", columns: 3, fields: [{ id: "t-maxSteps", label: "Max" }, { id: "t-minStep", label: "Min" }, { id: "t-maxStep", label: "Step" }] },
@@ -2258,17 +2271,22 @@ const CLOUD_LAYER_PRESETS = {
       "p-coverage": 0.86,
       "p-density": 8.5,
       "p-anvil": 0.0,
-      "p-beer": 5.8,
-      "p-sI": 10.5,
-      "p-sE": 10.0,
-      "t-fluffFactor": 3.15,
+      "p-beer": 5.6,
+      "p-sI": 1.15,
+      "p-sE": 1.65,
+      "t-fluffFactor": 3.55,
+      "t-sparsity": 0.40,
+      "t-definition": 0.64,
+      "t-raySmoothDens": 0.24,
       "t-baseJitter": 0.055,
       "t-topJitter": 0.22,
       "t-verticalTextureHomogeneity": 0.62,
       "t-verticalLayerDecorrelation": 0.76,
       "t-sliceJitterStrength": 0.10,
       "t-alphaBoostThreshold": 0.20,
-      "t-alphaBoostAmount": 0.12,
+      "t-alphaBoostAmount": 0.14,
+      "t-minOutputAlpha": 0.12,
+      "t-outputAlphaFeather": 0.50,
       "we-zoom": 3.7,
       "we-freq": 1.05,
       "we-oct": 5,
@@ -2280,15 +2298,16 @@ const CLOUD_LAYER_PRESETS = {
       "sh-zoom": 4.2,
       "sh-freq": 1.02,
       "sh-oct": 2,
-      "sh-scale": 0.115,
-      "sh-bias": 0.42,
-      "sh-axis-y": 1.18,
-      "de-zoom": 4.8,
+      "sh-thr": 0.40,
+      "sh-scale": 0.135,
+      "sh-bias": 0.39,
+      "sh-axis-y": 1.32,
+      "de-zoom": 5.35,
       "de-freq": 1.18,
       "de-oct": 4,
-      "de-scale": 1.12,
+      "de-scale": 1.46,
       "de-bias": 0.0,
-      "de-axis-y": 1.38,
+      "de-axis-y": 1.70,
     },
   },
   broken_cumulus: {
@@ -2297,10 +2316,13 @@ const CLOUD_LAYER_PRESETS = {
       "p-coverage": 0.72,
       "p-density": 8.0,
       "p-anvil": 0.0,
-      "p-beer": 6.2,
-      "p-sI": 11.0,
-      "p-sE": 12.0,
-      "t-fluffFactor": 4.2,
+      "p-beer": 5.8,
+      "p-sI": 1.15,
+      "p-sE": 1.65,
+      "t-fluffFactor": 4.20,
+      "t-sparsity": 0.62,
+      "t-definition": 0.78,
+      "t-raySmoothDens": 0.22,
       "t-baseJitter": 0.075,
       "t-topJitter": 0.28,
       "t-verticalTextureHomogeneity": 0.72,
@@ -2318,14 +2340,15 @@ const CLOUD_LAYER_PRESETS = {
       "sh-zoom": 5.0,
       "sh-freq": 1.12,
       "sh-oct": 2,
-      "sh-scale": 0.13,
-      "sh-bias": 0.34,
-      "sh-axis-y": 1.45,
-      "de-zoom": 5.8,
+      "sh-thr": 0.40,
+      "sh-scale": 0.15,
+      "sh-bias": 0.31,
+      "sh-axis-y": 1.62,
+      "de-zoom": 6.25,
       "de-freq": 1.45,
       "de-oct": 4,
-      "de-scale": 1.38,
-      "de-axis-y": 1.75,
+      "de-scale": 1.72,
+      "de-axis-y": 2.05,
     },
   },
   stratus_sheet: {
@@ -2334,17 +2357,21 @@ const CLOUD_LAYER_PRESETS = {
       "p-coverage": 1.0,
       "p-density": 6.8,
       "p-anvil": 0.0,
-      "p-beer": 5.2,
-      "p-sI": 5.5,
-      "p-sE": 7.0,
+      "p-beer": 5.0,
+      "p-sI": 1.05,
+      "p-sE": 1.65,
       "t-fluffFactor": 1.25,
+      "t-sparsity": 0.16,
+      "t-definition": 0.34,
       "t-baseJitter": 0.018,
       "t-topJitter": 0.045,
       "t-verticalTextureHomogeneity": 0.22,
       "t-verticalLayerDecorrelation": 0.30,
       "t-sliceJitterStrength": 0.055,
-      "t-alphaBoostThreshold": 0.16,
-      "t-alphaBoostAmount": 0.10,
+      "t-alphaBoostThreshold": 0.20,
+      "t-alphaBoostAmount": 0.12,
+      "t-minOutputAlpha": 0.12,
+      "t-outputAlphaFeather": 0.44,
       "we-zoom": 2.7,
       "we-freq": 0.82,
       "we-oct": 4,
@@ -2356,6 +2383,7 @@ const CLOUD_LAYER_PRESETS = {
       "sh-zoom": 3.0,
       "sh-freq": 0.86,
       "sh-oct": 2,
+      "sh-thr": 0.40,
       "sh-scale": 0.075,
       "sh-bias": 0.48,
       "sh-axis-y": 0.58,
@@ -2372,17 +2400,22 @@ const CLOUD_LAYER_PRESETS = {
       "p-coverage": 0.88,
       "p-density": 10.5,
       "p-anvil": 0.42,
-      "p-beer": 6.3,
-      "p-sI": 14.0,
-      "p-sE": 14.0,
-      "t-fluffFactor": 4.15,
+      "p-beer": 5.8,
+      "p-sI": 1.15,
+      "p-sE": 1.65,
+      "t-fluffFactor": 4.30,
+      "t-sparsity": 0.50,
+      "t-definition": 0.78,
+      "t-raySmoothDens": 0.24,
       "t-baseJitter": 0.05,
       "t-topJitter": 0.26,
       "t-verticalTextureHomogeneity": 0.92,
       "t-verticalLayerDecorrelation": 0.92,
       "t-sliceJitterStrength": 0.12,
-      "t-alphaBoostThreshold": 0.22,
-      "t-alphaBoostAmount": 0.15,
+      "t-alphaBoostThreshold": 0.20,
+      "t-alphaBoostAmount": 0.14,
+      "t-minOutputAlpha": 0.12,
+      "t-outputAlphaFeather": 0.52,
       "we-zoom": 3.9,
       "we-freq": 1.10,
       "we-oct": 5,
@@ -2394,14 +2427,15 @@ const CLOUD_LAYER_PRESETS = {
       "sh-zoom": 4.8,
       "sh-freq": 1.15,
       "sh-oct": 2,
-      "sh-scale": 0.12,
-      "sh-bias": 0.38,
-      "sh-axis-y": 2.05,
-      "de-zoom": 5.2,
+      "sh-thr": 0.40,
+      "sh-scale": 0.142,
+      "sh-bias": 0.35,
+      "sh-axis-y": 2.22,
+      "de-zoom": 5.95,
       "de-freq": 1.42,
       "de-oct": 4,
-      "de-scale": 1.45,
-      "de-axis-y": 2.25,
+      "de-scale": 1.82,
+      "de-axis-y": 2.55,
     },
   },
   cumulonimbus_anvil: {
@@ -2410,18 +2444,23 @@ const CLOUD_LAYER_PRESETS = {
       "p-coverage": 0.94,
       "p-density": 11.8,
       "p-anvil": 1.15,
-      "p-beer": 6.8,
-      "p-sI": 16.5,
-      "p-sE": 18.0,
-      "t-fluffFactor": 5.0,
+      "p-beer": 6.0,
+      "p-sI": 1.15,
+      "p-sE": 1.65,
+      "t-fluffFactor": 4.90,
+      "t-sparsity": 0.44,
+      "t-definition": 0.72,
+      "t-raySmoothDens": 0.23,
       "t-baseJitter": 0.045,
       "t-topJitter": 0.32,
       "t-verticalTextureHomogeneity": 1.0,
       "t-verticalLayerDecorrelation": 1.0,
       "t-sliceJitterStrength": 0.14,
       "t-alphaCutoff": 0.965,
-      "t-alphaBoostThreshold": 0.22,
-      "t-alphaBoostAmount": 0.18,
+      "t-alphaBoostThreshold": 0.20,
+      "t-alphaBoostAmount": 0.14,
+      "t-minOutputAlpha": 0.12,
+      "t-outputAlphaFeather": 0.52,
       "we-zoom": 3.55,
       "we-freq": 1.00,
       "we-oct": 5,
@@ -2433,14 +2472,15 @@ const CLOUD_LAYER_PRESETS = {
       "sh-zoom": 4.6,
       "sh-freq": 1.05,
       "sh-oct": 2,
-      "sh-scale": 0.112,
-      "sh-bias": 0.36,
-      "sh-axis-y": 2.65,
-      "de-zoom": 5.7,
+      "sh-thr": 0.40,
+      "sh-scale": 0.132,
+      "sh-bias": 0.33,
+      "sh-axis-y": 2.86,
+      "de-zoom": 6.3,
       "de-freq": 1.55,
       "de-oct": 4,
-      "de-scale": 1.65,
-      "de-axis-y": 3.0,
+      "de-scale": 2.05,
+      "de-axis-y": 3.25,
     },
   },
   wispy_high: {
@@ -2450,17 +2490,21 @@ const CLOUD_LAYER_PRESETS = {
       "p-density": 4.4,
       "p-anvil": 0.05,
       "p-beer": 4.2,
-      "p-sI": 8.0,
-      "p-sE": 20.0,
-      "t-fluffFactor": 5.8,
+      "p-sI": 0.95,
+      "p-sE": 1.85,
+      "t-fluffFactor": 5.10,
+      "t-sparsity": 0.78,
+      "t-definition": 0.86,
       "t-baseJitter": 0.04,
       "t-topJitter": 0.18,
       "t-verticalTextureHomogeneity": 0.78,
       "t-verticalLayerDecorrelation": 1.0,
       "t-sliceJitterStrength": 0.12,
       "t-alphaCutoff": 0.985,
-      "t-alphaBoostThreshold": 0.30,
-      "t-alphaBoostAmount": 0.06,
+      "t-alphaBoostThreshold": 0.24,
+      "t-alphaBoostAmount": 0.10,
+      "t-minOutputAlpha": 0.14,
+      "t-outputAlphaFeather": 0.40,
       "we-zoom": 5.8,
       "we-freq": 1.55,
       "we-oct": 5,
@@ -2470,6 +2514,7 @@ const CLOUD_LAYER_PRESETS = {
       "sh-zoom": 6.0,
       "sh-freq": 1.45,
       "sh-oct": 2,
+      "sh-thr": 0.40,
       "sh-scale": 0.16,
       "sh-bias": 0.28,
       "sh-axis-y": 1.10,
@@ -2486,11 +2531,14 @@ const CLOUD_LAYER_PRESETS = {
       "p-coverage": 1.0,
       "p-density": 12.5,
       "p-anvil": 0.5,
-      "p-beer": 7.2,
-      "p-sI": 13.5,
-      "p-sE": 14.0,
-      "t-fluffFactor": 2.55,
-      "t-baseJitter": 0.026,
+      "p-beer": 5.8,
+      "p-sI": 1.15,
+      "p-sE": 1.65,
+      "t-fluffFactor": 3.25,
+      "t-sparsity": 0.36,
+      "t-definition": 0.62,
+      "t-raySmoothDens": 0.26,
+      "t-baseJitter": 0.034,
       "t-topJitter": 0.16,
       "t-verticalTextureHomogeneity": 0.74,
       "t-verticalLayerDecorrelation": 0.70,
@@ -2501,9 +2549,11 @@ const CLOUD_LAYER_PRESETS = {
       "t-frontOcclusionStrength": 0.82,
       "t-frontOcclusionAlpha": 0.58,
       "t-frontOcclusionStepBoost": 3.6,
-      "t-alphaBoostThreshold": 0.18,
-      "t-alphaBoostAmount": 0.22,
-      "we-zoom": 3.1,
+      "t-alphaBoostThreshold": 0.20,
+      "t-alphaBoostAmount": 0.14,
+      "t-minOutputAlpha": 0.12,
+      "t-outputAlphaFeather": 0.52,
+      "we-zoom": 3.25,
       "we-freq": 0.95,
       "we-oct": 5,
       "we-gain": 0.47,
@@ -2514,14 +2564,15 @@ const CLOUD_LAYER_PRESETS = {
       "sh-zoom": 3.8,
       "sh-freq": 0.95,
       "sh-oct": 2,
-      "sh-scale": 0.092,
-      "sh-bias": 0.44,
-      "sh-axis-y": 1.25,
-      "de-zoom": 4.2,
+      "sh-thr": 0.40,
+      "sh-scale": 0.116,
+      "sh-bias": 0.40,
+      "sh-axis-y": 1.42,
+      "de-zoom": 5.05,
       "de-freq": 1.05,
       "de-oct": 4,
-      "de-scale": 0.86,
-      "de-axis-y": 1.15,
+      "de-scale": 1.30,
+      "de-axis-y": 1.55,
     },
   },
 };
@@ -2572,9 +2623,12 @@ function injectPreviewLookControls() {
           <option value="15">RGB Spectrum</option>
         </select>
       </label>
-      <label style="display:flex; flex-direction:column; gap:6px;"><span>Render Scale Divider / Coarse Factor</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Compute coarse factor for still and animated renders. 1 = full resolution, 4 is the default coarse compute scale, then upsampled to the full presentation canvas."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Raymarch Resolution Divider / Full-res Output</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Controls the internal cloud raymarch resolution. The final canvas remains full resolution and reconstructs from this buffer. 1 = full-resolution raymarch, 4 = default performance mode."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Density</span><input id="v-fog-density" type="number" step="0.01" min="0" max="2" title="Atmospheric depth fog strength. The active color grade controls the fog color family."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Horizon</span><input id="v-fog-horizon" type="number" step="0.01" min="0" max="2" title="How strongly fog gathers around the horizon and distant cloud silhouettes."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Sun</span><input id="v-fog-sun" type="number" step="0.01" min="0" max="2" title="Amount of sun-washed color injected into the atmospheric fog by the active color grade."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
@@ -2585,6 +2639,7 @@ function injectPreviewLookControls() {
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Direct Light Boost</span><input id="t-directLightBoost" type="number" step="0.01" min="0" max="2" title="Brightness boost for the direct-light profile used when looking at sunlit cloud tops and faces."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Min</span><input id="t-alphaBoostThreshold" type="number" step="0.01" min="0" max="1" title="Only cloud pixels with final alpha above this threshold receive the additive end-stage alpha boost."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Boost Add</span><input id="t-alphaBoostAmount" type="number" step="0.01" min="0" max="1" title="Additive alpha applied after cloud lighting and transmission, ramped from the Alpha Boost Min threshold upward."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Surface Opacity</span><input id="t-outputAlphaFeather" type="number" step="0.01" min="0" max="1" title="Curves mid-alpha cloud surfaces toward opaque, bright readable puffs without forcing the faintest wisps to become solid."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Strength</span><input id="v-shadow-strength" type="number" step="0.01" min="0" max="5"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Edge</span><input id="v-shadow-edge" type="number" step="0.01" min="0" max="2.2"></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Shadow Darkness</span><input id="v-shadow-darkness" type="number" step="0.01" min="0" max="6"></label>
@@ -2644,8 +2699,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.10,
     styleColorLift: 1.18,
     styleSaturation: 0.98,
-    styleRimStrength: 1.20,
-    styleSunBleed: 0.42,
     styleMidLift: 1.12,
     godRaysEnabled: true,
     godRayStrength: 0.58,
@@ -2669,8 +2722,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.16,
     styleColorLift: 1.30,
     styleSaturation: 1.78,
-    styleRimStrength: 1.44,
-    styleSunBleed: 1.08,
     styleMidLift: 0.98,
     godRaysEnabled: true,
     godRayStrength: 0.66,
@@ -2694,8 +2745,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.18,
     styleSaturation: 1.26,
-    styleRimStrength: 1.10,
-    styleSunBleed: 0.64,
     styleMidLift: 1.18,
     godRaysEnabled: true,
     godRayStrength: 0.70,
@@ -2719,8 +2768,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.12,
     styleColorLift: 1.18,
     styleSaturation: 1.06,
-    styleRimStrength: 1.58,
-    styleSunBleed: 0.94,
     styleMidLift: 1.00,
     godRaysEnabled: true,
     godRayStrength: 0.38,
@@ -2744,8 +2791,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.28,
     styleColorLift: 1.10,
     styleSaturation: 1.74,
-    styleRimStrength: 1.62,
-    styleSunBleed: 0.78,
     styleMidLift: 1.00,
     godRaysEnabled: true,
     godRayStrength: 0.88,
@@ -2769,8 +2814,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.28,
     styleSaturation: 1.32,
-    styleRimStrength: 1.10,
-    styleSunBleed: 0.60,
     styleMidLift: 1.30,
     godRaysEnabled: true,
     godRayStrength: 0.72,
@@ -2794,8 +2837,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.22,
     styleSaturation: 1.52,
-    styleRimStrength: 1.36,
-    styleSunBleed: 0.92,
     styleMidLift: 0.96,
     godRaysEnabled: true,
     godRayStrength: 0.66,
@@ -2819,8 +2860,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.06,
     styleSaturation: 1.46,
-    styleRimStrength: 1.20,
-    styleSunBleed: 0.50,
     styleMidLift: 1.10,
     godRaysEnabled: true,
     godRayStrength: 0.42,
@@ -2844,8 +2883,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.34,
     styleSaturation: 1.60,
-    styleRimStrength: 1.32,
-    styleSunBleed: 0.62,
     styleMidLift: 1.20,
     godRaysEnabled: true,
     godRayStrength: 0.58,
@@ -2869,8 +2906,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.00,
     styleSaturation: 1.08,
-    styleRimStrength: 1.16,
-    styleSunBleed: 0.54,
     styleMidLift: 0.80,
     godRaysEnabled: false,
     godRayStrength: 0.22,
@@ -2894,8 +2929,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.22,
     styleSaturation: 1.42,
-    styleRimStrength: 1.28,
-    styleSunBleed: 0.76,
     styleMidLift: 1.18,
     godRaysEnabled: true,
     godRayStrength: 0.60,
@@ -2919,8 +2952,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 0.96,
     styleSaturation: 1.34,
-    styleRimStrength: 1.14,
-    styleSunBleed: 0.36,
     styleMidLift: 0.72,
     godRaysEnabled: false,
     godRayStrength: 0.18,
@@ -2929,51 +2960,47 @@ const GRADE_PRESETS = {
   },
   12: {
     sky: [0.36, 0.66, 1.24],
-    sunBloom: 0.22,
-    sunTint: [0.94, 0.99, 1.06],
-    transmissiveLightTint: [0.82, 1.02, 1.34],
-    frontLightTint: [1.06, 1.18, 1.42],
-    volumeShadowTint: [0.42, 0.64, 1.14],
+    sunBloom: 0.26,
+    sunTint: [1.16, 1.04, 0.88],
+    transmissiveLightTint: [1.16, 1.07, 0.96],
+    frontLightTint: [1.42, 1.28, 1.10],
+    volumeShadowTint: [0.96, 0.86, 0.74],
     directLightBlend: 0.86,
-    directLightBoost: 0.74,
-    cloudLitTint: [0.98, 1.08, 1.28],
-    cloudShadowTint: [0.48, 0.70, 1.18],
-    edgeTint: [0.88, 1.02, 1.34],
-    styleShadowStrength: 1.70,
-    styleShadowEdge: 0.24,
+    directLightBoost: 0.92,
+    cloudLitTint: [1.30, 1.18, 1.02],
+    cloudShadowTint: [1.02, 0.92, 0.80],
+    edgeTint: [1.34, 1.20, 1.02],
+    styleShadowStrength: 1.12,
+    styleShadowEdge: 0.14,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.16,
-    styleSaturation: 1.12,
-    styleRimStrength: 1.20,
-    styleSunBleed: 0.34,
-    styleMidLift: 1.14,
+    styleColorLift: 1.42,
+    styleSaturation: 1.14,
+    styleMidLift: 1.46,
     godRaysEnabled: true,
-    godRayStrength: 0.44,
+    godRayStrength: 0.52,
     godRayLength: 0.98,
     godRayFalloff: 1.62,
   },
   13: {
     sky: [0.30, 0.62, 1.28],
-    sunBloom: 0.26,
-    sunTint: [0.92, 0.99, 1.08],
-    transmissiveLightTint: [0.76, 1.04, 1.42],
-    frontLightTint: [1.02, 1.20, 1.54],
-    volumeShadowTint: [0.34, 0.56, 1.18],
+    sunBloom: 0.30,
+    sunTint: [1.18, 1.05, 0.90],
+    transmissiveLightTint: [1.18, 1.08, 0.98],
+    frontLightTint: [1.48, 1.32, 1.14],
+    volumeShadowTint: [0.98, 0.88, 0.78],
     directLightBlend: 0.90,
-    directLightBoost: 0.84,
-    cloudLitTint: [0.96, 1.10, 1.38],
-    cloudShadowTint: [0.40, 0.64, 1.22],
-    edgeTint: [0.78, 0.98, 1.46],
-    styleShadowStrength: 1.50,
-    styleShadowEdge: 0.20,
+    directLightBoost: 1.02,
+    cloudLitTint: [1.34, 1.22, 1.06],
+    cloudShadowTint: [1.04, 0.94, 0.84],
+    edgeTint: [1.38, 1.24, 1.06],
+    styleShadowStrength: 1.04,
+    styleShadowEdge: 0.12,
     styleShadowDarkness: 0.0,
-    styleColorLift: 1.24,
-    styleSaturation: 1.12,
-    styleRimStrength: 1.36,
-    styleSunBleed: 0.42,
-    styleMidLift: 1.18,
+    styleColorLift: 1.48,
+    styleSaturation: 1.14,
+    styleMidLift: 1.52,
     godRaysEnabled: true,
-    godRayStrength: 0.50,
+    godRayStrength: 0.58,
     godRayLength: 1.02,
     godRayFalloff: 1.48,
   },
@@ -2994,8 +3021,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.10,
     styleColorLift: 1.10,
     styleSaturation: 0.80,
-    styleRimStrength: 0.98,
-    styleSunBleed: 0.22,
     styleMidLift: 1.00,
     godRaysEnabled: false,
     godRayStrength: 0.18,
@@ -3019,8 +3044,6 @@ const GRADE_PRESETS = {
     styleShadowDarkness: 0.0,
     styleColorLift: 1.18,
     styleSaturation: 2.20,
-    styleRimStrength: 1.66,
-    styleSunBleed: 0.60,
     styleMidLift: 0.92,
     godRaysEnabled: true,
     godRayStrength: 0.42,
@@ -3068,6 +3091,17 @@ function lightingProfileForGrade(style) {
   };
 }
 
+
+
+
+function fogProfileForGrade(style, current = preview) {
+  const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0] || {};
+  return {
+    fogDensity: +(preset.fogDensity ?? current?.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity),
+    fogHorizon: +(preset.fogHorizon ?? current?.fogHorizon ?? DEFAULT_FOG_PROFILE.fogHorizon),
+    fogSun: +(preset.fogSun ?? current?.fogSun ?? DEFAULT_FOG_PROFILE.fogSun),
+  };
+}
 
 function setControlValue(id, val) {
   const el = $(id);
@@ -3152,6 +3186,9 @@ function syncPreviewLookInputs() {
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
   setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.0);
+  setFieldValue("v-fog-density", preview.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity);
+  setFieldValue("v-fog-horizon", preview.fogHorizon ?? DEFAULT_FOG_PROFILE.fogHorizon);
+  setFieldValue("v-fog-sun", preview.fogSun ?? DEFAULT_FOG_PROFILE.fogSun);
   setFieldValue("v-sr", preview.sky[0]);
   setFieldValue("v-sg", preview.sky[1]);
   setFieldValue("v-sb", preview.sky[2]);
@@ -3217,6 +3254,10 @@ function applyGradePreset(style, syncInputs = true) {
   preview.volumeShadowTint = lighting.volumeShadowTint.slice();
   preview.directLightBlend = lighting.directLightBlend;
   preview.directLightBoost = lighting.directLightBoost;
+  const fog = fogProfileForGrade(style);
+  preview.fogDensity = fog.fogDensity;
+  preview.fogHorizon = fog.fogHorizon;
+  preview.fogSun = fog.fogSun;
   preview.cloudLitTint = preset.cloudLitTint.slice();
   preview.cloudShadowTint = preset.cloudShadowTint.slice();
   preview.edgeTint = preset.edgeTint.slice();
@@ -3378,14 +3419,17 @@ function readTuning() {
     topJitterFrac: +($("t-topJitter")?.value || 0.1),
     lodBiasWeather: +($("t-lodBiasWeather")?.value || 1.5),
     nearFluffDist: +($("t-nearFluffDist")?.value || 60.0),
-    nearDensityMult: +($("t-nearDensityMult")?.value || 2.5),
+    nearDensityMult: +($("t-nearDensityMult")?.value || 2.8),
     lodBlendThreshold: +($("t-lodBlendThreshold")?.value || 0.46),
     farStart: +($("t-farStart")?.value || 1.05),
     farFull: +($("t-farFull")?.value || 4.2),
     farStepMult: +($("t-farStepMult")?.value || 2.05),
-    raySmoothDens: +($("t-raySmoothDens")?.value || 0.40),
-    raySmoothSun: +($("t-raySmoothSun")?.value || 0.40),
-    fluffFactor: +($("t-fluffFactor")?.value || 4.0),
+    raySmoothDens: +($("t-raySmoothDens")?.value || 0.26),
+    raySmoothSun: +($("t-raySmoothSun")?.value || 0.34),
+    fluffFactor: +($("t-fluffFactor")?.value || 3.2),
+    sparsity: num("t-sparsity", 0.42),
+    definition: num("t-definition", 0.62),
+    anvilLift: num("t-anvilLift", 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
     verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
     verticalTextureHomogeneity: +($("t-verticalTextureHomogeneity")?.value || 0.0),
@@ -3397,9 +3441,10 @@ function readTuning() {
     verticalLayerDecorrelation: +($("t-verticalLayerDecorrelation")?.value || 0.35),
     directLightBlend: +($("t-directLightBlend")?.value || preview.directLightBlend || 0.78),
     directLightBoost: +($("t-directLightBoost")?.value || preview.directLightBoost || 0.58),
-    alphaBoostThreshold: +($("t-alphaBoostThreshold")?.value || 0.22),
-    alphaBoostAmount: +($("t-alphaBoostAmount")?.value || 0.16),
-    minOutputAlpha: +($("t-minOutputAlpha")?.value || 0.05),
+    alphaBoostThreshold: +($("t-alphaBoostThreshold")?.value || 0.20),
+    alphaBoostAmount: +($("t-alphaBoostAmount")?.value || 0.14),
+    minOutputAlpha: +($("t-minOutputAlpha")?.value || 0.12),
+    outputAlphaFeather: +($("t-outputAlphaFeather")?.value || 0.50),
   };
 }
 
@@ -3475,8 +3520,8 @@ function readCloudParams() {
     cloudBeer: num("p-beer", 6.0),
     attenuationClamp: num("p-clamp", 0.005),
     inScatterG: num("p-ins", 0.72),
-    silverIntensity: num("p-sI", 12.0),
-    silverExponent: num("p-sE", 12.0),
+    silverIntensity: num("p-sI", 1.15),
+    silverExponent: num("p-sE", 1.65),
     outScatterG: num("p-outs", 1.0),
     inVsOut: num("p-ivo", 0.5),
     outScatterAmbientAmt: num("p-ambOut", 0.12),
@@ -3756,6 +3801,9 @@ function readPreview() {
   preview.edgeTint[2] = clamp01(num("v-edge-b", preview.edgeTint[2]));
   preview.styleShadowStrength = Math.max(0, Math.min(5.0, num("v-shadow-strength", preview.styleShadowStrength ?? 0.88)));
   preview.styleShadowEdge = Math.max(0, Math.min(2.2, num("v-shadow-edge", preview.styleShadowEdge ?? 0.0)));
+  preview.fogDensity = Math.max(0, Math.min(2.0, num("v-fog-density", preview.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity)));
+  preview.fogHorizon = Math.max(0, Math.min(2.0, num("v-fog-horizon", preview.fogHorizon ?? DEFAULT_FOG_PROFILE.fogHorizon)));
+  preview.fogSun = Math.max(0, Math.min(2.0, num("v-fog-sun", preview.fogSun ?? DEFAULT_FOG_PROFILE.fogSun)));
   preview.styleShadowDarkness = Math.max(0, Math.min(6.0, num("v-shadow-darkness", preview.styleShadowDarkness ?? 0.0)));
   preview.styleColorLift = Math.max(0, Math.min(2.2, num("v-color-lift", preview.styleColorLift ?? 1.12)));
   preview.styleSaturation = Math.max(0, Math.min(2.2, num("v-saturation", preview.styleSaturation ?? 1.10)));
@@ -4055,6 +4103,7 @@ function attachTuningInputs() {
     sendTuningIfChanged();
   }, 100);
   inputs.forEach((inp) => {
+    if (inp.closest("#p-cloudParams, #p-preview")) return;
     inp.addEventListener("input", sendDebounced);
     inp.addEventListener("change", () => {
       sendDebounced.cancel();
@@ -4102,13 +4151,13 @@ async function pumpLatestBakeJobs() {
   setBusy(true, "Baking...");
   try {
     while (_latestBakeJobs.size) {
-      const [key, job] = _latestBakeJobs.entries().next().value;
-      _latestBakeJobs.delete(key);
+      const jobs = Array.from(_latestBakeJobs.values());
+      _latestBakeJobs.clear();
       try {
-        await runBakeJobAndFrame(job);
-        job.resolve({ ok: true });
+        await runBakeJobsAndFrame(jobs);
+        for (const job of jobs) job.resolve({ ok: true });
       } catch (err) {
-        job.reject(err);
+        for (const job of jobs) job.reject(err);
       }
       await nextAnimationFrame();
     }
@@ -4121,29 +4170,71 @@ async function pumpLatestBakeJobs() {
   }
 }
 
-async function runBakeJobAndFrame(job) {
-  await rpc(job.bakeRpcType, safeClone(job.bakePayload));
-  await sendTuningNow();
-  readPreview();
+async function runBakeJobsAndFrame(jobs) {
+  const wasAnimating = animRunning;
+  if (wasAnimating) {
+    try {
+      await rpc("stopLoop", {});
+    } catch (err) {
+      console.warn("stopLoop before bake failed", err);
+    }
+    animRunning = false;
+    stopVisualFpsTicker();
+    await nextAnimationFrame();
+  }
 
-  const cloudParams = readCloudParams();
-  const payload = Object.assign(
-    {
-      weatherParams: safeClone(weatherParams),
-      billowParams: safeClone(billowParams),
-      weatherBParams: safeClone(weatherBParams),
-      shapeParams: safeClone(shapeParams),
-      detailParams: safeClone(detailParams),
-      tileTransforms: safeClone(tileTransforms),
-      preview: safeClone(preview),
-      cloudParams,
-    },
-    job.extraPayload || {},
-  );
+  try {
+    const latestByType = new Map();
+    for (const job of jobs) latestByType.set(job.bakeRpcType, job);
 
-  useFreshFullFrameReproj(payload);
-  ensureCoarseInPayload(payload);
-  await runFrameLatest(payload);
+    const bakeAllJob = latestByType.get("bakeAll");
+    if (bakeAllJob) {
+      await rpc("bakeAll", safeClone(bakeAllJob.bakePayload));
+    } else {
+      for (const type of ["bakeWeather", "bakeBlue", "bakeShape", "bakeDetail"]) {
+        const job = latestByType.get(type);
+        if (job) await rpc(type, safeClone(job.bakePayload));
+      }
+    }
+
+    await sendTuningNow();
+    readPreview();
+
+    const cloudParams = readCloudParams();
+    const mergedExtra = {};
+    for (const job of jobs) Object.assign(mergedExtra, job.extraPayload || {});
+    const payload = Object.assign(
+      {
+        weatherParams: safeClone(weatherParams),
+        billowParams: safeClone(billowParams),
+        weatherBParams: safeClone(weatherBParams),
+        shapeParams: safeClone(shapeParams),
+        detailParams: safeClone(detailParams),
+        tileTransforms: safeClone(tileTransforms),
+        preview: safeClone(preview),
+        cloudParams,
+      },
+      mergedExtra,
+    );
+
+    useFreshFullFrameReproj(payload);
+    ensureCoarseInPayload(payload);
+    await runFrameLatest(payload);
+  } finally {
+    if (wasAnimating) {
+      try {
+        const rp = getReprojPayload();
+        await rpc("setReproj", { reproj: rp, perf: null });
+        await rpc("startLoop", {});
+        animRunning = true;
+        startVisualFpsTicker();
+        const btn = $("reproj-anim-toggle");
+        if (btn) btn.textContent = "Stop Reproject Anim";
+      } catch (err) {
+        console.warn("restart animation after bake failed", err);
+      }
+    }
+  }
 }
 
 
@@ -4385,6 +4476,7 @@ async function wireUI() {
   });
 
   $("v-grade")?.addEventListener("change", () => {
+    readPreview();
     const style = u32("v-grade", preview.gradeStyle);
     applyGradePreset(style, true);
   });
@@ -5206,19 +5298,19 @@ async function init() {
   setIf("c-bloom", preview.sun.bloom);
 
   setIf("p-coverage", 1.0);
-  setIf("p-density", 10.0);
-  setIf("p-beer", 6);
+  setIf("p-density", 11.0);
+  setIf("p-beer", 5.8);
   setIf("p-clamp", 0.015);
   setIf("p-ins", 1.0);
   setIf("p-outs", 0.1);
   setIf("p-ivo", 0.5);
-  setIf("p-sI", 12.0);
-  setIf("p-sE", 12.0);
+  setIf("p-sI", 1.15);
+  setIf("p-sE", 1.65);
   setIf("p-ambOut", 0.08);
   setIf("p-ambMin", 0.045);
   setIf("p-anvil", 0.5);
 
-  setIf("t-maxSteps", 256);
+  setIf("t-maxSteps", 224);
   setIf("t-minStep", 0.003);
   setIf("t-maxStep", 0.16);
   setIf("t-sunSteps", 4);
@@ -5230,28 +5322,31 @@ async function init() {
   setIf("t-lodBiasWeather", 1.5);
   setIf("t-lodBlendThreshold", 0.46);
   setIf("t-nearFluffDist", 60);
-  setIf("t-nearDensityMult", 2.5);
+  setIf("t-nearDensityMult", 2.9);
   setIf("t-farStart", 1.05);
   setIf("t-farFull", 4.2);
   setIf("t-farStepMult", 2.05);
-  setIf("t-raySmoothDens", 0.40);
-  setIf("t-raySmoothSun", 0.40);
-  setIf("t-fluffFactor", 2.0);
+  setIf("t-raySmoothDens", 0.26);
+  setIf("t-raySmoothSun", 0.34);
+  setIf("t-fluffFactor", 3.6);
+  setIf("t-sparsity", 0.42);
+  setIf("t-definition", 0.62);
   setIf("t-anvilLift", 0.6);
   setIf("t-alphaCutoff", 0.98);
   setIf("t-verticalStepBoost", 3.0);
-  setIf("t-verticalTextureHomogeneity", 0.0);
+  setIf("t-verticalTextureHomogeneity", 0.46);
   setIf("t-verticalLightingStepBoost", 1.35);
   setIf("t-frontOcclusionStrength", 0.82);
   setIf("t-frontOcclusionAlpha", 0.58);
-  setIf("t-frontOcclusionStepBoost", 3.6);
+  setIf("t-frontOcclusionStepBoost", 4.2);
   setIf("t-sliceJitterStrength", 0.08);
   setIf("t-verticalLayerDecorrelation", 0.35);
   setIf("t-directLightBlend", preview.directLightBlend ?? 0.78);
   setIf("t-directLightBoost", preview.directLightBoost ?? 0.58);
-  setIf("t-alphaBoostThreshold", 0.22);
-  setIf("t-alphaBoostAmount", 0.16);
-  setIf("t-minOutputAlpha", 0.05);
+  setIf("t-alphaBoostThreshold", 0.20);
+  setIf("t-alphaBoostAmount", 0.14);
+  setIf("t-minOutputAlpha", 0.12);
+  setIf("t-outputAlphaFeather", 0.50);
 
   const anvilInput = $("p-anvil");
   if (anvilInput) {
@@ -5263,9 +5358,13 @@ async function init() {
 
   const anvilLiftInput = $("t-anvilLift");
   if (anvilLiftInput) {
-    anvilLiftInput.disabled = true;
+    anvilLiftInput.disabled = false;
+    anvilLiftInput.min = "0";
+    anvilLiftInput.max = "3";
+    anvilLiftInput.step = "0.05";
+    anvilLiftInput.title = "Anvil exaggeration multiplier. 0.6 preserves the default storm profile; lower values dampen the cap and higher values overdrive lift and spread.";
     const wrap = anvilLiftInput.closest("label") || anvilLiftInput.parentElement;
-    if (wrap) wrap.style.display = "none";
+    if (wrap) wrap.style.display = "";
   }
 
   syncPreviewLookInputs();

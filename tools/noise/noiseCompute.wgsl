@@ -11,8 +11,8 @@ struct NoiseComputeOptions {
   ioFlags : u32,
   baseRadius : f32,
   heightScale : f32,
-  _pad1 : f32,
-  _pad2 : f32,
+  sphereOffset : f32,
+  sphereOffset2 : f32,
 };
 @group(0) @binding(0) var<uniform> options : NoiseComputeOptions;
 
@@ -39,7 +39,9 @@ struct NoiseParams {
   terraceStep : f32,
   toroidal : u32,
   voroMode : u32,
-  edgeK:     f32
+  edgeK : f32,
+  scalar : f32,
+  transform : f32,
 };
 @group(0) @binding(1) var<uniform> params : NoiseParams;
 
@@ -160,14 +162,108 @@ fn seedOffset3(seed: u32) -> vec3<f32> {
   );
 }
 
+fn fetchPlanetSpherePos(fx: i32, fy: i32) -> vec3<f32> {
+  let w = i32(max(frame.fullWidth, 2u));
+  let h = i32(max(frame.fullHeight, 2u));
+  let segments = max(w - 1, 1);
+  let maxLat = max(h - 1, 1);
+
+  let lat = clamp(fy, 0, maxLat);
+  let rawLon = fx;
+  let lon = ((rawLon % segments) + segments) % segments;
+
+  if (lat <= 0) {
+    // Y-up north pole, matching sphereUVFromWorld() and the Babylon planet.
+    return vec3<f32>(2.0, 3.0, 2.0);
+  }
+
+  if (lat >= maxLat) {
+    // Y-up south pole, matching sphereUVFromWorld() and the Babylon planet.
+    return vec3<f32>(2.0, 1.0, 2.0);
+  }
+
+  let theta = f32(lat) * PI / f32(maxLat);
+  let phi = f32(lon) * TWO_PI / f32(segments);
+
+  let sinTheta = sin(theta);
+  let cosTheta = cos(theta);
+  let sinPhi = sin(phi);
+  let cosPhi = cos(phi);
+
+  // Match the Babylon / spherical cloud convention: Y is the polar axis and
+  // longitude runs around X/Z. This keeps the baked spherical weather field in
+  // parity with sphereUVFromWorld(), so the cloud weather map is actually baked
+  // onto the same manifold it is sampled from at render time.
+  let x = sinTheta * cosPhi;
+  let y = cosTheta;
+  let z = sinTheta * sinPhi;
+
+  // Fade the procedural offset by latitude only so it stays symmetric around the
+  // seam and vanishes cleanly at the poles.
+  let equatorScale = sinTheta;
+  let offset = options.sphereOffset;
+  let offset2 = options.sphereOffset2;
+
+  return vec3<f32>(
+    x + 2.0 + equatorScale * (offset * sin(phi + theta) + offset2 * cos(2.0 * phi)),
+    y + 2.0 + equatorScale * (offset * cos(theta + phi) + offset2 * sin(2.0 * theta)),
+    z + 2.0 + equatorScale * (offset * sin(2.0 * phi + theta) + offset2 * cos(2.0 * theta + phi))
+  );
+}
+
+
+fn fetchAuroraCapPos(fx: i32, fy: i32) -> vec3<f32> {
+  let w = i32(max(frame.fullWidth, 2u));
+  let h = i32(max(frame.fullHeight, 2u));
+  let segments = max(w - 1, 1);
+  let maxRadial = max(h - 1, 1);
+
+  let radialIndex = clamp(fy, 0, maxRadial);
+  let rawLon = fx;
+  let lon = ((rawLon % segments) + segments) % segments;
+
+  let capHalfAngleDeg = max(options.baseRadius, 0.001);
+  let capHalfAngle = radians(capHalfAngleDeg);
+  let hemisphere = select(-1.0, 1.0, options.heightScale >= 0.0);
+
+  let radial = f32(radialIndex) * capHalfAngle / f32(maxRadial);
+  let phi = f32(lon) * TWO_PI / f32(segments);
+
+  let sinR = sin(radial);
+  let cosR = cos(radial);
+  let sinPhi = sin(phi);
+  let cosPhi = cos(phi);
+
+  let x = sinR * cosPhi;
+  let y = hemisphere * cosR;
+  let z = sinR * sinPhi;
+
+  let capScale = sinR;
+  let offset = options.sphereOffset;
+  let offset2 = options.sphereOffset2;
+
+  return vec3<f32>(
+    x + 2.0 + capScale * (offset * sin(phi + radial) + offset2 * cos(2.0 * phi)),
+    y + 2.0 + capScale * (offset * cos(radial + phi) + offset2 * sin(2.0 * radial)),
+    z + 2.0 + capScale * (offset * sin(2.0 * phi + radial) + offset2 * cos(2.0 * radial + phi))
+  );
+}
+
 fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {
+  if (options.useCustomPos == 2u) {
+    return fetchPlanetSpherePos(fx, fy);
+  }
+
+  if (options.useCustomPos == 3u) {
+    return fetchAuroraCapPos(fx, fy);
+  }
+
   if (options.useCustomPos == 1u) {
     let use3D = writeTo3D() || readFrom3D();
-    let slice_i = select(frame.layerIndex, clampZ(fz), use3D);
-    let slice = u32(max(slice_i, 0));
-    let cx = clamp(fx, 0, i32(frame.fullWidth) - 1);
-    let cy = clamp(fy, 0, i32(frame.fullHeight) - 1);
-    let idx = slice * frame.fullWidth * frame.fullHeight + u32(cy) * frame.fullWidth + u32(cx);
+    let localX = u32(clamp(fx - frame.originX, 0, i32(max(frame.tileWidth, 1u)) - 1));
+    let localY = u32(clamp(fy - frame.originY, 0, i32(max(frame.tileHeight, 1u)) - 1));
+    let localZ = u32(max(select(frame.layerIndex, clampZ(fz) - frame.originZ, use3D), 0));
+    let idx = localZ * frame.tileWidth * frame.tileHeight + localY * frame.tileWidth + localX;
     return posBuf[idx].xyz;
   }
 
@@ -216,6 +312,11 @@ fn fetchPos(fx: i32, fy: i32, fz: i32) -> vec3<f32> {
 
 
 fn writeChannel(fx:i32, fy:i32, fz:i32, v0:f32, channel:u32, overwrite:u32) {
+  if (!writeTo3D()) {
+    if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) { return; }
+  }
+
+  let v = v0 * params.scalar + params.transform;
   let needsAccum = (overwrite == 0u);
   let writesAll = (channel == 0u);
   let skipRead = (!needsAccum) && (writesAll || channel == 5u);
@@ -223,13 +324,13 @@ fn writeChannel(fx:i32, fy:i32, fz:i32, v0:f32, channel:u32, overwrite:u32) {
   if (!skipRead) { inCol = loadPrevRGBA(fx, fy, fz); }
   var outCol = inCol;
 
-  if (channel == 0u)      { let h = select(v0 + inCol.x, v0, overwrite == 1u); outCol = vec4<f32>(h, h, h, h); }
-  else if (channel == 1u) { let h = select(v0 + inCol.x, v0, overwrite == 1u); outCol.x = h; }
-  else if (channel == 2u) { let h = select(v0 + inCol.y, v0, overwrite == 1u); outCol.y = h; }
-  else if (channel == 3u) { let h = select(v0 + inCol.z, v0, overwrite == 1u); outCol.z = h; }
-  else if (channel == 4u) { let h = select(v0 + inCol.w, v0, overwrite == 1u); outCol.w = h; }
-  else if (channel == 5u) { let p = fetchPos(fx, fy, fz); let h = select(v0 + inCol.w, v0, overwrite == 1u); outCol = vec4<f32>(p.x, p.y, p.z, h); }
-  else if (channel == 6u) { let p = fetchPos(fx, fy, fz); let h = select(v0 + inCol.w, v0, overwrite == 1u); outCol = vec4<f32>(p.x, p.y, h, inCol.w); }
+  if (channel == 0u)      { let h = select(v + inCol.x, v, overwrite == 1u); outCol = vec4<f32>(h, h, h, h); }
+  else if (channel == 1u) { let h = select(v + inCol.x, v, overwrite == 1u); outCol.x = h; }
+  else if (channel == 2u) { let h = select(v + inCol.y, v, overwrite == 1u); outCol.y = h; }
+  else if (channel == 3u) { let h = select(v + inCol.z, v, overwrite == 1u); outCol.z = h; }
+  else if (channel == 4u) { let h = select(v + inCol.w, v, overwrite == 1u); outCol.w = h; }
+  else if (channel == 5u) { let p = fetchPos(fx, fy, fz); let h = select(v + inCol.w, v, overwrite == 1u); outCol = vec4<f32>(p.x, p.y, p.z, h); }
+  else if (channel == 6u) { let p = fetchPos(fx, fy, fz); let h = select(v + inCol.w, v, overwrite == 1u); outCol = vec4<f32>(p.x, p.y, h, inCol.w); }
 
   storeRGBA(fx, fy, fz, outCol);
 }
@@ -976,8 +1077,8 @@ fn voronoi2D(pos : vec2<f32>) -> f32 {
 
 
 // ----------------- types & mode constants -----------------
-struct Voro3DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };
-struct Voro4DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32 };
+struct Voro3DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32, };
+struct Voro4DMetrics { f1Sq: f32, f2Sq: f32, cellVal: f32, };
 
 // ----------------- voro_eval: pick output depending on mode -----------------
 
@@ -4999,128 +5100,92 @@ fn computeNormalVolume(@builtin(global_invocation_id) gid: vec3<u32>,
 }
 
 
-// Sphere normals with shared tile and wrapped longitude
+fn wrapSphereLon(lon: i32, width: i32) -> i32 {
+    let segments = max(width - 1, 1);
+    return ((lon % segments) + segments) % segments;
+}
+
+fn loadSphereHeight(lon: i32, lat: i32, width: i32, height: i32, layer: i32) -> f32 {
+    let x = wrapSphereLon(lon, width);
+    let y = clamp(lat, 0, height - 1);
+    return textureLoad(inputTex, vec2<i32>(x, y), layer, 0).x;
+}
+
+fn sphereUnitFromAngles(theta: f32, phi: f32) -> vec3<f32> {
+    let sTh = sin(theta);
+    return vec3<f32>(sTh * cos(phi), sTh * sin(phi), cos(theta));
+}
+
+fn sphereSurfacePos(lat: i32, theta: f32, phi: f32, heightValue: f32, maxLat: i32) -> vec3<f32> {
+    let r = options.baseRadius + heightValue * options.heightScale;
+
+    if (lat <= 0) {
+        return vec3<f32>(0.0, 0.0, r);
+    }
+
+    if (lat >= maxLat) {
+        return vec3<f32>(0.0, 0.0, -r);
+    }
+
+    return sphereUnitFromAngles(theta, phi) * r;
+}
+
+// Sphere normals with logical longitude wrapping.
+// The mesh keeps a duplicate seam column at lon == segments for Babylon/UVs, but
+// the sampler treats longitude as modulo segments. This keeps lon 0 and lon N
+// numerically identical and avoids the hard normal/color seam that shows up as a
+// zipper around the planet.
 @compute @workgroup_size(WGX, WGY, 1)
-fn computeSphereNormal(@builtin(global_invocation_id) gid: vec3<u32>,
-                       @builtin(local_invocation_id)  lid: vec3<u32>) {
+fn computeSphereNormal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let fx = i32(frame.originX) + i32(gid.x);
     let fy = i32(frame.originY) + i32(gid.y);
-    let fz = i32(frame.originZ) + i32(gid.z);
     let w  = i32(frame.fullWidth);
     let h  = i32(frame.fullHeight);
 
-    // wrap longitude, clamp latitude
-    let wrapX  = ((fx % w) + w) % w;
-    let clampY = clamp(fy, 0, h - 1);
-
-    let tx = i32(lid.x) + 1;
-    let ty = i32(lid.y) + 1;
-
-    // center
-    sphereTile[u32(ty)][u32(tx)] =
-        textureLoad(inputTex, vec2<i32>(wrapX, clampY), frame.layerIndex, 0).x;
-
-    // halo
-    if (lid.x == 0u) {
-        let lx = ((wrapX - 1) % w + w) % w;
-        sphereTile[u32(ty)][0u] =
-            textureLoad(inputTex, vec2<i32>(lx, clampY), frame.layerIndex, 0).x;
-    }
-    if (lid.x == WGX - 1u) {
-        let rx = ((wrapX + 1) % w + w) % w;
-        sphereTile[u32(ty)][TILE_W - 1u] =
-            textureLoad(inputTex, vec2<i32>(rx, clampY), frame.layerIndex, 0).x;
-    }
-    if (lid.y == 0u) {
-        let dy = clamp(clampY - 1, 0, h - 1);
-        sphereTile[0u][u32(tx)] =
-            textureLoad(inputTex, vec2<i32>(wrapX, dy), frame.layerIndex, 0).x;
-    }
-    if (lid.y == WGY - 1u) {
-        let uy = clamp(clampY + 1, 0, h - 1);
-        sphereTile[TILE_H - 1u][u32(tx)] =
-            textureLoad(inputTex, vec2<i32>(wrapX, uy), frame.layerIndex, 0).x;
-    }
-    // corners
-    if (lid.x == 0u && lid.y == 0u) {
-        let lx = ((wrapX - 1) % w + w) % w;
-        let dy = clamp(clampY - 1, 0, h - 1);
-        sphereTile[0u][0u] =
-            textureLoad(inputTex, vec2<i32>(lx, dy), frame.layerIndex, 0).x;
-    }
-    if (lid.x == WGX - 1u && lid.y == 0u) {
-        let rx = ((wrapX + 1) % w + w) % w;
-        let dy = clamp(clampY - 1, 0, h - 1);
-        sphereTile[0u][TILE_W - 1u] =
-            textureLoad(inputTex, vec2<i32>(rx, dy), frame.layerIndex, 0).x;
-    }
-    if (lid.x == 0u && lid.y == WGY - 1u) {
-        let lx = ((wrapX - 1) % w + w) % w;
-        let uy = clamp(clampY + 1, 0, h - 1);
-        sphereTile[TILE_H - 1u][0u] =
-            textureLoad(inputTex, vec2<i32>(lx, uy), frame.layerIndex, 0).x;
-    }
-    if (lid.x == WGX - 1u && lid.y == WGY - 1u) {
-        let rx = ((wrapX + 1) % w + w) % w;
-        let uy = clamp(clampY + 1, 0, h - 1);
-        sphereTile[TILE_H - 1u][TILE_W - 1u] =
-            textureLoad(inputTex, vec2<i32>(rx, uy), frame.layerIndex, 0).x;
+    if (fx < 0 || fy < 0 || fx >= w || fy >= h) {
+        return;
     }
 
-    workgroupBarrier();
+    let segments = max(w - 1, 1);
+    let maxLat = h - 1;
+    let lon = wrapSphereLon(fx, w);
+    let lat = clamp(fy, 0, maxLat);
 
-    // fetch
-    let baseH = sphereTile[u32(ty)][u32(tx)];
-    let hL    = sphereTile[u32(ty)][u32(tx - 1)];
-    let hR    = sphereTile[u32(ty)][u32(tx + 1)];
-    let hD    = sphereTile[u32(ty - 1)][u32(tx)];
-    let hU    = sphereTile[u32(ty + 1)][u32(tx)];
+    let baseH = loadSphereHeight(lon, lat, w, h, frame.layerIndex);
+    let dPhi = 2.0 * PI / f32(segments);
+    let dTheta = PI / f32(max(maxLat, 1));
+    let theta = f32(lat) * dTheta;
+    let phi = f32(lon) * dPhi;
 
-    // radii
-    let r0 = options.baseRadius + baseH * options.heightScale;
-    let rL = options.baseRadius + hL    * options.heightScale;
-    let rR = options.baseRadius + hR    * options.heightScale;
-    let rD = options.baseRadius + hD    * options.heightScale;
-    let rU = options.baseRadius + hU    * options.heightScale;
+    var n: vec3<f32>;
 
-    // spherical angles and increments
-    let theta  = f32(clampY) / f32(h - 1) * PI;
-    let phi    = f32(wrapX)  / f32(w - 1) * 2.0 * PI;
-    let dTheta = PI / f32(h - 1);
-    let dPhi   = 2.0 * PI / f32(w - 1);
+    if (lat <= 0) {
+        n = vec3<f32>(0.0, 0.0, 1.0);
+    } else if (lat >= maxLat) {
+        n = vec3<f32>(0.0, 0.0, -1.0);
+    } else {
+        let hW = loadSphereHeight(lon - 1, lat, w, h, frame.layerIndex);
+        let hE = loadSphereHeight(lon + 1, lat, w, h, frame.layerIndex);
+        let hS = loadSphereHeight(lon, lat - 1, w, h, frame.layerIndex);
+        let hN = loadSphereHeight(lon, lat + 1, w, h, frame.layerIndex);
 
-    // precompute sines and cosines
-    let sTh  = sin(theta);
-    let cTh  = cos(theta);
-    let sPh  = sin(phi);
-    let cPh  = cos(phi);
-    let sThU = sin(theta + dTheta);
-    let cThU = cos(theta + dTheta);
-    let sPhE = sin(phi + dPhi);
-    let cPhE = cos(phi + dPhi);
+        let pW = sphereSurfacePos(lat, theta, phi - dPhi, hW, maxLat);
+        let pE = sphereSurfacePos(lat, theta, phi + dPhi, hE, maxLat);
+        let pS = sphereSurfacePos(lat - 1, theta - dTheta, phi, hS, maxLat);
+        let pN = sphereSurfacePos(lat + 1, theta + dTheta, phi, hN, maxLat);
 
-    // positions on the sphere
-    let p0 = vec3<f32>(r0 * sTh * cPh,
-                       r0 * sTh * sPh,
-                       r0 * cTh);
+        let tLon = pE - pW;
+        let tLat = pN - pS;
+        let radial = sphereUnitFromAngles(theta, phi);
+        n = safeNormalize(cross(tLat, tLon));
 
-    let pE = vec3<f32>(rR * sTh * cPhE,
-                       rR * sTh * sPhE,
-                       rR * cTh);
+        if (dot(n, radial) < 0.0) {
+            n = -n;
+        }
+    }
 
-    let pN = vec3<f32>(rU * sThU * cPh,
-                       rU * sThU * sPh,
-                       rU * cThU);
-
-    // normal
-    let tE = pE - p0;
-    let tN = pN - p0;
-    let n  = normalize(cross(tE, tN));
     let enc = n * 0.5 + vec3<f32>(0.5);
-
-    // pack and store
-    let outCol = vec4<f32>(baseH, enc.x, enc.y, enc.z);
-    textureStore(outputTex, vec2<i32>(wrapX, clampY), frame.layerIndex, outCol);
+    textureStore(outputTex, vec2<i32>(fx, fy), frame.layerIndex, vec4<f32>(baseH, enc.x, enc.y, enc.z));
 }
 
 
