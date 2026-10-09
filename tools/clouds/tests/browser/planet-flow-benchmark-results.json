@@ -1,0 +1,228 @@
+{
+  "complete": true,
+  "pass": true,
+  "flowChecks": {
+    "maxUnitError": 1.4156515815155757e-7,
+    "maxIdentityError": 2.3276356841961388e-7,
+    "maxFrameDirectionDelta": 0.00034698485978879035,
+    "maxSeamGap": 0.000002506940465547215,
+    "invalid": 0
+  },
+  "timing": "GPU timestamp queries",
+  "adapter": {
+    "vendor": "nvidia",
+    "architecture": "lovelace",
+    "device": "",
+    "description": ""
+  },
+  "warmupDispatches": 2,
+  "measuredDispatches": 7,
+  "rows": [
+    {
+      "style": "gas_giant",
+      "size": 512,
+      "weather": {
+        "medianMs": 0.622592,
+        "minMs": 0.589824,
+        "maxMs": 0.851968,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 2.21184,
+        "minMs": 2.162688,
+        "maxMs": 2.4576,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.006144,
+          "minMs": 0.00512,
+          "maxMs": 0.008192,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.007168,
+          "minMs": 0.007168,
+          "maxMs": 0.008192,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.04096,
+          "minMs": 0.04096,
+          "maxMs": 0.049152,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.090112,
+          "minMs": 0.08192,
+          "maxMs": 0.090112,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 39.60000002384186
+    },
+    {
+      "style": "hail_mary",
+      "size": 512,
+      "weather": {
+        "medianMs": 0.835584,
+        "minMs": 0.581632,
+        "maxMs": 1.114112,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 2.097152,
+        "minMs": 2.056192,
+        "maxMs": 2.37568,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.008192,
+          "minMs": 0.007168,
+          "maxMs": 0.011264,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.008192,
+          "minMs": 0.007168,
+          "maxMs": 0.008192,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.04096,
+          "minMs": 0.04096,
+          "maxMs": 0.049152,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.090112,
+          "minMs": 0.08192,
+          "maxMs": 0.28672,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 13.5
+    },
+    {
+      "style": "gas_giant",
+      "size": 1024,
+      "weather": {
+        "medianMs": 2.383872,
+        "minMs": 2.195456,
+        "maxMs": 2.752512,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 2.17088,
+        "minMs": 1.867776,
+        "maxMs": 2.383872,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.018432,
+          "minMs": 0.017408,
+          "maxMs": 0.0256,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.028672,
+          "minMs": 0.027648,
+          "maxMs": 0.060416,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.2048,
+          "minMs": 0.196608,
+          "maxMs": 0.2048,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.458752,
+          "minMs": 0.393216,
+          "maxMs": 0.475136,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 21.90000009536743
+    },
+    {
+      "style": "hail_mary",
+      "size": 1024,
+      "weather": {
+        "medianMs": 4.66944,
+        "minMs": 4.530176,
+        "maxMs": 4.767744,
+        "batchDispatches": 8
+      },
+      "shape128": {
+        "medianMs": 2.29376,
+        "minMs": 2.12992,
+        "maxMs": 2.359296,
+        "batchDispatches": 8
+      },
+      "sampling": [
+        {
+          "samples": 1,
+          "warped": false,
+          "medianMs": 0.02048,
+          "minMs": 0.017408,
+          "maxMs": 0.047104,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 1,
+          "warped": true,
+          "medianMs": 0.033792,
+          "minMs": 0.028672,
+          "maxMs": 0.039936,
+          "batchDispatches": 64
+        },
+        {
+          "samples": 16,
+          "warped": false,
+          "medianMs": 0.229376,
+          "minMs": 0.221184,
+          "maxMs": 0.237568,
+          "batchDispatches": 8
+        },
+        {
+          "samples": 16,
+          "warped": true,
+          "medianMs": 0.475136,
+          "minMs": 0.45056,
+          "maxMs": 0.507904,
+          "batchDispatches": 8
+        }
+      ],
+      "coldSetupAndBakeMs": 21.700000047683716
+    }
+  ],
+  "errors": [],
+  "note": "Sampling is a microbenchmark with the production flow and texture reads; it is not total frame time. Bake timings exclude allocation and shader compilation. One-read warp also represents generating an animated warped map once per frame; 16-read workload approximates repeated volume sampling."
+}

@@ -5,8 +5,14 @@
 
 import html from "./clouds.html";
 import wrkr from "./cloudTest.worker.js";
+import { CloudTimingReport, logCloudTimingReport } from "./cloudTiming.js";
+import { ANVIL_FORM, ANVIL_PRESET_VALUES } from './weather/cloudAnvilLook.js';
+import { CLOUD_FIELD_QUALITIES, normalizeCloudFieldQuality, supportsCloudFieldQuality } from './cloudFieldQuality.js';
+import { REFERENCE_LOOK_PRESETS } from './cloudLookPresets.js';
+import { installCloudNavigation } from './cloudNavigation.js';
 
 let worker;
+let cloudFieldLimits = null;
 
 // Constants (mirror worker). Mobile keeps the same shader path but lowers
 // startup texture/canvas pressure so first load does not stall the browser.
@@ -74,6 +80,29 @@ const SHAPE_SIZE = STARTUP_PROFILE.shapeSize,
   BN_W = STARTUP_PROFILE.blueW,
   BN_H = STARTUP_PROFILE.blueH;
 const DBG_SIZE = STARTUP_PROFILE.dbgSize;
+const cloudFirstLoadTiming = new CloudTimingReport("cloud-first-load", {
+  mobileProfile: MOBILE_PROFILE,
+  fullSizes: {
+    weather: [WEATHER_W, WEATHER_H],
+    blue: [BN_W, BN_H],
+    shape: SHAPE_SIZE,
+    detail: DETAIL_SIZE,
+  },
+});
+let workerInitTimingReport = null;
+let latestCloudStartupTiming = null;
+const cloudWorkerTimingHistory = [];
+
+function publishCloudStartupTiming(report, complete = false) {
+  latestCloudStartupTiming = report;
+  try {
+    globalThis.cloudStartupTiming = report;
+    globalThis.dispatchEvent?.(new CustomEvent("cloud-startup-timing", { detail: { report, complete } }));
+  } catch {}
+  return report;
+}
+
+publishCloudStartupTiming(cloudFirstLoadTiming.snapshot(), false);
 const DPR = () => {
   const raw = Math.max(1, window.devicePixelRatio || 1);
   return STARTUP_PROFILE.capMainCanvas ? Math.min(STARTUP_PROFILE.maxDpr, raw) : raw;
@@ -101,7 +130,10 @@ const preview = {
   renderScaleDivider: STARTUP_PROFILE.renderScaleDivider,
   temporalCellRate: STARTUP_PROFILE.temporalCellRate,
   layerPreset: "rain_shelf",
+  volumeShape: "box",
   gradeStyle: 3,
+  cloudShading: "auto",
+  cloudTurbulence: .75,
   sunTint: [1.0, 1.0, 1.0],
   transmissiveLightTint: [0.94, 1.00, 1.08],
   frontLightTint: [1.18, 1.24, 1.32],
@@ -1274,15 +1306,23 @@ function createCloudQuickDock() {
       </div>
       <label class="cloud-quick-field"><span>Layer preset</span><select id="quick-layer-preset"></select></label>
       <label class="cloud-quick-field"><span>Color grade</span><select id="quick-grade"></select></label>
+      <label class="cloud-quick-field"><span>Lighting finish</span><select id="quick-cloud-shading"></select></label>
+      <label class="cloud-quick-field"><span>Cloud turbulence</span><select id="quick-cloud-turbulence"></select></label>
       <label class="cloud-quick-field"><span>Render divider <b id="quick-render-scale-label">4</b></span><input id="quick-render-scale" type="range" min="1" max="8" step="1" value="4"></label>
+      <label class="cloud-quick-field"><span>Fluffy cloud detail</span><select id="quick-field-quality" title="Independent 3D shape and lighting fidelity, not screen resolution. Screenshot: 256×128×256 / 146 MiB / 8× voxels. Capture: 384×192×384 / 494 MiB / 27× voxels. Reference: 512×256×512 / 1.14 GiB / 64× voxels. Voxel counts are relative to Balanced, not frame-time multipliers. Pause animation for captures. Rain Shelf and planets are unaffected."></select></label>
+      <small id="quick-render-path-hint" style="grid-column:1/-1;line-height:1.4;opacity:.75"></small>
+      <label class="cloud-quick-field"><span>Sky span (X/Z)</span><input id="quick-sky-span" type="number" min="4" max="512" step="6" value="36" title="Full horizontal box width in world units. Sets X and Z together without changing height, puff size or wind. Advanced Cloud Box controls allow separate X/Z extents. Wide skies repeat a bounded cloud tile to preserve detail. Fluffy cloud detail controls the tile resolution."></label>
       <button type="button" id="quick-render-button">Render</button>
       <button type="button" id="quick-rebake-button">Rebake</button>
+      <div id="quick-playback-slot" style="grid-column:1/-1"></div>
     </div>
   `;
 
-  const anchor = $("p-preview") || $("p-cloudParams") || $("p-weather") || document.body.firstElementChild;
+  const anchor = $("pipeline-tools") || $("p-preview") || $("p-cloudParams") || $("p-weather") || document.body.firstElementChild;
   if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(dock, anchor);
   else document.body.prepend(dock);
+  const playback=$("reproj-anim-toggle")?.closest('.inline');
+  if(playback)dock.querySelector('#quick-playback-slot').appendChild(playback);
 }
 
 function cloneOptions(fromId, toId) {
@@ -1293,7 +1333,7 @@ function cloneOptions(fromId, toId) {
   const targetOptions = Array.from(target.options || []);
   const sameOptions =
     sourceOptions.length === targetOptions.length &&
-    sourceOptions.every((option, index) => targetOptions[index]?.value === option.value && targetOptions[index]?.textContent === option.textContent);
+    sourceOptions.every((option, index) => targetOptions[index]?.value === option.value && targetOptions[index]?.textContent === option.textContent && targetOptions[index]?.disabled === option.disabled);
   if (sameOptions) return;
   const current = target.value || source.value;
   target.innerHTML = "";
@@ -1318,8 +1358,27 @@ function dispatchInput(id) {
 }
 
 function populateCloudQuickDock() {
+  if (cloudFieldLimits) for (const option of $("v-field-quality")?.options || []) {
+    option.disabled = !supportsCloudFieldQuality(option.value, cloudFieldLimits);
+  }
   cloneOptions("v-layer-preset", "quick-layer-preset");
   cloneOptions("v-grade", "quick-grade");
+  cloneOptions("v-cloud-shading", "quick-cloud-shading");
+  setFieldValue("quick-cloud-shading", $("v-cloud-shading")?.value || preview.cloudShading || "auto");
+  cloneOptions("v-cloud-turbulence", "quick-cloud-turbulence");
+  setFieldValue("quick-cloud-turbulence", $("v-cloud-turbulence")?.value ?? preview.cloudTurbulence ?? .75);
+  cloneOptions("v-field-quality", "quick-field-quality");
+  setFieldValue("quick-field-quality", $("v-field-quality")?.value || preview.fieldQuality || "balanced");
+  const fluffy = !!$('weather-cycle-enabled')?.checked || Number($('t-formType')?.value || 0)>0;
+  for(const id of ['v-field-quality','quick-field-quality','v-cloud-turbulence','quick-cloud-turbulence']) if($(id)) $(id).disabled=!fluffy;
+  if($('quick-render-path-hint')) $('quick-render-path-hint').textContent=fluffy
+    ? 'Fluffy volume: detail and turbulence shape the clouds. Lighting finish changes their appearance; Sculpted works here too.'
+    : 'Rain Shelf: procedural sculpted clouds. Fluffy volume detail and turbulence do not apply. Choose Sculpted lighting for the illustrated references.';
+  if (document.activeElement !== $("quick-sky-span")) {
+    const halfX = Number($("v-box-hx")?.value || preview.box?.half?.[0] || 18);
+    const halfZ = Number($("v-box-hz")?.value || preview.box?.half?.[2] || 18);
+    setFieldValue("quick-sky-span", Math.max(halfX, halfZ) * 2);
+  }
   setFieldValue("quick-layer-preset", $("v-layer-preset")?.value || preview.layerPreset || "custom");
   setFieldValue("quick-grade", $("v-grade")?.value || preview.gradeStyle || 0);
   const scale = String($("v-render-scale-divider")?.value || preview.renderScaleDivider || 4);
@@ -1337,8 +1396,9 @@ function updateCloudQuickDockState() {
   if (status && status.dataset.manual !== "true") {
     const layer = $("v-layer-preset")?.selectedOptions?.[0]?.textContent || "Custom";
     const grade = $("v-grade")?.selectedOptions?.[0]?.textContent || "Grade";
+    const shading = $("v-cloud-shading")?.selectedOptions?.[0]?.textContent || "Auto shading";
     const fps = $("fpsDisplay")?.textContent || "-";
-    status.textContent = `${layer} | ${grade} | ${fps}`;
+    status.textContent = `${layer} | ${grade} | ${shading} | ${fps}`;
   }
   populateCloudQuickDock();
 }
@@ -1373,6 +1433,16 @@ function wireCloudQuickDock() {
     $("v-grade")?.dispatchEvent(new Event("change", { bubbles: true }));
     updateCloudQuickDockState();
   });
+  $("quick-cloud-shading")?.addEventListener("change", () => {
+    setFieldValue("v-cloud-shading", $("quick-cloud-shading").value);
+    $("v-cloud-shading")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
+  $("quick-cloud-turbulence")?.addEventListener("change", () => {
+    setFieldValue("v-cloud-turbulence", $("quick-cloud-turbulence").value);
+    $("v-cloud-turbulence")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
   $("quick-render-scale")?.addEventListener("input", () => {
     const value = $("quick-render-scale").value;
     setFieldValue("v-render-scale-divider", value);
@@ -1381,8 +1451,24 @@ function wireCloudQuickDock() {
     dispatchInput("v-render-scale-divider");
   });
   $("quick-render-button")?.addEventListener("click", () => $("render")?.click());
+  $("quick-field-quality")?.addEventListener("change", () => {
+    setFieldValue("v-field-quality", $("quick-field-quality").value);
+    $("v-field-quality")?.dispatchEvent(new Event("change", { bubbles: true }));
+    updateCloudQuickDockState();
+  });
+  const updateSkySpan = () => {
+    const value = Number($("quick-sky-span").value);
+    if (!Number.isFinite(value) || value < 4) return;
+    const half = Math.min(512, value) * 0.5;
+    setFieldValue("v-box-hx", half);
+    setFieldValue("v-box-hz", half);
+    // Install both extents before requesting one coherent frame update.
+    dispatchInput("v-box-hx");
+  };
+  $("quick-sky-span")?.addEventListener("input", updateSkySpan);
+  $("quick-sky-span")?.addEventListener("change", updateSkySpan);
   $("quick-rebake-button")?.addEventListener("click", () => $("rebake-all")?.click());
-  ["pass", "v-layer-preset", "v-grade", "v-render-scale-divider"].forEach((id) => {
+  ["pass", "v-layer-preset", "v-grade", "v-cloud-shading", "v-cloud-turbulence", "v-render-scale-divider", "v-field-quality", "v-box-hx", "v-box-hz"].forEach((id) => {
     $(id)?.addEventListener("change", updateCloudQuickDockState);
     $(id)?.addEventListener("input", updateCloudQuickDockState);
   });
@@ -2090,7 +2176,9 @@ function organizeSidebarControlGroups() {
   appendControlGroup(previewPanel, "Scene", [
     { label: "Preset", columns: 1, fields: [{ id: "v-layer-preset", label: "Layer" }] },
     { label: "Grade", columns: 1, fields: [{ id: "v-grade", label: "Color" }] },
+    { label: "Shading", columns: 1, fields: [{ id: "v-cloud-shading", label: "Light / style" }] },
     { label: "Render", columns: 2, fields: [{ id: "v-render-scale-divider", label: "Raymarch" }, { id: "v-temporal-cell-rate", label: "Temporal" }] },
+    { label: "Volume detail", columns: 1, fields: [{ id: "v-field-quality", label: "Fluffy clouds" }, { id: "v-cloud-turbulence", label: "Turbulence" }] },
   ]);
   appendControlGroup(previewPanel, "Camera", [
     { label: "Cam", columns: 3, fields: [{ id: "v-cx", label: "X" }, { id: "v-cy", label: "Y" }, { id: "v-cz", label: "Z" }] },
@@ -2128,6 +2216,8 @@ function organizeSidebarControlGroups() {
 
   const tuningPanel = $("p-cloudParams");
   appendControlGroup(tuningPanel, "Density", [
+    { label: "Form", columns: 1, fields: [{ id: "t-formType", label: "Shape" }] },
+    { label: "Puffs", columns: 3, fields: [{ id: "t-puffScale", label: "Size" }, { id: "t-towerHeightVariation", label: "Height variation" }, { id: "t-aoStrength", label: "Occlusion" }] },
     { label: "Body", columns: 3, fields: [{ id: "p-coverage", label: "Coverage" }, { id: "p-density", label: "Density" }, { id: "p-anvil", label: "Anvil" }] },
     { label: "Shell", columns: 4, fields: [{ id: "t-fluffFactor", label: "Fluff" }, { id: "t-sparsity", label: "Sparse" }, { id: "t-definition", label: "Define" }, { id: "t-topJitter", label: "Top" }] },
     { label: "Grain", columns: 1, fields: [{ id: "t-baseJitter", label: "Base" }] },
@@ -2267,6 +2357,7 @@ const clamp01 = (v) => Math.max(0, Math.min(4, Number.isFinite(+v) ? +v : 1));
 const CLOUD_LAYER_PRESETS = {
   fair_cumulus: {
     description: "Puffy fair-weather cumulus with a balanced body and soft tops.",
+    form: { type: 1, halfY: 2.0, puffScale: 3.8, ao: 0.50, heightVariation: 0.38 },
     values: {
       "p-coverage": 0.86,
       "p-density": 8.5,
@@ -2312,6 +2403,7 @@ const CLOUD_LAYER_PRESETS = {
   },
   broken_cumulus: {
     description: "Open-cell broken cumulus with deeper erosion and more gaps.",
+    form: { type: 1, halfY: 1.6, puffScale: 4.4, ao: 0.56, heightVariation: 0.54 },
     values: {
       "p-coverage": 0.72,
       "p-density": 8.0,
@@ -2396,6 +2488,7 @@ const CLOUD_LAYER_PRESETS = {
   },
   towering_cu: {
     description: "Strong vertical cumulus towers without a fully spread anvil.",
+    form: { type: 2, halfY: 3.6, puffScale: 5.0, ao: 0.60, heightVariation: 0.28 },
     values: {
       "p-coverage": 0.88,
       "p-density": 10.5,
@@ -2439,28 +2532,10 @@ const CLOUD_LAYER_PRESETS = {
     },
   },
   cumulonimbus_anvil: {
-    description: "Tall storm tower with connected body and upper anvil, with extra vertical erosion.",
+    description: "Scattered tall anvil storms among lower cumulus, with connected outflow canopies and volumetric breakup.",
+    form: ANVIL_FORM,
     values: {
-      "p-coverage": 0.94,
-      "p-density": 11.8,
-      "p-anvil": 1.15,
-      "p-beer": 6.0,
-      "p-sI": 1.15,
-      "p-sE": 1.65,
-      "t-fluffFactor": 4.90,
-      "t-sparsity": 0.44,
-      "t-definition": 0.72,
-      "t-raySmoothDens": 0.23,
-      "t-baseJitter": 0.045,
-      "t-topJitter": 0.32,
-      "t-verticalTextureHomogeneity": 1.0,
-      "t-verticalLayerDecorrelation": 1.0,
-      "t-sliceJitterStrength": 0.14,
-      "t-alphaCutoff": 0.965,
-      "t-alphaBoostThreshold": 0.20,
-      "t-alphaBoostAmount": 0.14,
-      "t-minOutputAlpha": 0.12,
-      "t-outputAlphaFeather": 0.52,
+      ...ANVIL_PRESET_VALUES,
       "we-zoom": 3.55,
       "we-freq": 1.00,
       "we-oct": 5,
@@ -2483,18 +2558,89 @@ const CLOUD_LAYER_PRESETS = {
       "de-axis-y": 3.25,
     },
   },
-  wispy_high: {
-    description: "Thin high broken wisps with stronger erosion and low density.",
+  rotating_donut: {
+    description: "An arbitrary rotating torus filled with independently scrolling volumetric clouds.",
+    form: { type: 1, halfY: 14, puffScale: 3.8, ao: 0.65, heightVariation: 0.35, volumeShape: "torus" },
     values: {
-      "p-coverage": 0.52,
-      "p-density": 4.4,
+      "p-coverage": 0.95, "p-density": 9.5, "p-anvil": 0, "p-beer": 5.6,
+      "t-fluffFactor": 3.55, "t-sparsity": 0.30, "t-definition": 0.64,
+      "t-minOutputAlpha": 0.04, "t-alphaBoostAmount": 0,
+      "we-zoom": 3.7, "we-freq": 1.05, "we-oct": 5, "we-gain": 0.52,
+      "we-billow-enable": true, "we-billow-zoom": 4.4, "we-billow-freq": 1.55,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.135, "sh-bias": 0.39, "sh-axis-y": 1,
+      "de-zoom": 5.35, "de-freq": 1.18, "de-oct": 4, "de-scale": 1.46, "de-axis-y": 1,
+    },
+  },
+  rotating_gallery: {
+    description: "A torus, cube, ellipsoid, capsule and diamond rotating independently inside noisy cloud volumes.",
+    form: {type:1,halfY:14,puffScale:3.8,ao:.65,heightVariation:.35,volumeShape:"gallery"},
+    values: {
+      "p-coverage":.95,"p-density":9.5,"p-anvil":0,"p-beer":5.6,
+      "t-fluffFactor":3.55,"t-sparsity":.30,"t-definition":.64,
+      "t-minOutputAlpha":.04,"t-alphaBoostAmount":0,
+      "we-zoom":3.7,"we-freq":1.05,"we-oct":5,"we-gain":.52,
+      "we-billow-enable":true,"we-billow-zoom":4.4,"we-billow-freq":1.55,
+      "sh-zoom":4.2,"sh-freq":1.02,"sh-oct":2,"sh-thr":.40,
+      "sh-scale":.135,"sh-bias":.39,"sh-axis-y":1,
+      "de-zoom":5.35,"de-freq":1.18,"de-oct":4,"de-scale":1.46,"de-axis-y":1,
+    },
+  },
+  cirrus: {
+    description: "High feathered ice-cloud streaks with flowing filaments and translucent edges.",
+    form: { type: 5, halfY: 5.8, puffScale: 5.0, ao: 0.25, heightVariation: 0.3, camera: [4, 0.2, 22, 188, 20] },
+    values: {
+      "p-coverage": 0.86, "p-density": 4.5, "p-anvil": 0, "p-beer": 4.2,
+      "p-sI": 1.05, "p-sE": 1.75, "t-fluffFactor": 1.5,
+      "t-sparsity": 0.48, "t-definition": 0.56, "t-raySmoothDens": 0.12,
+      "t-minOutputAlpha": 0.004, "t-alphaBoostAmount": 0, "t-outputAlphaFeather": 0.16,
+      "we-zoom": 3.8, "we-freq": 1.0, "we-oct": 4, "we-gain": 0.52, "we-billow-enable": false,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.13, "sh-bias": 0.34, "sh-axis-y": 1,
+      "de-zoom": 5.4, "de-freq": 1.2, "de-oct": 4, "de-scale": 1.45, "de-axis-y": 1,
+    },
+  },
+  kelvin_helmholtz: {
+    description: "Wind-sheared fluctus: open curling wave crests rooted in a broken cloud bank.",
+    form: { type: 6, halfY: 4, puffScale: 5.8, ao: 0.65, heightVariation: 0.3, camera: [4, 2.0, 26, 188, 7] },
+    values: {
+      "p-coverage": 0.92, "p-density": 6.5, "p-anvil": 0, "p-beer": 5.0,
+      "p-sI": 1.10, "p-sE": 1.65, "t-fluffFactor": 2.8,
+      "t-sparsity": 0.40, "t-definition": 0.58, "t-raySmoothDens": 0.18,
+      "t-minOutputAlpha": 0.008, "t-alphaBoostAmount": 0, "t-outputAlphaFeather": 0.28,
+      "we-zoom": 3.8, "we-freq": 1.0, "we-oct": 4, "we-gain": 0.52, "we-billow-enable": true,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.13, "sh-bias": 0.34, "sh-axis-y": 1,
+      "de-zoom": 5.4, "de-freq": 1.2, "de-oct": 4, "de-scale": 1.45, "de-axis-y": 1,
+    },
+  },
+  asperitas: {
+    description: "A turbulent connected ceiling with irregular wave troughs on its shadowed underside.",
+    form: { type: 7, halfY: 4, puffScale: 5.0, ao: 0.70, heightVariation: 0.3, camera: [4, -3.0, 12, 188, 25] },
+    values: {
+      "p-coverage": 1.04, "p-density": 10.5, "p-anvil": 0, "p-beer": 5.8,
+      "p-sI": 1.10, "p-sE": 1.65, "t-fluffFactor": 3.0,
+      "t-sparsity": 0.12, "t-definition": 0.64, "t-raySmoothDens": 0.20,
+      "t-minOutputAlpha": 0.02, "t-alphaBoostAmount": 0, "t-outputAlphaFeather": 0.32,
+      "we-zoom": 3.8, "we-freq": 1.0, "we-oct": 4, "we-gain": 0.52, "we-billow-enable": true,
+      "sh-zoom": 4.2, "sh-freq": 1.02, "sh-oct": 2, "sh-thr": 0.40,
+      "sh-scale": 0.13, "sh-bias": 0.34, "sh-axis-y": 1,
+      "de-zoom": 5.4, "de-freq": 1.2, "de-oct": 4, "de-scale": 1.45, "de-axis-y": 1,
+    },
+  },
+  wispy_high: {
+    description: "Thin broken wisps with gentle erosion and preserved translucent edges.",
+    values: {
+      "p-coverage": 0.80,
+      "p-density": 3.4,
       "p-anvil": 0.05,
       "p-beer": 4.2,
       "p-sI": 0.95,
       "p-sE": 1.85,
-      "t-fluffFactor": 5.10,
-      "t-sparsity": 0.78,
-      "t-definition": 0.86,
+      "t-fluffFactor": 1.55,
+      "t-sparsity": 0.42,
+      "t-definition": 0.52,
+      "t-raySmoothDens": 0.12,
       "t-baseJitter": 0.04,
       "t-topJitter": 0.18,
       "t-verticalTextureHomogeneity": 0.78,
@@ -2502,9 +2648,9 @@ const CLOUD_LAYER_PRESETS = {
       "t-sliceJitterStrength": 0.12,
       "t-alphaCutoff": 0.985,
       "t-alphaBoostThreshold": 0.24,
-      "t-alphaBoostAmount": 0.10,
-      "t-minOutputAlpha": 0.14,
-      "t-outputAlphaFeather": 0.40,
+      "t-alphaBoostAmount": 0.0,
+      "t-minOutputAlpha": 0.006,
+      "t-outputAlphaFeather": 0.16,
       "we-zoom": 5.8,
       "we-freq": 1.55,
       "we-oct": 5,
@@ -2593,18 +2739,23 @@ function injectPreviewLookControls() {
         <span>Cloud Layer</span>
         <select id="v-layer-preset" title="Applies a coordinated cloud-structure preset across weather, shape/detail noise, transforms, density, and vertical/anvil tuning. Presets rebake the procedural textures.">
           <option value="custom">Custom / Manual</option>
-          <option value="fair_cumulus">Fair Cumulus</option>
-          <option value="broken_cumulus">Broken Cumulus</option>
+          <option value="fair_cumulus">Fair Cumulus · Soft volume</option>
+          <option value="broken_cumulus">Broken Cumulus · Soft volume</option>
           <option value="stratus_sheet">Stratus Sheet</option>
-          <option value="towering_cu">Towering Cu</option>
-          <option value="cumulonimbus_anvil">Cumulonimbus Anvil</option>
+          <option value="towering_cu">Towering Cu · Soft volume</option>
+          <option value="cumulonimbus_anvil">Cumulonimbus Anvil · Soft volume</option>
+          <option value="rotating_donut">Rotating Cloud Donut</option>
+          <option value="rotating_gallery">Arbitrary Volume Gallery</option>
           <option value="wispy_high">Wispy High</option>
-          <option value="rain_shelf">Rain Shelf</option>
+          <option value="cirrus">Feather Cirrus · Soft volume</option>
+          <option value="kelvin_helmholtz">Kelvin–Helmholtz (Experimental)</option>
+          <option value="asperitas">Asperitas</option>
+          <option value="rain_shelf">Rain Shelf · Sculpted</option>
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;">
         <span>Color Grade</span>
-        <select id="v-grade">
+        <select id="v-grade" title="Color and lighting only. Selecting a grade also enables the selected style override for evolving weather.">
           <option value="0">Default Gray</option>
           <option value="1">Sunset Punch</option>
           <option value="2">Dusky Purple</option>
@@ -2621,15 +2772,35 @@ function injectPreviewLookControls() {
           <option value="13">Silver Daylight</option>
           <option value="14">Soft Overcast</option>
           <option value="15">RGB Spectrum</option>
+          <optgroup label="Fluffy lighting · Natural / Soft">
+            ${[16,17,18,22,24,25].map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label} · Fluffy</option>`).join('')}
+          </optgroup>
+          <optgroup label="Sculpted lighting · Cartoon / Illustrated">
+            ${[19,20,21,23,26,27,28].map(key=>`<option value="${key}">${REFERENCE_LOOK_PRESETS[key].label}</option>`).join('')}
+          </optgroup>
         </select>
       </label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Raymarch Resolution Divider / Full-res Output</span><input id="v-render-scale-divider" type="number" step="1" min="1" max="8" title="Controls the internal cloud raymarch resolution. The final canvas remains full resolution and reconstructs from this buffer. 1 = full-resolution raymarch, 4 = default performance mode."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;">
+        <span>Cloud shading</span>
+        <select id="v-cloud-shading" title="Lighting / finishing only, independent of cloud shape and color. Both finishes work on Rain Shelf, puffy clouds and evolving weather without rebaking.">
+          <option value="auto">Auto · color grade lighting</option>
+          <option value="soft">Soft volume · Anvil / Weather</option>
+          <option value="sculpted">Sculpted · Rain Shelf</option>
+        </select>
+      </label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Fluffy Cloud Detail</span><select id="v-field-quality" title="Density and lighting cache resolution, independent of render divider. Screenshot: 256×128×256 / 146 MiB / 8× voxels. Capture: 384×192×384 / 494 MiB / 27× voxels. Reference: 512×256×512 / 1.14 GiB / 64× voxels. Voxel counts are relative to Balanced, not frame-time multipliers. Pause animation for stills; use render divider 1 and temporal interleave Off for clean screenshots.">${Object.entries(CLOUD_FIELD_QUALITIES).map(([key,value])=>`<option value="${key}">${value.label}</option>`).join('')}</select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud turbulence</span><select id="v-cloud-turbulence" title="Fine moving wisps and erosion on puffy clouds and weather layers. Keeps the broad cloud form and existing lighting; works with either shading style and smaller detail grids. Standalone Rain Shelf and planets retain their own turbulence."><option value="0">Off · smooth volume</option><option value="0.4">Gentle wisps</option><option value="0.75">Natural turbulence</option><option value="1.25">Wind-torn wisps</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Temporal Interleave</span><select id="v-temporal-cell-rate" title="Compact history-backed screen interleave. After the first history frame, only a rotated 8x8 scattered subset is dispatched as cloud rays; previous history is copied forward for the rest."><option value="1">Off / full quality</option><option value="2">1 / 2 rays per frame</option><option value="4">1 / 4 rays per frame</option><option value="8">1 / 8 rays per frame</option><option value="16">1 / 16 rays per frame</option><option value="32">1 / 32 rays per frame</option><option value="64">1 / 64 rays per frame</option></select></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Alpha Floor</span><input id="v-alpha-floor" type="number" step="0.005" min="0" max="0.24" title="Composite alpha floor. Faint cloud alpha below this threshold fades out before sky compositing, reducing glow haze without running the removed cream resolve."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Density</span><input id="v-fog-density" type="number" step="0.01" min="0" max="2" title="Atmospheric depth fog strength. The active color grade controls the fog color family."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Horizon</span><input id="v-fog-horizon" type="number" step="0.01" min="0" max="2" title="How strongly fog gathers around the horizon and distant cloud silhouettes."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Fog Sun</span><input id="v-fog-sun" type="number" step="0.01" min="0" max="2" title="Amount of sun-washed color injected into the atmospheric fog by the active color grade."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Min Output Alpha</span><input id="t-minOutputAlpha" type="number" step="0.005" min="0" max="0.45" title="Compute-side alpha cutoff. Pixels below this alpha are written transparent before temporal history so low-opacity speckle cannot accumulate."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Cloud Form</span><select id="t-formType"><option value="0">Layer / Rain Shelf · Sculpted</option><option value="1">Rounded Cumulus</option><option value="2">Towering Cumulus</option><option value="3">Thunderhead / Anvil</option><option value="4">Mixed Weather</option><option value="5">Feather Cirrus · Soft volume</option><option value="6">Kelvin–Helmholtz Waves</option><option value="7">Asperitas</option></select></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Puff Size</span><input id="t-puffScale" type="number" value="3.6" step="0.1" min="0.75" max="12" title="World-space size of rounded cloud cells. Layer mode keeps its original noise structure."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Ambient Occlusion</span><input id="t-aoStrength" type="number" value="0" step="0.05" min="0" max="1" title="Rounded forms only: cached neighboring density probes darken pockets between puffs. Layer mode retains its original lighting."></label>
+      <label style="display:flex; flex-direction:column; gap:6px;"><span>Height Variation</span><input id="t-towerHeightVariation" type="number" value="0.35" step="0.05" min="0" max="0.9" title="Varies cloud-cell heights so the tops do not form a flat ceiling."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Front Occlusion</span><input id="t-frontOcclusionStrength" type="number" step="0.01" min="0" max="1" title="Close opaque cloud acceleration. 0 disables it; higher values cut behind-cloud work sooner once the front body has accumulated alpha."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Alpha Start</span><input id="t-frontOcclusionAlpha" type="number" step="0.01" min="0" max="0.98" title="Accumulated alpha where front-occlusion acceleration starts."></label>
       <label style="display:flex; flex-direction:column; gap:6px;"><span>Occ. Step Boost</span><input id="t-frontOcclusionStepBoost" type="number" step="0.05" min="1" max="8" title="Maximum behind-front-cloud step multiplier."></label>
@@ -2682,6 +2853,7 @@ function injectPreviewLookControls() {
 
 
 const GRADE_PRESETS = {
+  ...REFERENCE_LOOK_PRESETS,
   0: {
     sky: [0.56, 0.72, 1.02],
     sunBloom: 0.18,
@@ -3113,6 +3285,11 @@ function setControlValue(id, val) {
   }
 }
 
+let savedLayerCamera = null;
+let savedDonutBounds = null;
+let savedGalleryTemporal = null;
+const donutBoundsControls = ["v-box-cx", "v-box-cz", "v-box-hx", "v-box-hz"];
+const formCameraControls = ["v-cx", "v-cy", "v-cz", "v-yaw", "v-pitch"];
 function applyCloudLayerPresetValues(key) {
   const preset = CLOUD_LAYER_PRESETS[key];
   if (!preset) return false;
@@ -3121,6 +3298,47 @@ function applyCloudLayerPresetValues(key) {
   for (const [id, val] of Object.entries(preset.values || {})) {
     setControlValue(id, val);
   }
+  // Every preset owns its form and volume height. Returning to Rain Shelf resets
+  // these explicitly, so a previously selected thunderhead cannot leak into it.
+  const form = preset.form || { type: 0, halfY: 0.3, puffScale: 3.6, ao: 0, heightVariation: 0.35 };
+  preview.cloudShading = form.type > 0 ? 'soft' : 'sculpted';
+  setControlValue('v-cloud-shading', preview.cloudShading);
+  preview.volumeShape = form.volumeShape || "box";
+  // Fast independent rotations have no screen-space motion vectors. Stale
+  // interleaved rays made diagonal bands across the shapes; refresh the small
+  // coarse target fully instead. Restore the user's ray budget on exit.
+  if (preview.volumeShape === "gallery") {
+    savedGalleryTemporal ??= $("v-temporal-cell-rate")?.value;
+    setControlValue("v-temporal-cell-rate", 1);
+  } else if (savedGalleryTemporal !== null) {
+    setControlValue("v-temporal-cell-rate", savedGalleryTemporal);
+    savedGalleryTemporal = null;
+  }
+  if (preview.volumeShape === "torus" || preview.volumeShape === "gallery") {
+    savedDonutBounds ||= donutBoundsControls.map(id => $(id)?.value);
+    donutBoundsControls.forEach((id, i) => setControlValue(id, [0, 0, 14, 14][i]));
+  } else if (savedDonutBounds) {
+    donutBoundsControls.forEach((id, i) => setControlValue(id, savedDonutBounds[i]));
+    savedDonutBounds = null;
+  }
+  // Tall forms need an outside view. Preserve the user's layer view so switching
+  // back to coastal/Rain Shelf clouds doesn't silently change its framing.
+  if (form.type) {
+    savedLayerCamera ||= formCameraControls.map(id => $(id)?.value);
+    // View the lit shoulders, not straight into the sun through an opaque body.
+    // Backlit views remain available, but shouldn't hide each preset's billows.
+    const camera = form.camera || (preview.volumeShape === "torus" || preview.volumeShape === "gallery" ? [0, 0, 34, 180, 0] : form.type === 1 ? [4, 0.8, 24, 188, 7] : form.type === 2 ? [4, 1.2, 28, 187, 9] : [4, 0.8, 32, 187, 12]);
+    formCameraControls.forEach((id, i) => setControlValue(id, camera[i]));
+  } else if (savedLayerCamera) {
+    formCameraControls.forEach((id, i) => setControlValue(id, savedLayerCamera[i]));
+    savedLayerCamera = null;
+  }
+  setControlValue("t-formType", form.type);
+  setControlValue("t-puffScale", form.puffScale);
+  setControlValue("t-aoStrength", form.ao);
+  setControlValue("t-towerHeightVariation", form.heightVariation);
+  setControlValue("v-box-hy", form.halfY);
+  setControlValue("v-box-cy", preview.volumeShape === "torus" || preview.volumeShape === "gallery" ? 0 : form.type ? form.halfY - 0.3 : 0);
   return true;
 }
 
@@ -3133,12 +3351,27 @@ async function applyCloudLayerPreset(key, render = true) {
   const preset = CLOUD_LAYER_PRESETS[key];
   if (!preset) return;
 
-  applyCloudLayerPresetValues(key);
-
-  if (!render) return;
+  if (!render) {
+    applyCloudLayerPresetValues(key);
+    return;
+  }
 
   setBusy(true, `Applying ${key.replaceAll("_", " ")}...`);
+  const wasAnimating = animRunning;
+  let presetReady = false;
   try {
+    // A preset is a scene transaction: do not let the animation loop render a
+    // new form against the old bounds/textures while its bakes are in flight.
+    if (wasAnimating) {
+      animRunning = false;
+      stopVisualFpsTicker();
+      if (_liveAnimationUpdateTimer) clearTimeout(_liveAnimationUpdateTimer);
+      _liveAnimationUpdateTimer = 0;
+      _liveAnimationUpdateQueued = false;
+      _liveAnimationUpdateIncludeTransforms = false;
+      await rpc("stopLoop", {});
+    }
+    applyCloudLayerPresetValues(key);
     readWeather();
     readWeatherG();
     readWeatherB();
@@ -3173,9 +3406,26 @@ async function applyCloudLayerPreset(key, render = true) {
     useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
     payload.skipFinalDebug = true;
+    await setBusyAndPaint("Rendering first frame...");
     await runFrameLatest(payload);
+    presetReady = true;
     await refreshDebugPreviews();
   } finally {
+    // Settings preserve the user's playback choice.
+    if (wasAnimating && presetReady) {
+      try {
+        await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
+        await rpc("startLoop", {});
+        animRunning = true;
+        startVisualFpsTicker();
+        const btn = $("reproj-anim-toggle");
+        if (btn) btn.textContent = "Pause clouds";
+      } catch (err) {
+        console.warn("restart animation after preset failed", err);
+        const btn = $("reproj-anim-toggle");
+        if (btn) btn.textContent = "Animate clouds";
+      }
+    }
     setBusy(false);
   }
 }
@@ -3183,7 +3433,11 @@ async function applyCloudLayerPreset(key, render = true) {
 function syncPreviewLookInputs() {
   setFieldValue("v-layer-preset", preview.layerPreset || "custom");
   setFieldValue("v-grade", preview.gradeStyle);
+  setFieldValue("v-cloud-shading", preview.cloudShading || "auto");
+  setFieldValue("v-cloud-turbulence", preview.cloudTurbulence ?? .75);
+  setFieldValue("v-exposure", preview.exposure);
   setFieldValue("v-render-scale-divider", preview.renderScaleDivider ?? 4);
+  setFieldValue("v-field-quality", preview.fieldQuality || "balanced");
   setFieldValue("v-temporal-cell-rate", normalizeTemporalCellRate(preview.temporalCellRate ?? 1));
   setFieldValue("v-alpha-floor", preview.alphaFloor ?? 0.0);
   setFieldValue("v-fog-density", preview.fogDensity ?? DEFAULT_FOG_PROFILE.fogDensity);
@@ -3244,7 +3498,7 @@ function syncPreviewLookInputs() {
 function applyGradePreset(style, syncInputs = true) {
   const preset = GRADE_PRESETS[style] || GRADE_PRESETS[0];
   preview.gradeStyle = style >>> 0;
-  preview.renderScaleDivider = normalizeRenderScaleDivider(preset.renderScaleDivider ?? preview.renderScaleDivider ?? 4);
+  preview.exposure = preset.exposure ?? preview.exposure;
   preview.sky = preset.sky.slice();
   preview.sun.bloom = preset.sunBloom;
   const lighting = lightingProfileForGrade(style);
@@ -3429,6 +3683,10 @@ function readTuning() {
     fluffFactor: +($("t-fluffFactor")?.value || 3.2),
     sparsity: num("t-sparsity", 0.42),
     definition: num("t-definition", 0.62),
+    formType: num("t-formType", 0),
+    puffScale: num("t-puffScale", 3.6),
+    aoStrength: num("t-aoStrength", 0),
+    towerHeightVariation: num("t-towerHeightVariation", 0.35),
     anvilLift: num("t-anvilLift", 0.6),
     alphaCutoff: +($("t-alphaCutoff")?.value || 0.98),
     verticalStepBoost: +($("t-verticalStepBoost")?.value || 3.0),
@@ -3506,7 +3764,7 @@ function readCloudParams() {
     14: [0.96, 0.98, 1.02],
     15: [1.34, 0.10, 0.08],
   };
-  const baseSunColor = sunColorByGrade[preview.gradeStyle] || [1.0, 0.95, 0.87];
+  const baseSunColor = sunColorByGrade[preview.gradeStyle] || [1, 1, 1];
   const sunTint = preview.sunTint || [1.0, 1.0, 1.0];
   const lightingProfile = lightingProfileForGrade(preview.gradeStyle);
   const transmissiveTint = preview.transmissiveLightTint || lightingProfile.transmissiveLightTint;
@@ -3772,7 +4030,11 @@ function readPreview() {
   preview.box.uvScale = Math.max(0.001, num("v-box-uv", preview.box.uvScale ?? 1));
   preview.layerPreset = $("v-layer-preset")?.value || preview.layerPreset || "custom";
   preview.gradeStyle = u32("v-grade", preview.gradeStyle);
+  preview.cloudShading = $("v-cloud-shading")?.value || preview.cloudShading || "auto";
+  preview.cloudTurbulence = Math.min(1.5, Math.max(0, Number($("v-cloud-turbulence")?.value ?? preview.cloudTurbulence ?? .75) || 0));
+  preview.cycleStyleOverride = !!$("v-cycle-style")?.checked;
   preview.renderScaleDivider = normalizeRenderScaleDivider(u32("v-render-scale-divider", preview.renderScaleDivider ?? 4));
+  preview.fieldQuality = normalizeCloudFieldQuality($("v-field-quality")?.value || preview.fieldQuality);
   preview.temporalCellRate = normalizeTemporalCellRate(u32("v-temporal-cell-rate", preview.temporalCellRate ?? 1));
   preview.alphaFloor = Math.max(0, Math.min(0.24, num("v-alpha-floor", preview.alphaFloor ?? 0.0)));
   preview.sunTint[0] = clamp01(num("v-sun-r", preview.sunTint[0]));
@@ -4219,6 +4481,7 @@ async function runBakeJobsAndFrame(jobs) {
 
     useFreshFullFrameReproj(payload);
     ensureCoarseInPayload(payload);
+    await setBusyAndPaint("Rendering first frame...");
     await runFrameLatest(payload);
   } finally {
     if (wasAnimating) {
@@ -4229,7 +4492,7 @@ async function runBakeJobsAndFrame(jobs) {
         animRunning = true;
         startVisualFpsTicker();
         const btn = $("reproj-anim-toggle");
-        if (btn) btn.textContent = "Stop Reproject Anim";
+        if (btn) btn.textContent = "Pause clouds";
       } catch (err) {
         console.warn("restart animation after bake failed", err);
       }
@@ -4274,10 +4537,18 @@ function setBusy(on, msg = "Working...") {
     "reproj-anim-toggle",
     "quick-render-button",
     "quick-rebake-button",
+    "quick-layer-preset",
+    "v-layer-preset",
+    "weather-cycle-enabled",
   ].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = on;
   });
+}
+
+async function setBusyAndPaint(msg) {
+  setBusy(true, msg);
+  await nextPaint();
 }
 
 // ---- seeds, slice helpers ----
@@ -4393,8 +4664,18 @@ async function flushQueuedResize() {
 
   _resizeInFlight = true;
   try {
-    await rpc("resize", payload);
+    const resized=await rpc("resize", payload);
     _resizeLastSentSig = sig;
+    // Resizing clears a canvas even when cloud motion is paused. Re-present a
+    // fresh frame after startup without advancing wind or starting playback.
+    if(resized?.resized && initialBakePromise){
+      await initialBakePromise;
+      if(!animRunning){
+        const frame={preview:safeClone(preview),cloudParams:readCloudParams(),tuning:readTuning(),skipFinalDebug:true};
+        useFreshFullFrameReproj(frame);ensureCoarseInPayload(frame);
+        await runFrameLatest(frame);
+      }
+    }
   } finally {
     _resizeInFlight = false;
     if (_resizeQueuedPayload && _resizeQueuedSig !== _resizeLastSentSig) {
@@ -4461,14 +4742,91 @@ function populateAllModeSelects() {
   populateSelect("de-mode-3", vol4d, detailParams.mode3, { allowNone: false });
 }
 
+let savedWeatherScene=null, weatherCycleUIBusy=false;
+function weatherCycleConfig(enabled=$('weather-cycle-enabled')?.checked) {
+  return {enabled,timeOfDay:$('weather-cycle-tod')?.checked!==false,
+    weatherSeconds:num('weather-cycle-minutes',7)*60,daySeconds:num('weather-cycle-day-minutes',3)*60,startHour:num('weather-cycle-hour',9)};
+}
+async function changeWeatherCycle(enabled) {
+  if(weatherCycleUIBusy) return;
+  const wasAnimating = animRunning;
+  weatherCycleUIBusy=true;
+  const toggle=$('weather-cycle-enabled'), status=$('weather-cycle-status');
+  toggle.disabled=true;
+  let recoverScene=false;
+  try {
+    if(enabled && !savedWeatherScene) {
+      savedWeatherScene={
+        controls:Array.from(document.querySelectorAll('input[id],select[id]')).filter(el=>/^(v-|c-|p-|t-|we-|sh-|de-|bn-)/.test(el.id)).map(el=>({id:el.id,value:el.value,checked:el.checked})),
+        preview:safeClone(preview),tileTransforms:safeClone(tileTransforms),wasAnimating:animRunning,
+        savedLayerCamera:savedLayerCamera?.slice()||null,savedDonutBounds:savedDonutBounds?.slice()||null,
+        savedGalleryTemporal,
+      };
+      status.textContent='Preparing cached weather maps…';
+      // One coordinated shape/detail bake on entry, never a preset rebake per
+      // weather transition. Manual controls are restored on exit.
+      await applyCloudLayerPreset('cumulonimbus_anvil',true);
+      await rpc('stopLoop',{}); animRunning=false; stopVisualFpsTicker();
+      setBusy(true,'Preparing weather cycle…');
+      await rpc('setWeatherCycle',weatherCycleConfig(true));
+      const payload={weatherParams:safeClone(weatherParams),billowParams:safeClone(billowParams),weatherBParams:safeClone(weatherBParams),shapeParams:safeClone(shapeParams),detailParams:safeClone(detailParams),preview:safeClone(preview),cloudParams:readCloudParams()};
+      useFreshFullFrameReproj(payload); ensureCoarseInPayload(payload); payload.skipFinalDebug=true;
+      await runFrameLatest(payload);
+      if(wasAnimating) {
+        await rpc('setReproj',{reproj:getReprojPayload(),perf:null}); await rpc('startLoop',{});
+        animRunning=true; startVisualFpsTicker();
+      }
+      $('reproj-anim-toggle').textContent=animRunning?'Pause clouds':'Animate clouds';
+      status.textContent=animRunning?'Running · 6 cached weather maps':'Paused · ready to animate';
+    } else if(!enabled && savedWeatherScene) {
+      await rpc('stopLoop',{}); animRunning=false; stopVisualFpsTicker();
+      await rpc('setWeatherCycle',{enabled:false});
+      const scene=savedWeatherScene;
+      for(const control of scene.controls) {
+        const el=$(control.id); if(!el) continue;
+        el.value=control.value; if(el.type==='checkbox') el.checked=control.checked;
+      }
+      Object.assign(preview,safeClone(scene.preview)); Object.assign(tileTransforms,safeClone(scene.tileTransforms));
+      savedLayerCamera=scene.savedLayerCamera; savedDonutBounds=scene.savedDonutBounds;
+      savedGalleryTemporal=scene.savedGalleryTemporal;
+      readWeather(); readWeatherG(); readWeatherB(); readBlue(); readShape(); readShapeTransform(); readDetail(); readDetailTransform(); readPreview();
+      animRunning=wasAnimating;
+      await runBakeJobsAndFrame([{bakeRpcType:'bakeAll',bakePayload:{weatherParams:safeClone(weatherParams),billowParams:safeClone(billowParams),weatherBParams:safeClone(weatherBParams),blueParams:safeClone(blueParams),shapeParams:safeClone(shapeParams),detailParams:safeClone(detailParams),tileTransforms:safeClone(tileTransforms)}}]);
+      savedWeatherScene=null; toggle.checked=false; status.textContent='Off · previous scene restored';
+      $('reproj-anim-toggle').textContent=animRunning?'Pause clouds':'Animate clouds';
+    } else if(enabled) {
+      await rpc('setWeatherCycle',weatherCycleConfig(true));
+    }
+  } catch(error) {
+    status.textContent='Weather cycle failed: '+error.message;
+    try { await rpc('setWeatherCycle',{enabled:false}); } catch {}
+    toggle.checked=false;
+    console.warn('weather cycle failed',error);
+    recoverScene=enabled && !!savedWeatherScene;
+  } finally {weatherCycleUIBusy=false; toggle.disabled=false; setBusy(false);}
+  if(recoverScene) await changeWeatherCycle(false);
+}
+
 // ---- wire UI & initialization ----
 async function wireUI() {
+  $('v-cycle-style')?.addEventListener('change', async () => {
+    readPreview();
+    if (queueLiveAnimationUpdate(0)) return;
+    try {
+      await runFrameLatest({preview:safeClone(preview),cloudParams:readCloudParams(),tuning:readTuning()});
+    } catch (error) { console.warn('weather style update failed',error); }
+  });
+  $('weather-cycle-enabled')?.addEventListener('change',()=>changeWeatherCycle($('weather-cycle-enabled').checked));
+  for(const id of ['weather-cycle-tod','weather-cycle-minutes','weather-cycle-day-minutes','weather-cycle-hour']) $(id)?.addEventListener('change',()=>{
+    if($('weather-cycle-enabled')?.checked) changeWeatherCycle(true);
+  });
   $("pass")?.addEventListener("change", () => showPanelsFor($("pass").value));
   showPanelsFor($("pass")?.value || "preview");
 
   $("v-layer-preset")?.addEventListener("change", async () => {
     const key = $("v-layer-preset")?.value || "custom";
     try {
+      if(savedWeatherScene) await changeWeatherCycle(false);
       await applyCloudLayerPreset(key, true);
     } catch (err) {
       console.warn("cloud layer preset failed", err);
@@ -4479,6 +4837,15 @@ async function wireUI() {
     readPreview();
     const style = u32("v-grade", preview.gradeStyle);
     applyGradePreset(style, true);
+    const override = $('v-cycle-style');
+    if (override) override.checked = true;
+    preview.cycleStyleOverride = true;
+  });
+  $("v-cloud-shading")?.addEventListener("change", () => {
+    readPreview();
+    const override = $('v-cycle-style');
+    if (override) override.checked = true;
+    preview.cycleStyleOverride = true;
   });
 
   const reprojBtn = $("reproj-anim-toggle");
@@ -4486,7 +4853,7 @@ async function wireUI() {
 
   reprojEnabled = false;
   animRunning = false;
-  if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
+  if (reprojBtn) reprojBtn.textContent = "Animate clouds";
   if (fpsSpan) fpsSpan.textContent = "-";
 
   reprojBtn?.addEventListener("click", async () => {
@@ -4518,13 +4885,14 @@ async function wireUI() {
         };
         ensureCoarseInPayload(payload);
         payload.skipFinalDebug = true;
+        await setBusyAndPaint("Rendering first frame...");
         await runFrameLatest(payload);
         const loopReproj = getReprojPayload();
         await rpc("setReproj", { reproj: loopReproj, perf: null });
         await rpc("startLoop", {});
         animRunning = true;
         startVisualFpsTicker();
-        if (reprojBtn) reprojBtn.textContent = "Stop Reproject Anim";
+        if (reprojBtn) reprojBtn.textContent = "Pause clouds";
       } catch (e) {
         console.warn("start animation failed", e);
         reprojEnabled = false;
@@ -4540,7 +4908,7 @@ async function wireUI() {
             perf: null,
           });
         } catch {}
-        if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
+        if (reprojBtn) reprojBtn.textContent = "Animate clouds";
       } finally {
         setBusy(false);
       }
@@ -4565,7 +4933,7 @@ async function wireUI() {
       } catch (e) {
         console.warn("Failed unset reproj", e);
       }
-      if (reprojBtn) reprojBtn.textContent = "Start Reproject Anim";
+      if (reprojBtn) reprojBtn.textContent = "Animate clouds";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = "-";
     }
@@ -4594,6 +4962,7 @@ async function wireUI() {
 
       payload.waitForGpu = true;
       payload.logFrame = true;
+      await setBusyAndPaint("Rendering frame...");
       const { timings } = await rpc("runFrame", payload);
       console.log(
         timings.waitedForGpu ? "[BENCH waited] compute(ms):" : "[BENCH submitted] compute(ms):",
@@ -5004,6 +5373,7 @@ async function wireUI() {
 
       useFreshFullFrameReproj(payload);
       ensureCoarseInPayload(payload);
+      await setBusyAndPaint("Rendering first frame...");
       await runFrameLatest(payload);
     } finally {
       setBusy(false);
@@ -5103,6 +5473,7 @@ function scheduleInitialBakeAndRender() {
 
     setBusy(true, MOBILE_PROFILE ? "Preparing mobile cloud preview..." : "Preparing cloud preview...");
     try {
+      let stage = cloudFirstLoadTiming.start("read-settings-and-upload-initial-uniform-buffers", undefined, "buffering");
       refreshSliceLabel();
       readWeather();
       readWeatherG();
@@ -5113,7 +5484,7 @@ function scheduleInitialBakeAndRender() {
       readDetailTransform();
       readPreview();
 
-      await rpc("bakeAll", {
+      const bakePayload = {
         weatherParams: safeClone(weatherParams),
         billowParams: safeClone(billowParams),
         weatherBParams: safeClone(weatherBParams),
@@ -5124,7 +5495,7 @@ function scheduleInitialBakeAndRender() {
         progressive: true,
         skipDebug: !!STARTUP_PROFILE.skipStartupDebug,
         skipFinalDebug: true,
-      });
+      };
 
       await rpc("setReproj", { reproj: getReprojPayload(), perf: null });
       try {
@@ -5147,14 +5518,72 @@ function scheduleInitialBakeAndRender() {
 
       useFreshFullFrameReproj(payload);
       ensureCoarseInPayload(payload);
+      cloudFirstLoadTiming.end(stage);
 
-      const { timings } = await rpc("runFrame", payload);
+      const status = $("cloud-quick-status");
+      stage = cloudFirstLoadTiming.start("loading-sky-clear-and-present", {
+        sky: preview.sky.slice(),
+      }, "presentation");
+      const loadingSky = await rpc("clearMain", { sky: preview.sky.slice(), waitForGpu: true });
+      cloudFirstLoadTiming.end(stage, { worker: loadingSky?.timingReport });
+      cloudFirstLoadTiming.mark("loading-sky-visible", {
+        elapsedMs: cloudFirstLoadTiming.snapshot().totalMs,
+      });
+      if (status) {
+        status.dataset.manual = "true";
+        status.textContent = "Baking full cloud field and compiling the raymarcher...";
+      }
+      await nextPaint();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await setBusyAndPaint("Preparing the first full-quality cloud frame...");
+      stage = cloudFirstLoadTiming.start("full-quality-noise-buffer-and-dispatch-refinement", {
+        weather: [WEATHER_W, WEATHER_H],
+        blue: [BN_W, BN_H],
+        shape: SHAPE_SIZE,
+        detail: DETAIL_SIZE,
+      }, "gpu-submit");
+      const fullBake = await rpc("bakeAll", { ...bakePayload, quality: "full" });
+      cloudFirstLoadTiming.end(stage, { worker: fullBake?.timings?.timingReport || fullBake?.timings });
+
+      ensureCoarseInPayload(payload);
+      payload.waitForGpu = true;
+      payload.logFrame = true;
+      payload.bootstrapPreview = false;
+      stage = cloudFirstLoadTiming.start("first-cloud-frame-buffer-encode-dispatch-and-present", {
+        coarseFactor: payload.coarseFactor,
+      }, "first-frame");
+      const firstFrame = await rpc("runFrame", payload);
+      cloudFirstLoadTiming.end(stage, { worker: firstFrame?.timings?.timingReport || firstFrame?.timings });
+      cloudFirstLoadTiming.mark("first-frame-visible", {
+        coarseFactor: payload.coarseFactor,
+        quality: "full",
+        elapsedMs: cloudFirstLoadTiming.snapshot().totalMs,
+      });
+      cloudFirstLoadTiming.mark("full-quality-frame-visible");
+      publishCloudStartupTiming(cloudFirstLoadTiming.snapshot(), false);
+      logCloudTimingReport(latestCloudStartupTiming, "[CLOUD FIRST FRAME]");
+
+      const finalTiming = cloudFirstLoadTiming.finish({
+        timeToFirstFrameMs: cloudFirstLoadTiming.milestones.find((mark) => mark.name === "first-frame-visible")?.atMs ?? null,
+        loadingSkyVisibleMs: cloudFirstLoadTiming.milestones.find((mark) => mark.name === "loading-sky-visible")?.atMs ?? null,
+        firstFrameQuality: "full",
+      });
+      publishCloudStartupTiming(finalTiming, true);
+      logCloudTimingReport(finalTiming, "[CLOUD STARTUP COMPLETE]");
       setTimeout(() => {
         refreshDebugPreviews().catch((e) => console.warn("startup debug refresh failed", e));
       }, 0);
-      console.log("[BENCH] init frame timings:", timings);
+      if (status) {
+        status.dataset.manual = "false";
+        status.textContent = "Cloud preview ready";
+      }
     } catch (err) {
       console.error("initial cloud bake/render failed", err);
+      cloudFirstLoadTiming.mark("startup-failed", { error: String(err?.message || err) });
+      const failedTiming = cloudFirstLoadTiming.finish({ failed: true });
+      publishCloudStartupTiming(failedTiming, true);
+      logCloudTimingReport(failedTiming, "[CLOUD STARTUP FAILED]");
       const pre = document.createElement("pre");
       pre.textContent = err && err.stack ? err.stack : String(err);
       document.body.appendChild(pre);
@@ -5168,6 +5597,7 @@ function scheduleInitialBakeAndRender() {
 
 // ---- init ----
 async function init() {
+  let firstLoadStage = cloudFirstLoadTiming.start("build-main-ui", undefined, "setup");
   mountCloudHtml();
   installCloudUiPolish();
   injectPreviewLookControls();
@@ -5391,9 +5821,11 @@ async function init() {
 
   setBusy(true, MOBILE_PROFILE ? "Starting mobile WebGPU worker..." : "Starting WebGPU worker...");
   await nextPaint();
+  cloudFirstLoadTiming.end(firstLoadStage);
+  firstLoadStage = cloudFirstLoadTiming.start("spawn-worker-and-transfer-canvases", undefined, "setup");
 
   // spawn worker
-  worker = new Worker(wrkr, { type: "module" });
+  worker = new Worker(wrkr);
   worker.onmessage = (ev) => {
     const { id, type, ok, data, error } = ev.data || {};
     if (id && _pending.has(id)) {
@@ -5402,6 +5834,21 @@ async function init() {
       return ok ? resolve(data) : reject(error || new Error("Worker error"));
     }
     if (type === "log") console.log(...(data || []));
+    if (type === "timing") {
+      const timingEvent = data || {};
+      cloudWorkerTimingHistory.push(timingEvent);
+      if (cloudWorkerTimingHistory.length > 80) cloudWorkerTimingHistory.shift();
+      try {
+        globalThis.cloudWorkerTiming = timingEvent;
+        globalThis.cloudWorkerTimingHistory = cloudWorkerTimingHistory;
+      } catch {}
+      if (cloudFirstLoadTiming.finishedAt === null) {
+        publishCloudStartupTiming({
+          ...cloudFirstLoadTiming.snapshot(),
+          activeWorker: timingEvent,
+        }, false);
+      }
+    }
     if (type === "progress") {
       const msg = data?.message || data || "Working...";
       const status = $("cloud-quick-status");
@@ -5411,6 +5858,13 @@ async function init() {
       }
       const ov = $("busyOverlay");
       if (ov && ov.style.display !== "none") setBusy(true, msg);
+    }
+    if (type === 'weather-cycle-state') {
+      const status=$('weather-cycle-status');
+      if(status && $('weather-cycle-enabled')?.checked) {
+        const hour=Math.floor(data.hour), minute=Math.floor((data.hour-hour)*60);
+        status.textContent=`${data.label} · ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} ${data.moon?'moonlight':'sunlight'} · ${data.cachedMaps} cached maps`;
+      }
     }
     if (type === "frame") {
       if (!animRunning) {
@@ -5428,7 +5882,7 @@ async function init() {
       animRunning = false;
       stopVisualFpsTicker();
       const btn = $("reproj-anim-toggle");
-      if (btn) btn.textContent = "Start Reproject Anim";
+      if (btn) btn.textContent = "Animate clouds";
       const fpsEl = $("fpsDisplay");
       if (fpsEl) fpsEl.textContent = "-";
     }
@@ -5486,6 +5940,10 @@ async function init() {
     ],
   );
 
+  workerInitTimingReport = initRes?.timingReport || null;
+  cloudFieldLimits = initRes?.cloudFieldLimits || null;
+  cloudFirstLoadTiming.end(firstLoadStage, { worker: workerInitTimingReport });
+
   ENTRY_POINTS = Array.isArray(initRes?.entryPoints)
     ? initRes.entryPoints.slice()
     : [];
@@ -5538,6 +5996,27 @@ async function init() {
   populateCloudQuickDock();
   wireCloudQuickDock();
   updateCloudQuickDockState();
+  installCloudNavigation({
+    canvas: mainCanvas,
+    getCamera: () => ({
+      x:num('v-cx',preview.cam.x), y:num('v-cy',preview.cam.y), z:num('v-cz',preview.cam.z),
+      yawDeg:num('v-yaw',preview.cam.yawDeg), pitchDeg:num('v-pitch',preview.cam.pitchDeg), fovYDeg:num('v-fov',preview.cam.fovYDeg),
+    }),
+    getBox: () => preview.box,
+    setAircraft: aircraft => {preview.aircraft=aircraft;},
+    setCamera: cam => {
+      Object.assign(preview.cam,cam);
+      for(const [id,key] of [['v-cx','x'],['v-cy','y'],['v-cz','z'],['v-yaw','yawDeg'],['v-pitch','pitchDeg']]) {
+        $(id).value=String(cam[key]);
+      }
+      // Coalesce camera frames without rebaking density or changing the weather clock.
+      if(queueLiveAnimationUpdate(0))return;
+      const payload={preview:safeClone(preview),cloudParams:readCloudParams(),tuning:readTuning(),skipFinalDebug:true};
+      useFreshFullFrameReproj(payload);
+      ensureCoarseInPayload(payload);
+      runFrameLatest(payload).catch(error=>console.warn('camera navigation failed',error));
+    },
+  });
   refreshSliceLabel();
   setBusy(false);
   scheduleInitialBakeAndRender();

@@ -96,6 +96,19 @@
         appearance: textfield;
       }
 
+      #weather-cycle-panel .weather-switch {
+        display:flex; flex-direction:row; align-items:center; gap:10px; margin:0;
+        padding:9px 0; color:var(--fg); font-size:12px;
+      }
+      #weather-cycle-panel .weather-switch input {
+        width:16px; height:16px; flex:0 0 16px; margin:0; padding:0;
+        accent-color:#92bff0;
+      }
+      #weather-cycle-panel .hint {display:block; font-size:11px; line-height:1.5; margin:5px 0 12px;}
+      #weather-cycle-panel .inline {display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+      #weather-cycle-panel h2 {margin-top:0;}
+      #weather-cycle-status {margin-top:12px; padding:7px 9px; border-radius:6px; background:#172335; font-size:11px;}
+
       button {
         margin-top: 10px;
         cursor: pointer;
@@ -201,9 +214,8 @@
 
   <body>
     <aside id="sidebar">
-      <h1>Pipeline</h1>
-
-      <div class="panel">
+      <details class="panel" id="pipeline-tools">
+        <summary>Texture tools</summary>
         <div style="display: flex; gap: 8px">
           <label for="pass">Controls:</label>
           <select id="pass" style="flex: 1">
@@ -221,11 +233,10 @@
 
         <div style="margin-top: 10px" class="inline">
           <div style="flex: 1">
-            <label style="margin-bottom: 6px">Reproject &amp; Animate</label>
-            <button id="reproj-anim-toggle">Start Reproject Anim</button>
+            <label style="margin-bottom: 6px">Playback</label>
+            <button id="reproj-anim-toggle">Animate clouds</button>
             <small class="hint"
-              >Click to enable quality-aware reprojection and start/stop the
-              animation loop.</small
+              >Play or pause cloud motion and the weather clock.</small
             >
           </div>
           <div style="width: 110px">
@@ -234,6 +245,21 @@
             </div>
           </div>
         </div>
+      </details>
+
+      <div class="panel" id="weather-cycle-panel">
+        <h2>Weather simulation</h2>
+        <label class="weather-switch"><input type="checkbox" id="weather-cycle-enabled" /> Evolving weather</label>
+        <label class="weather-switch"><input type="checkbox" id="weather-cycle-tod" checked /> Day / night and moonlight</label>
+        <label class="weather-switch"><input type="checkbox" id="v-cycle-style" /> Keep selected color and lighting</label>
+        <small class="hint">Keep your chosen look as weather and daylight change. Layer presets choose soft or sculpted lighting; Lighting finish can override it.</small>
+        <div class="inline">
+          <label>Weather cycle (minutes)<input id="weather-cycle-minutes" type="number" min="0.5" max="120" step="0.5" value="7" /></label>
+          <label>Day length (minutes)<input id="weather-cycle-day-minutes" type="number" min="0.2" max="120" step="0.2" value="3" /></label>
+        </div>
+        <label>Starting hour<input id="weather-cycle-hour" type="number" min="0" max="23.99" step="0.5" value="9" /></label>
+        <small class="hint">Cycles through cumulus, storms, rain banks and wisps. Animate clouds / Pause clouds controls playback. Turning weather off restores your previous scene.</small>
+        <div id="weather-cycle-status" role="status">Off</div>
       </div>
 
       <!-- Weather -->

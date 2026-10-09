@@ -16,7 +16,7 @@ const config = {
         bundleHTML: false, //wrap the first entry point file as a plain js script in a boilerplate html file, frontend scripts can be run standalone like a .exe! Server serves this as start page if set to true.
         //bundleIIFE:false,   //create an iife build, this is compiled temporarily to create the types files and only saved with bundleIIFE:true
         //bundleCommonJS:false, //cjs format outputted as .cjs
-        minify: true,
+        minifyWhitespace: true,
         sourcemap: false,
         //plugins:[] //custom esbuild plugins? e.g. esbuild-sass-plugin for scss support
         //includeDefaultPlugins:true //true by default, includes the presets for the streaming imports, worker bundling, and auto npm install
@@ -45,11 +45,11 @@ const config = {
         debug: false,
         protocol: "http",  //'http' or 'https'. HTTPS required for Nodejs <---> Python sockets. If using http, set production to False in python/server.py as well
         host: "localhost", //'localhost' or '127.0.0.1' etc.
-        port: 8080, //e.g. port 80, 443, 8000
+        port: 8082, //e.g. port 80, 443, 8000
         //redirect: 'http://localhost:8082', //instead of serving the default content, redirect to another url
         //headers: { 'Content-Security-Policy': '*'  }, //global header overrides
         startpage: 'index.html',  //default home page/app entry point 
-        hotreload: 5000,  //hotreload websocket server port
+        hotreload: 5002,  //hotreload websocket server port
         socket_protocol: "ws", //frontend socket protocol, wss for served, ws for localhost
         /*
         routes:{ //set additional page routes (for sites instead of single page applications)

@@ -1,20 +1,7 @@
 
-# WebGPU Noise Compute Shaders
+# WebGPU Noise Playground
 
-### TRY ME [https://webgpunoise.netlify.app/](https://webgpunoise.netlify.app/)
-
-Test UI: 
-
-<img width="800" alt="image" src="https://github.com/user-attachments/assets/053c501e-68d8-4064-89d1-34d7b58e9c0a" />
-
-##### See also: [https://codepen.io/joshbrew/pen/RNWQvXB](https://codepen.io/joshbrew/pen/RNWQvXB) Toroidal noise explainer.
-
-<img width="400" alt="image" src="https://github.com/user-attachments/assets/cad8de6a-9b05-4cbb-8a83-47ac015ce25a" />
-
-
-##### And for a use case: [Procedural WebGPU volumetric clouds](https://github.com/joshbrew/webgpu_realtime_clouds)
-
-GPU driven noise toolkit for 2D and 3D generative texture tiling. Contains dozens of optimized compute shaders for 2D, 3D, and 4D (toroidal/tiling) variants from classic Perlin and FBM to custom Voronoi Fractal Brownian Motion and so on. You can make some gorgeous tilesets.
+GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
 
 This repo has two main parts:
 
@@ -24,44 +11,11 @@ This repo has two main parts:
 The helper aims to:
 
 - Compose many noise modes into a single height field using GPU compute
-- Generate tileable (toroidal) 3D volumes from 4D noise kernels, they repeat in 3 directions!
+- Generate toroidal 3D volumes from 4D noise kernels
 - Visualize 2D array textures and 3D slices in WebGPU canvases
 - Reuse GPU resources where possible and dispose them explicitly when you are done
 
 To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you do not have it. You can also locally host `index.html` with prebuilt files.
-
-Known limits: Current compositing technique limits us to about 5700x5700 just because the buffer sizes start to blow up too much. This is fixable as the theoretical limit is 8K-16K depending on hardware. 
-
-e.g. mixed Billow noise
-![2](https://github.com/user-attachments/assets/18958887-cd2b-4d54-affa-dd293c93b676)
-
-| Planets with volumetric clouds and aurora |  |  |
-|---|---|---|
-| <img width="1586" height="1168" alt="Screenshot 2026-06-13 233532" src="https://github.com/user-attachments/assets/8872720b-8710-4fa7-a28c-decf422edd21" /> | <img width="1338" height="1094" alt="Screenshot 2026-06-13 231303" src="https://github.com/user-attachments/assets/b4e74511-71bb-4db9-ab86-5d5d60ddcdd2" /> | <img width="1636" height="1252" alt="Screenshot 2026-06-13 124342" src="https://github.com/user-attachments/assets/155f60ce-0dd5-416a-9adc-f30a32d427c5" />
- |
-
-
-| Cellular Noise Tiling | Voronoi variant | Gabor Variant |
-|---|---|---|
-| ![1](https://github.com/user-attachments/assets/8085fb7f-a982-40ba-80cc-ef4ce056e8e8) | ![7](https://github.com/user-attachments/assets/4a3e1772-be95-48b9-aa14-fcd450c4e14d) | <img alt="Screenshot 2026-02-04 105648" src="https://github.com/user-attachments/assets/58d9d4cb-b531-44b6-956d-a50cacc1fc52" /> |
-
-
-| Voronoi variant | Voronoi variant | Gabor |
-|---|---|---|
-| ![6](https://github.com/user-attachments/assets/082248d7-a0ee-4399-b128-d86416a914ba) | ![8](https://github.com/user-attachments/assets/19776136-85ff-40af-b458-722450e8908a) | <img src="https://github.com/user-attachments/assets/94bfb06f-1554-48f3-ad9d-75a73f84789a" /> |
-
-Erosion filter (based on ["Fast and Gorgeous Erosion Filter"](https://blog.runevision.com/2026/03/fast-and-gorgeous-erosion-filter.html) by Runevision)
-| Eroded RidgedMF + Lanczos Billow Noise | Drainage Mask | Composite |
-|---|---|---|
-| <img width="1024" height="1024" alt="download - 2026-04-23T150137 409" src="https://github.com/user-attachments/assets/bb58afc9-99e6-468e-9ee0-c71a6f605f36" /> | <img width="1024" height="1024" alt="download - 2026-04-23T150142 671" src="https://github.com/user-attachments/assets/fa968b74-7047-47ef-97fb-09bc20b0c1df" /> | <img width="1024" height="1024" alt="download - 2026-04-23T150145 529" src="https://github.com/user-attachments/assets/f9e2f318-e770-45a0-a79a-eb4102a2ab91" /> |
-
-| 3D Composite View | Settings Variant | Hydraulic Erosion Sim Pass [Example](https://github.com/joshbrew/webgpu_hydraulic_thermal_erosion_Jako2011) | 
-|---|---|---|
-| <img width="500" alt="image" src="https://github.com/user-attachments/assets/333fc0ef-0b6d-4d9a-8410-e996803dec15" /> |<img width="500" alt="image" src="https://github.com/user-attachments/assets/7768d79e-a3a7-4581-af98-c19595c60ff7" /> | <img width="500" alt="L1_download - 2026-04-23T144622 577 png _ L2_download - 2026-04-23T144622 577_dem_export (2)" src="https://github.com/user-attachments/assets/6812b12d-4613-4698-953d-606f727d0e3e" /> |
-
-A moldy result
-<img width="300" height="300" alt="download (95)" src="https://github.com/user-attachments/assets/f2f333ed-4699-4550-8df2-66df2ca76e48" />
-
 
 ---
 
@@ -127,8 +81,6 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 | `computeDomainWarpFBM1`          | Domain warped FBM, configuration one.            |
 | `computeDomainWarpFBM2`          | Domain warped FBM, configuration two.            |
 | `computeGaborAnisotropic`        | Anisotropic Gabor kernel, oriented textures.     |
-| `computeGaborMagic`              | Magic Gabor Weave texture (use terracing)        |
-| `computeGaborFlow`               | Gabor flowfield-like                             |
 | `computeTerraceNoise`            | Step based terrace shaping of heights.           |
 | `computeFoamNoise`               | Foamy blobby noise useful for clouds.            |
 | `computeTurbulence`              | Turbulence wrapper, absolute value style.        |
@@ -164,11 +116,6 @@ At runtime you pass indices or names in `noiseChoices` to select and stack any s
 | `computeTerraceNoise4D`          | 4D terrace shaping for toroidal volumes.         |
 | `computeFoamNoise4D`             | 4D foam noise for toroidal volumes.              |
 | `computeTurbulence4D`            | 4D turbulence wrapper for toroidal volumes.      |
-| `computeSmokeNoise`              | Looks like Perlin Worms and warped FBM           |
-| `computeTerrainNoise`            | Complex use of different noise shaders for a terrain-ish base look |
-| `computeHydrologyErosionHeightfield` | Phacelle noise 2nd pass for base textures, creates terrain-like riffles. See noiseErosionTest.js for different channel visualizations |
-| `computeHydrologyGuideField`     | May help improve erosion heightfield drainage look, special use (see tools/noise/noiseErosionTest.js) |
-| `computeHydrologyDrainageMask`   | Masks drainage features e.g. for river or mountain snowpack texturing (see tools/noise/noiseErosionTest.js) |
 | `computeGauss5x5`                | Five by five Gaussian blur filter.               |
 | `computeNormal`                  | Scalar normal map from height channel.           |
 | `computeNormal8`                 | Eight tap normal map estimator.                  |
@@ -321,12 +268,4 @@ Notes:
 
 * `threshold` is used by the threshold, flat shade, and mask modes.
 * `edgeK` acts as scale (edges) or feather width (flat shade and mask modes). For modes 3 and 8, if `edgeK <= 0` the shader uses a default scale.
-
-
-
-
-
-
-
-
 

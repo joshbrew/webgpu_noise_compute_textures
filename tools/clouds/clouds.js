@@ -1,20 +1,67 @@
 // clouds.js
 // CloudComputeBuilder matching updated clouds.wgsl uniform layout (CloudOptions, CloudParams, NoiseTransforms, CloudTuning)
 
-import cloudWGSL from "./clouds.wgsl";
-import previewWGSL from "./cloudsRender.wgsl";
+import cloudWGSL from "./shaders/clouds.wgsl";
+import baseCommonWGSL from "./shaders/cloudCommon.wgsl";
+import aircraftWGSL from "./shaders/cloudAircraft.wgsl";
+const commonWGSL = baseCommonWGSL + '\n' + aircraftWGSL;
+import layerWGSL from "./shaders/cloudLayer.wgsl";
+import resolveWGSL from "./shaders/cloudResolve.wgsl";
+import scratchWGSL from "./shaders/cloudScratch.wgsl";
+import rayOutputWGSL from "./shaders/cloudRayOutput.wgsl";
+import fieldWGSL from "./shaders/cloudFields.wgsl";
+import planetWGSL from "./shaders/cloudPlanet.wgsl";
+import gasAppearanceWGSL from "./shaders/planetGasAppearance.wgsl";
+import gasFlowWGSL from "./shaders/planetGasFlow.wgsl";
+import previewWGSL from "./shaders/cloudsRender.wgsl";
+import { CLOUD_FIELD_QUALITIES, supportsCloudFieldQuality } from "./cloudFieldQuality.js";
+import { intendedCloudShading } from './cloudLookPresets.js';
 
 const CLOUD_GPU_CACHE = new WeakMap();
+const INLINE_LAYER_OUTPUT = `fn beginLayerSample(pix: vec2<i32>) {}
+fn storeLayerSample(pix: vec2<i32>, color: vec4<f32>, farHistory: f32, historyActive: bool) {
+  resolveCloudColor(pix, color, farHistory, historyActive);
+}`;
+
+function createTimedCloudModule(device, label, code, timing) {
+  const started = performance.now();
+  const module = device.createShaderModule({ label, code });
+  Object.assign(timing, { sourceBytes: code.length, createMs: performance.now() - started, validationMs: null, status: "created" });
+  if (typeof module.getCompilationInfo === "function") {
+    const validationStarted = performance.now();
+    module.getCompilationInfo().then(info => {
+      timing.validationMs = performance.now() - validationStarted;
+      const errors = info.messages.filter(message => message.type === "error");
+      timing.status = errors.length ? "error" : "validated";
+      if (errors.length) timing.error = errors.map(message => message.message).join("\n");
+    }).catch(error => {
+      timing.validationMs = performance.now() - validationStarted;
+      timing.status = "error";
+      timing.error = String(error?.message || error);
+    });
+  }
+  return module;
+}
 
 function getCloudGpuCache(device) {
   let cache = CLOUD_GPU_CACHE.get(device);
   if (!cache) {
     cache = {
       module: null,
+      fieldModule: null,
+      moduleTiming: null,
+      computeTimings: new Map(),
+      flatStagesByFormat: new Map(),
+      previewModule: null,
       bgl1: null,
       samplers: null,
       computeByFormat: new Map(),
       previewByFormat: new Map(),
+      previewPromises: new Map(),
+      bootstrapComputeByFormat: new Map(),
+      bootstrapComputePromises: new Map(),
+      bootstrapPreviewByFormat: new Map(),
+      bootstrapPreviewPromises: new Map(),
       upsampleByFormat: new Map(),
       historyCopy: null,
     };
@@ -98,6 +145,7 @@ export class CloudComputeBuilder {
     this._computePipelineKey = -1;
     this._computePipelineLayout = null;
     this._computePipelines = new Map();
+    this._computePipelinePromises = new Map();
     this._historyCopy = null;
     this._historyCopyBgCache = new Map();
     this._historyCopyBgKeys = [];
@@ -200,6 +248,7 @@ export class CloudComputeBuilder {
     this._canvasStates = new WeakMap();
     this._renderBgCache = new WeakMap();
     this._renderBundleCache = new WeakMap();
+    this._bootstrapRenderBgCache = new WeakMap();
 
     // tiny dummies
     this._ownsBlue = false;
@@ -350,6 +399,10 @@ export class CloudComputeBuilder {
         outputAlphaFeather: 0.50,
         sparsity: 0.42,
         definition: 0.62,
+        formType: 0,
+        puffScale: 3.6,
+        aoStrength: 0,
+        towerHeightVariation: 0.35,
       },
     };
 
@@ -446,6 +499,8 @@ export class CloudComputeBuilder {
       this.bgl0 = cachedCompute.bgl0;
       this._computePipelineLayout = cachedCompute.layout;
       this._computePipelines = cachedCompute.pipelines || new Map();
+      this._computePipelinePromises = cachedCompute.pipelinePromises || new Map();
+      cachedCompute.pipelinePromises = this._computePipelinePromises;
       this._computePipelineKey = this._currentComputeVariantKey();
       this.pipeline = this._computePipelines.get(this._computePipelineKey) || null;
       if (!this.pipeline) this._computePipelineKey = -1;
@@ -454,7 +509,6 @@ export class CloudComputeBuilder {
       this._createDummyHistory();
 
       this._clearBindGroupCaches();
-      this._ensureUpsamplePipeline(this.outFormat);
       return;
     }
 
@@ -527,6 +581,7 @@ export class CloudComputeBuilder {
       bindGroupLayouts: [this.bgl0, this.bgl1],
     });
     this._computePipelines = new Map();
+    this._computePipelinePromises = new Map();
     this.pipeline = null;
     this._computePipelineKey = -1;
 
@@ -534,61 +589,938 @@ export class CloudComputeBuilder {
       bgl0: this.bgl0,
       layout: this._computePipelineLayout,
       pipelines: this._computePipelines,
+      pipelinePromises: this._computePipelinePromises,
     });
 
     this._destroyDummyHistory();
     this._createDummyHistory();
 
     this._clearBindGroupCaches();
-
-    this._ensureUpsamplePipeline(this.outFormat);
   }
 
   _currentComputeMode() {
     const spherical = this._dvOptions.getFloat32(16, true) >= 0.5;
-    const volumeLayers = this._dvView.getFloat32(92, true);
-    if (spherical && volumeLayers > 1.5) return 2;
     return spherical ? 1 : 0;
   }
 
-  _currentComputeVariantKey() {
+  _currentComputeVariantKey({ coarseFactor = 1 } = {}) {
     const mode = Math.max(0, Math.min(2, this._currentComputeMode()));
     const customPos = this._dvOptions.getUint32(0, true) !== 0;
     const writeRGB = this._dvOptions.getUint32(8, true) !== 0;
-    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0);
+    // Read the packed integer, exactly as the GPU does (including <= 0 inputs).
+    // Adaptive lighting only adds to this stride, so detailed probes cannot run
+    // when it is > 1. Do not compile their large call graph for that case.
+    const useFields = mode === 0 && this._dvTuning.getFloat32(240, true) > 0;
+    const planetStyle = mode !== 0 && this._planetStyleMode === true && this._dvTuning.getFloat32(240, true) > 0.5 && (this._dvView?.getFloat32(92,true) ?? 1) <= 1.5;
+    const detailedLighting = !useFields && !planetStyle && this._dvTuning.getInt32(8, true) <= 1;
+    const divider = Math.max(1, coarseFactor | 0);
+    const scratchBytes = Math.max(1, Math.ceil((this.width || 1) / divider)) * Math.max(1, Math.ceil((this.height || 1) / divider)) * Math.max(1, this.layers || 1) * 32;
+    const stagedResolve = mode === 0 && scratchBytes <= (this.device.limits?.maxStorageBufferBindingSize ?? 134217728);
+    return mode | (customPos ? 4 : 0) | (writeRGB ? 8 : 0) | (detailedLighting ? 16 : 0) | (stagedResolve ? 32 : 0) | (useFields ? 64 : 0) | (planetStyle ? 128 : 0);
+  }
+
+  _computePipelineDescriptorForKey(key = this._currentComputeVariantKey()) {
+    const mode = key & 3;
+    const isSpherical = mode !== 0;
+    const entryPoint = (key & 128) ? "computeCloudPlanet" : isSpherical ? "computeCloudSphere" : "computeCloudBox";
+    return {
+      layout: (key & 96) ? this._getFlatStageSetup().layout : this._computePipelineLayout,
+      compute: {
+        module: (key & 128) ? this._getPlanetShaderModule() : (key & 64) ? this._getFieldShaderModule() : (key & 32) ? this._getStagedLayerShaderModule() : this.module,
+        entryPoint,
+        constants: {
+          CLOUD_IS_SPHERICAL: isSpherical ? 1 : 0,
+          CLOUD_USE_CUSTOM_POS: (key & 4) ? 1 : 0,
+          CLOUD_WRITE_RGB: (key & 8) ? 1 : 0,
+          CLOUD_DETAILED_LIGHTING: (key & 16) ? 1 : 0,
+          CLOUD_STAGED_RESOLVE: (key & 32) ? 1 : 0,
+          CLOUD_USE_FIELDS: (key & 64) ? 1 : 0,
+        },
+      },
+    };
+  }
+
+  _beginComputePipelineTiming(key, async, entryPoint = (key & 128) ? "computeCloudPlanet" : (key & 3) ? "computeCloudSphere" : "computeCloudBox") {
+    const started = performance.now();
+    const timing = {
+      key,
+      format: this.outFormat,
+      entryPoint,
+      detailedLighting: !!(key & 16),
+      sharedFields: typeof key === "number" ? !!(key & 64) : entryPoint !== "resolveCloudFlat",
+      async,
+      status: "compiling",
+      compileMs: null,
+    };
+    getCloudGpuCache(this.device).computeTimings.set(`${this.outFormat}:${key}`, timing);
+    return (error) => {
+      timing.compileMs = performance.now() - started;
+      timing.status = error ? "error" : "ready";
+      if (error) timing.error = String(error?.message || error);
+    };
+  }
+
+  // Structured-cloneable; times are CPU/API wall time, not GPU timestamps.
+  // Cached pipelines keep their original compilation measurement.
+  getComputePipelineTimings() {
+    const cache = getCloudGpuCache(this.device);
+    return {
+      activeKey: this._currentComputeVariantKey(),
+      installedKey: this._computePipelineKey,
+      module: cache.moduleTiming ? { ...cache.moduleTiming } : null,
+      stagedModule: cache.stagedModuleTiming ? { ...cache.stagedModuleTiming } : null,
+      fieldModule: cache.fieldModuleTiming ? { ...cache.fieldModuleTiming } : null,
+      resolveModule: cache.resolveModuleTiming ? { ...cache.resolveModuleTiming } : null,
+      planetModule: cache.planetModuleTiming ? { ...cache.planetModuleTiming } : null,
+      variants: [...cache.computeTimings.values()].map(timing => ({ ...timing })),
+    };
   }
 
   _ensureComputePipelineForKey(key = this._currentComputeVariantKey()) {
     const cached = this._computePipelines.get(key);
     if (cached) return cached;
 
-    const mode = key & 3;
-    const isSpherical = mode !== 0;
-    const isAurora = mode === 2;
-    const entryPoint = isAurora ? "computeCloudAurora" : isSpherical ? "computeCloudSphere" : "computeCloudBox";
-    const pipeline = this.device.createComputePipeline({
-      layout: this._computePipelineLayout,
-      compute: {
-        module: this.module,
-        entryPoint,
-        constants: {
-          CLOUD_IS_SPHERICAL: isSpherical ? 1 : 0,
-          CLOUD_IS_AURORA: isAurora ? 1 : 0,
-          CLOUD_USE_CUSTOM_POS: (key & 4) ? 1 : 0,
-          CLOUD_WRITE_RGB: (key & 8) ? 1 : 0,
-        },
-      },
-    });
-    this._computePipelines.set(key, pipeline);
+    const finish = this._beginComputePipelineTiming(key, false);
+    try {
+      const pipeline = this.device.createComputePipeline(
+        this._computePipelineDescriptorForKey(key),
+      );
+      this._computePipelines.set(key, pipeline);
+      finish();
+      return pipeline;
+    } catch (error) {
+      finish(error);
+      throw error;
+    }
+  }
+
+  async _ensureComputePipelineForKeyAsync(key = this._currentComputeVariantKey()) {
+    const pipelines = this._computePipelines;
+    const pipelinePromises = this._computePipelinePromises;
+    const descriptor = this._computePipelineDescriptorForKey(key);
+    const cached = pipelines.get(key);
+    if (cached) return cached;
+
+    const existing = pipelinePromises.get(key);
+    if (existing) return existing;
+
+    const create = async () => {
+      const async = typeof this.device.createComputePipelineAsync === "function";
+      const finish = this._beginComputePipelineTiming(key, async);
+      try {
+        const pipeline = async
+          ? await this.device.createComputePipelineAsync(descriptor)
+          : this.device.createComputePipeline(descriptor);
+        const installed = pipelines.get(key);
+        if (!installed) pipelines.set(key, pipeline);
+        finish();
+        return installed || pipeline;
+      } catch (error) {
+        finish(error);
+        throw error;
+      }
+    };
+
+    const pending = create();
+    pipelinePromises.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (pipelinePromises.get(key) === pending) {
+        pipelinePromises.delete(key);
+      }
+    }
+  }
+
+  ensureComputePipelineReady(dispatch = {}) {
+    const key = this._currentComputeVariantKey(dispatch);
+    if (this.pipeline && this._computePipelineKey === key) return this.pipeline;
+    this.pipeline = this._ensureComputePipelineForKey(key);
+    if (key & 32) this._ensureFlatStagePipeline("resolveCloudFlat");
+    if (key & 64) {
+      this._ensureFlatStagePipeline("buildCloudDensityField");
+      this._ensureFlatStagePipeline("buildCloudLightField");
+    }
+    this._computePipelineKey = key;
+    return this.pipeline;
+  }
+
+  async ensureComputePipelineReadyAsync(dispatch = {}) {
+    const key = this._currentComputeVariantKey(dispatch);
+    const pipelines = this._computePipelines;
+    if (this.pipeline && this._computePipelineKey === key) return this.pipeline;
+    const [pipeline] = await Promise.all([
+      this._ensureComputePipelineForKeyAsync(key),
+      (key & 32) ? this._ensureFlatStagePipelineAsync("resolveCloudFlat") : null,
+      (key & 64) ? this._ensureFlatStagePipelineAsync("buildCloudDensityField") : null,
+      (key & 64) ? this._ensureFlatStagePipelineAsync("buildCloudLightField") : null,
+    ]);
+    if (this._computePipelines === pipelines && this._currentComputeVariantKey(dispatch) === key) {
+      this.pipeline = pipeline;
+      this._computePipelineKey = key;
+    }
     return pipeline;
   }
 
-  ensureComputePipelineReady() {
-    const key = this._currentComputeVariantKey();
-    if (this.pipeline && this._computePipelineKey === key) return this.pipeline;
-    this.pipeline = this._ensureComputePipelineForKey(key);
-    this._computePipelineKey = key;
-    return this.pipeline;
+  async prewarmComputePipelineVariantAsync({
+    spherical = false,
+    aurora = false,
+    useCustomPos = false,
+    writeRGB = true,
+    sunStride = this._dvTuning.getInt32(8, true),
+    formType = this._dvTuning.getFloat32(240, true),
+    planetStyleMode = this._planetStyleMode === true,
+  } = {}) {
+    const mode = aurora || spherical ? 1 : 0;
+    const fields = mode === 0 && formType > 0;
+    const planetStyle = mode !== 0 && !aurora && planetStyleMode && formType > 0.5;
+    const key = mode | (useCustomPos ? 4 : 0) | (writeRGB ? 8 : 0) | (!fields && !planetStyle && (sunStride | 0) <= 1 ? 16 : 0) | (mode === 0 ? 32 : 0) | (fields ? 64 : 0) | (planetStyle ? 128 : 0);
+    const [pipeline] = await Promise.all([
+      this._ensureComputePipelineForKeyAsync(key),
+      (key & 32) ? this._ensureFlatStagePipelineAsync("resolveCloudFlat") : null,
+      fields ? this._ensureFlatStagePipelineAsync("buildCloudDensityField") : null,
+      fields ? this._ensureFlatStagePipelineAsync("buildCloudLightField") : null,
+    ]);
+    return pipeline;
+  }
+
+  _getPlanetShaderModule() {
+    const cache=getCloudGpuCache(this.device);
+    if(!cache.planetModule)cache.planetModule=createTimedCloudModule(this.device,'cloud-planet-styles',commonWGSL+'\n'+scratchWGSL+'\n'+gasFlowWGSL+'\n'+gasAppearanceWGSL+'\n'+planetWGSL+'\n'+resolveWGSL+'\n'+INLINE_LAYER_OUTPUT,cache.planetModuleTiming={});
+    return cache.planetModule;
+  }
+
+  _getFlatStageSetup() {
+    const cache = getCloudGpuCache(this.device).flatStagesByFormat;
+    if (cache.has(this.outFormat)) return cache.get(this.outFormat);
+    const bgl = this.device.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+    ] });
+    const densityBgl = this.device.createBindGroupLayout({ entries: [
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "3d" } },
+    ] });
+    const lightBgl = this.device.createBindGroupLayout({ entries: [
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float", viewDimension: "3d" } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 6, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba16float", viewDimension: "3d" } },
+    ] });
+    const setup = {
+      bgl,
+      densityBgl, lightBgl,
+      sampler: this.device.createSampler({ minFilter: "linear", magFilter: "linear", mipmapFilter:"linear", addressModeU: "repeat", addressModeV: "clamp-to-edge", addressModeW: "repeat" }),
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, bgl] }),
+      densityLayout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, densityBgl] }),
+      lightLayout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bgl0, this.bgl1, lightBgl] }),
+      pipelines: new Map(), promises: new Map(),
+    };
+    cache.set(this.outFormat, setup);
+    return setup;
+  }
+
+  _flatStageDescriptor(entryPoint) {
+    const setup = this._getFlatStageSetup();
+    const fields = entryPoint !== "resolveCloudFlat";
+    return {
+      label: entryPoint,
+      layout: entryPoint === "buildCloudDensityField" ? setup.densityLayout : entryPoint === "buildCloudLightField" ? setup.lightLayout : setup.layout,
+      compute: { module: fields ? this._getFieldShaderModule() : this._getResolveShaderModule(), entryPoint, constants: { CLOUD_IS_SPHERICAL: 0, CLOUD_USE_FIELDS: fields ? 1 : 0 } },
+    };
+  }
+
+  _ensureFlatStagePipeline(entryPoint) {
+    const setup = this._getFlatStageSetup();
+    if (setup.pipelines.has(entryPoint)) return setup.pipelines.get(entryPoint);
+    const finish = this._beginComputePipelineTiming(entryPoint, false, entryPoint);
+    try {
+      const pipeline = this.device.createComputePipeline(this._flatStageDescriptor(entryPoint));
+      setup.pipelines.set(entryPoint, pipeline);
+      finish();
+      return pipeline;
+    } catch (error) { finish(error); throw error; }
+  }
+
+  async _ensureFlatStagePipelineAsync(entryPoint) {
+    const setup = this._getFlatStageSetup();
+    if (setup.pipelines.has(entryPoint)) return setup.pipelines.get(entryPoint);
+    if (setup.promises.has(entryPoint)) return setup.promises.get(entryPoint);
+    const descriptor = this._flatStageDescriptor(entryPoint);
+    const async = typeof this.device.createComputePipelineAsync === "function";
+    const finish = this._beginComputePipelineTiming(entryPoint, async, entryPoint);
+    const pending = Promise.resolve().then(() => async ? this.device.createComputePipelineAsync(descriptor) : this.device.createComputePipeline(descriptor))
+      .then(pipeline => { setup.pipelines.set(entryPoint, pipeline); finish(); return pipeline; })
+      .catch(error => { finish(error); throw error; })
+      .finally(() => { setup.promises.delete(entryPoint); });
+    setup.promises.set(entryPoint, pending);
+    return pending;
+  }
+
+  _getFlatStageBindGroup() {
+    this._ensureFlatFieldResources();
+    const bytes = (this._computePipelineKey & 32) ? Math.max(1, this.width * this.height * this.layers) * 32 : 32;
+    if (!this._resolveScratch || this._resolveScratch.size < bytes) {
+      const old = this._resolveScratch;
+      this._resolveScratch = this.device.createBuffer({ label: "cloud-ray-radiance", size: bytes, usage: GPUBufferUsage.STORAGE });
+      this._flatStageBindGroup = null;
+      if (old) this.queue.onSubmittedWorkDone().then(() => old.destroy()).catch(() => {});
+    }
+    if (!this._flatStageBindGroup) this._flatStageBindGroup = this.device.createBindGroup({
+      layout: this._getFlatStageSetup().bgl,
+      entries: [
+        { binding: 0, resource: { buffer: this._resolveScratch } },
+        { binding: 1, resource: this._fieldResources.densityView },
+        { binding: 2, resource: this._fieldResources.lightView },
+        { binding: 3, resource: this._getFlatStageSetup().sampler },
+        { binding: 4, resource: { buffer: this._fieldParamsBuffer } },
+      ],
+    });
+    return this._flatStageBindGroup;
+  }
+
+  _getFieldShaderModule() {
+    const cache = getCloudGpuCache(this.device);
+    if (!cache.fieldModule) cache.fieldModule = createTimedCloudModule(this.device, "cloud-rounded-fields",
+      commonWGSL + "\n" + scratchWGSL + "\n" + cloudWGSL + "\n" + resolveWGSL + "\n" + fieldWGSL,
+      cache.fieldModuleTiming = {});
+    return cache.fieldModule;
+  }
+
+  _getStagedLayerShaderModule() {
+    const cache = getCloudGpuCache(this.device);
+    if (!cache.stagedModule) {
+      const code = commonWGSL + "\n" + scratchWGSL + "\n" + layerWGSL + "\n" + rayOutputWGSL;
+      cache.stagedModule = createTimedCloudModule(this.device, "cloud-layer-raymarch", code, cache.stagedModuleTiming = {});
+    }
+    return cache.stagedModule;
+  }
+
+  _getResolveShaderModule() {
+    const cache = getCloudGpuCache(this.device);
+    return cache.resolveModule ||= createTimedCloudModule(this.device, "cloud-temporal-resolve", commonWGSL + "\n" + scratchWGSL + "\n" + resolveWGSL, cache.resolveModuleTiming = {});
+  }
+
+  invalidateCloudFields() {
+    this._fieldDensitySignature = null;
+    this._fieldLightSignature = null;
+  }
+
+  setFieldQuality(quality = 'balanced') {
+    if (!Object.hasOwn(CLOUD_FIELD_QUALITIES, quality)) throw new RangeError(`Unknown cloud field quality: ${quality}`);
+    if (!supportsCloudFieldQuality(quality, this.device.limits)) throw new RangeError(`Cloud field quality ${quality} is unavailable with this GPU device's limits`);
+    if ((this._state.fieldQuality || 'balanced') === quality) return;
+    this._state.fieldQuality = quality;
+    // Allocation is deferred to the next encode, not interleaved with a frame.
+    // The dimension uniform invalidates both fields when resources are replaced.
+  }
+
+  // Fine visible-edge erosion reuses the tiled detail map at ray time. It does
+  // not alter the macro geometry/light cache or allocate a larger volume.
+  setCloudTurbulence(amount = 0) {
+    this._state.cloudTurbulence = Number.isFinite(amount) ? Math.min(1.5, Math.max(0, amount)) : 0;
+  }
+
+  // Arbitrary-volume examples clip the same cached noise/lighting fields. The
+  // rotation is geometry, not camera motion, and never resets the wind domain.
+  setVolumeMask({ shape = this._state.volumeMask?.shape ?? "box", rotationAngle = this._state.volumeMask?.rotationAngle ?? 1.05 } = {}) {
+    if (!["box", "torus", "gallery"].includes(shape)) throw new Error(`Unknown cloud volume: ${shape}`);
+    this._state.volumeMask = { shape, rotationAngle: Number.isFinite(rotationAngle) ? rotationAngle : 1.05 };
+  }
+
+  // Optional continuous weather morphology. All profiles share cached fields.
+  // Zero weights preserve every standalone preset and arbitrary volume.
+  setWeatherProfile({shelf=0,deck=0,wisps=0,cirrus=0,fluctus=0,asperitas=0} = {}) {
+    const keys=['shelf','deck','wisps','cirrus','fluctus','asperitas'];
+    const values=[shelf,deck,wisps,cirrus,fluctus,asperitas].map(v=>Number.isFinite(v)?Math.min(1,Math.max(0,v)):0);
+    const scale=Math.max(1,values.reduce((sum,v)=>sum+v,0));
+    this._state.weatherProfile=Object.fromEntries(keys.map((key,i)=>[key,values[i]/scale]));
+  }
+
+  _ensureFlatFieldResources() {
+    const active = this._currentComputeVariantKey() & 64;
+    const dimensions = active ? CLOUD_FIELD_QUALITIES[this._state.fieldQuality || 'balanced'].dimensions : (this._fieldResources?.dimensions || [1, 1, 1]);
+    if (this._fieldResources?.dimensions.join() === dimensions.join()) return;
+    const old = this._fieldResources;
+    // Sculpted layers bind a one-texel placeholder before any volume is baked.
+    // Complete the tiny tail of the mip chain for conservative empty-space
+    // queries. The first four levels still serve visible cloud filtering.
+    const mipLevelCount=1+Math.floor(Math.log2(Math.max(...dimensions)));
+    const create = label => this.device.createTexture({ label, dimension: "3d", size: dimensions, mipLevelCount, format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
+    const density = create("cloud-density-field");
+    const light = create("cloud-shadow-ao-field");
+    this._fieldResources = { dimensions, density, light, densityView: density.createView(), lightView: light.createView() };
+    const cache=getCloudGpuCache(this.device);
+    if(!cache.fieldMipPipelines){
+      const module=this.device.createShaderModule({code:`
+      override DENSITY:bool=false;
+      @group(0) @binding(0) var source:texture_3d<f32>;
+      @group(0) @binding(1) var mipOut:texture_storage_3d<rgba16float,write>;
+      @compute @workgroup_size(4,4,4) fn downsample(@builtin(global_invocation_id) p:vec3<u32>){
+        if(any(p>=textureDimensions(mipOut))){return;}
+        let sourceSize=textureDimensions(source);
+        let targetSize=textureDimensions(mipOut);
+        let lo=p*sourceSize/targetSize;
+        let hi=(p+vec3<u32>(1u))*sourceSize/targetSize;
+        var value=vec4<f32>(0.0);var occupied=0.0;var count=0.0;
+        for(var z=lo.z;z<hi.z;z++){for(var y=lo.y;y<hi.y;y++){for(var x=lo.x;x<hi.x;x++){
+          let child=textureLoad(source,vec3<i32>(i32(x),i32(y),i32(z)),0);
+          value+=child;occupied=max(occupied,child.b);count+=1.0;
+        }}}
+        value/=max(count,1.0);
+        if(DENSITY){value.b=occupied;}
+        textureStore(mipOut,vec3<i32>(p),value);
+      }`});
+      cache.fieldMipPipelines=[true,false].map(density=>this.device.createComputePipeline({layout:'auto',compute:{entryPoint:'downsample',module,constants:{DENSITY:density}}}));
+    }
+    this._fieldMipPipelines=cache.fieldMipPipelines;
+    this._fieldMipGroups=[density,light].map((texture,field)=>Array.from({length:mipLevelCount-1},(_,i)=>this.device.createBindGroup({layout:cache.fieldMipPipelines[field].getBindGroupLayout(0),entries:[
+      {binding:0,resource:texture.createView({baseMipLevel:i,mipLevelCount:1})},
+      {binding:1,resource:texture.createView({baseMipLevel:i+1,mipLevelCount:1})},
+    ]})));
+    this._fieldParamsBuffer ||= this.device.createBuffer({ label: "cloud-field-bounds", size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this._fieldParamsAB ||= new ArrayBuffer(80);
+    const setup = this._getFlatStageSetup();
+    this._fieldDensityBg = this.device.createBindGroup({ layout: setup.densityBgl, entries: [
+      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 5, resource: density.createView({baseMipLevel:0,mipLevelCount:1}) },
+    ] });
+    this._fieldLightBg = this.device.createBindGroup({ layout: setup.lightBgl, entries: [
+      { binding: 1, resource: this._fieldResources.densityView }, { binding: 3, resource: setup.sampler },
+      { binding: 4, resource: { buffer: this._fieldParamsBuffer } }, { binding: 6, resource: light.createView({baseMipLevel:0,mipLevelCount:1}) },
+    ] });
+    this._flatStageBindGroup = null;
+    this.invalidateCloudFields();
+    if (old) { this._retireTexture(old.density); this._retireTexture(old.light); }
+  }
+
+  _encodeFlatFields(pass, timings) {
+    this._ensureFlatFieldResources();
+    const started = performance.now();
+    const { dimensions } = this._fieldResources;
+    const dv = new DataView(this._fieldParamsAB);
+    const mask = this._state.volumeMask;
+    const arbitrary = mask?.shape === "torus" || mask?.shape === "gallery";
+    const tiled = !arbitrary && Math.max(this._state.box.half[0],this._state.box.half[2])>36;
+    const cell=Math.max(this._state.tuning.puffScale,0.75);
+    const tileSpan=Math.ceil(36/cell/2)*2*cell;
+    for (let i = 0; i < 3; i++) {
+      const half=tiled&&i!==1?tileSpan/2:this._state.box.half[i];
+      dv.setFloat32(i * 4, this._state.box.center[i] - half, true);
+      dv.setFloat32(16 + i * 4, half * 2, true);
+      dv.setUint32(32 + i * 4, dimensions[i], true);
+    }
+    dv.setUint32(44,tiled?1:0,true);
+    const profile = this._state.weatherProfile;
+    dv.setFloat32(12, arbitrary ? 0 : profile?.shelf || 0, true);
+    dv.setFloat32(28, arbitrary ? 0 : profile?.deck || 0, true);
+    dv.setFloat32(48, mask?.shape === "gallery" ? 2 : mask?.shape === "torus" ? 1 : 0, true);
+    dv.setFloat32(52, arbitrary ? mask.rotationAngle : 0, true);
+    dv.setFloat32(56, 0.58, true); // major radius / smallest half extent
+    dv.setFloat32(60, arbitrary ? 0.22 : profile?.wisps || 0, true); // tube radius, or high-wisp weight
+    for (const [i,key] of ['cirrus','fluctus','asperitas'].entries()) {
+      dv.setFloat32(64+i*4, arbitrary ? 0 : profile?.[key] || 0, true);
+    }
+    dv.setFloat32(76, this._state.cloudTurbulence || 0, true);
+    this._writeIfChanged("fieldParams", this._fieldParamsBuffer, this._fieldParamsAB);
+    // AO is a lighting blend, not geometry. Changing its strength or the camera
+    // must not rebake either field.
+    const densitySignature = [this._abParams.slice(0,12), this._abNTransform, this._abTuning.slice(0,12), this._abTuning.slice(16, 248), this._abTuning.slice(252), this._abBox, this._fieldParamsAB.slice(0, 76)].map(ab => this._sum32(ab)).concat(
+      this._getResId(this.weatherView), this._getResId(this.shape3DView), this._getResId(this.detail3DView),
+      this._dvView.getFloat32(96, true), this._dvView.getFloat32(92, true),
+    ).join("|");
+    const densityChanged = densitySignature !== this._fieldDensitySignature;
+    const lightSignature = densitySignature + "|" + this._state.light.sunDir.join("|")+"|"+new DataView(this._abParams).getFloat32(12,true);
+    const lightChanged = densityChanged || lightSignature !== this._fieldLightSignature;
+    const dispatch = entry => {
+      const encodeStarted = performance.now();
+      pass.setPipeline(this._ensureFlatStagePipeline(entry));
+      pass.setBindGroup(0, this._currentBg0);
+      pass.setBindGroup(1, this._currentBg1);
+      pass.setBindGroup(2, entry === "buildCloudDensityField" ? this._fieldDensityBg : this._fieldLightBg);
+      pass.dispatchWorkgroups(...dimensions.map(n => Math.ceil(n / 4)));
+      timings.push({ stage: entry, encodeMs: performance.now() - encodeStarted, dispatched: true, dimensions });
+    };
+    if (densityChanged) dispatch("buildCloudDensityField");
+    else timings.push({ stage: "buildCloudDensityField", encodeMs: 0, dispatched: false, cached: true });
+    if (lightChanged) dispatch("buildCloudLightField");
+    else timings.push({ stage: "buildCloudLightField", encodeMs: 0, dispatched: false, cached: true });
+    if(densityChanged||lightChanged){
+      this._fieldMipGroups.forEach((groups,field)=>{
+        if(!groups.length||!(field===0?densityChanged:lightChanged))return;
+        pass.setPipeline(getCloudGpuCache(this.device).fieldMipPipelines[field]);
+        groups.forEach((group,i)=>{pass.setBindGroup(0,group);pass.dispatchWorkgroups(...dimensions.map(n=>Math.ceil(Math.max(1,n>>(i+1))/4)));});
+      });
+    }
+    this._fieldDensitySignature = densitySignature;
+    this._fieldLightSignature = lightSignature;
+    timings.push({ stage: "field-cache-check", encodeMs: performance.now() - started });
+  }
+
+  ensureUpsamplePipelineReady(format = this.outFormat) {
+    return this._ensureUpsamplePipeline(format);
+  }
+
+  _createBootstrapComputePipelineSetup(format = this.outFormat) {
+    const fmt = format || "rgba16float";
+    const code = `
+      const PI: f32 = 3.141592653589793;
+
+      struct CloudParams {
+        globalCoverage: f32,
+        globalDensity: f32,
+        cloudAnvilAmount: f32,
+        cloudBeer: f32,
+        attenuationClamp: f32,
+        inScatterG: f32,
+        silverIntensity: f32,
+        silverExponent: f32,
+        outScatterG: f32,
+        inVsOut: f32,
+        outScatterAmbientAmt: f32,
+        ambientMinimum: f32,
+        sunColor: vec3<f32>,
+        _sunColorPad: f32,
+        densityDivMin: f32,
+        silverDirectionBias: f32,
+        silverHorizonBoost: f32,
+        _pad0: f32,
+        frontLightColor: vec3<f32>,
+        _frontLightPad: f32,
+        shadowLightColor: vec3<f32>,
+        _shadowLightPad: f32,
+      };
+
+      struct NoiseTransforms {
+        shapeOffsetWorld: vec3<f32>, _pad0: f32,
+        detailOffsetWorld: vec3<f32>, _pad1: f32,
+        shapeScale: f32, detailScale: f32, weatherScale: f32, _pad2: f32,
+        shapeAxisScale: vec3<f32>, _pad3: f32,
+        detailAxisScale: vec3<f32>, _pad4: f32,
+        weatherOffsetWorld: vec3<f32>, _pad5: f32,
+        weatherAxisScale: vec3<f32>, _pad6: f32,
+        shapeBias: f32, detailBias: f32, weatherBias: f32, _pad7: f32,
+      };
+
+      struct Frame {
+        fullWidth: u32, fullHeight: u32,
+        tileWidth: u32, tileHeight: u32,
+        originX: i32, originY: i32, originZ: i32,
+        fullDepth: u32, tileDepth: u32,
+        layerIndex: i32, layers: u32, _pad0: u32,
+        originXf: f32, originYf: f32, _pad1: f32, _pad2: f32,
+      };
+
+      struct LightInputs {
+        sunDir: vec3<f32>, _0: f32,
+        camPos: vec3<f32>, _1: f32,
+      };
+
+      struct View {
+        camPos: vec3<f32>, _v0: f32,
+        right: vec3<f32>, _v1: f32,
+        up: vec3<f32>, _v2: f32,
+        fwd: vec3<f32>, _v3: f32,
+        fovY: f32, aspect: f32, stepBase: f32, stepInc: f32,
+        planetRadius: f32, cloudBottom: f32, cloudTop: f32, volumeLayers: f32,
+        worldToUV: f32, _a: f32, _b: f32, _c: f32,
+      };
+
+      struct Box {
+        center: vec3<f32>, _b0: f32,
+        half: vec3<f32>, uvScale: f32,
+      };
+
+      @group(0) @binding(1) var<uniform> C: CloudParams;
+      @group(0) @binding(3) var<uniform> N: NoiseTransforms;
+      @group(0) @binding(4) var outTex: texture_storage_2d_array<${fmt}, write>;
+      @group(0) @binding(6) var<uniform> frame: Frame;
+
+      @group(1) @binding(0) var weather2D: texture_2d_array<f32>;
+      @group(1) @binding(1) var samp2D: sampler;
+      @group(1) @binding(2) var shape3D: texture_3d<f32>;
+      @group(1) @binding(3) var sampShape: sampler;
+      @group(1) @binding(6) var detail3D: texture_3d<f32>;
+      @group(1) @binding(7) var sampDetail: sampler;
+      @group(1) @binding(8) var<uniform> L: LightInputs;
+      @group(1) @binding(9) var<uniform> V: View;
+      @group(1) @binding(10) var<uniform> B: Box;
+
+      fn weatherUvForDirection(n: vec3<f32>) -> vec2<f32> {
+        let lon = atan2(n.z, n.x) / (2.0 * PI) + 0.5;
+        let lat = asin(clamp(n.y, -1.0, 1.0)) / PI + 0.5;
+        return fract(vec2<f32>(lon, lat) * max(N.weatherScale, 0.001) + N.weatherOffsetWorld.xz * 0.0025);
+      }
+
+      fn bootstrapDensity(p: vec3<f32>, height01: f32) -> f32 {
+        let n = normalize(p);
+        let weather = textureSampleLevel(weather2D, samp2D, weatherUvForDirection(n), 0, 0.0);
+        let axis = max(abs(N.shapeAxisScale), vec3<f32>(0.05));
+        let shapeUv = fract(p * axis * max(N.shapeScale, 0.004) * 0.12 + N.shapeOffsetWorld * 0.004 + vec3<f32>(0.5));
+        let shape = textureSampleLevel(shape3D, sampShape, shapeUv, 0.0);
+        let body = shape.r * 0.64 + shape.g * 0.22 + shape.b * 0.14 + N.shapeBias * 0.08;
+        let coverage = clamp(C.globalCoverage, 0.0, 1.5);
+        let combined = body * 0.72 + weather.r * 0.66 + coverage * 0.16 + N.weatherBias * 0.05;
+        let vertical = smoothstep(0.0, 0.16, height01) * (1.0 - smoothstep(0.72, 1.0, height01));
+        return smoothstep(0.22, 0.72, combined) * vertical;
+      }
+
+      fn intersectBootstrapBox(ro: vec3<f32>, rd: vec3<f32>) -> vec2<f32> {
+        let bmin = B.center - max(abs(B.half), vec3<f32>(0.001));
+        let bmax = B.center + max(abs(B.half), vec3<f32>(0.001));
+        let parallel = abs(rd) <= vec3<f32>(0.00001);
+        if (
+          (parallel.x && (ro.x < bmin.x || ro.x > bmax.x)) ||
+          (parallel.y && (ro.y < bmin.y || ro.y > bmax.y)) ||
+          (parallel.z && (ro.z < bmin.z || ro.z > bmax.z))
+        ) {
+          return vec2<f32>(1.0, -1.0);
+        }
+        let epsSigned = select(vec3<f32>(-0.00001), vec3<f32>(0.00001), rd >= vec3<f32>(0.0));
+        let rdSafe = select(epsSigned, rd, abs(rd) > vec3<f32>(0.00001));
+        let inv = vec3<f32>(1.0) / rdSafe;
+        let ta = (bmin - ro) * inv;
+        let tb = (bmax - ro) * inv;
+        let near3 = min(ta, tb);
+        let far3 = max(ta, tb);
+        return vec2<f32>(max(max(near3.x, near3.y), near3.z), min(min(far3.x, far3.y), far3.z));
+      }
+
+      fn planarDensityAt(p: vec3<f32>) -> vec4<f32> {
+        let weatherAxis = max(abs(N.weatherAxisScale.xz), vec2<f32>(0.05));
+        let weatherUv = fract(
+          (p.xz - B.center.xz) * weatherAxis * max(B.uvScale, 0.001) * max(N.weatherScale, 0.001) * 0.18 +
+          N.weatherOffsetWorld.xz * 0.0025
+        );
+        let weather = textureSampleLevel(weather2D, samp2D, weatherUv, 0, 0.0);
+        let shapeAxis = max(abs(N.shapeAxisScale), vec3<f32>(0.05));
+        let shapeUv0 = fract(
+          (p - B.center) * shapeAxis * max(N.shapeScale, 0.004) * 0.15 +
+          N.shapeOffsetWorld * 0.006 + vec3<f32>(0.5)
+        );
+        let shapeUv1 = fract(shapeUv0 * vec3<f32>(1.73, 1.41, 1.29) + vec3<f32>(0.17, 0.37, 0.11));
+        let shape0 = textureSampleLevel(shape3D, sampShape, shapeUv0, 0.0);
+        let shape1 = textureSampleLevel(shape3D, sampShape, shapeUv1, 0.0);
+        let detailAxis = max(abs(N.detailAxisScale), vec3<f32>(0.05));
+        let detailUv = fract(
+          (p - B.center) * detailAxis * max(N.detailScale, 0.004) * 0.46 +
+          N.detailOffsetWorld * 0.008 + vec3<f32>(0.31, 0.57, 0.73)
+        );
+        let detail = textureSampleLevel(detail3D, sampDetail, detailUv, 0.0);
+        let base =
+          shape0.r * 0.48 + shape0.g * 0.16 + shape0.b * 0.08 +
+          shape1.r * 0.17 + shape1.g * 0.07 + detail.r * 0.04;
+        let combined = base * 0.70 + weather.r * 0.39 + N.shapeBias * 0.05 + N.weatherBias * 0.035;
+        let coverage = clamp(C.globalCoverage, 0.0, 1.25);
+        let threshold = mix(0.65, 0.33, min(coverage, 1.0));
+        var density = smoothstep(threshold - 0.07, threshold + 0.17, combined);
+        density = clamp(density + (detail.r - 0.5) * 0.11, 0.0, 1.0);
+        let halfSafe = max(abs(B.half), vec3<f32>(0.001));
+        let height01 = clamp((p.y - (B.center.y - halfSafe.y)) / (halfSafe.y * 2.0), 0.0, 1.0);
+        let vertical = smoothstep(0.0, 0.13, height01) * (1.0 - smoothstep(0.70, 1.0, height01));
+        return vec4<f32>(density * vertical, weather.rgb);
+      }
+
+      fn planarPreview(pixelUv: vec2<f32>) -> vec4<f32> {
+        let ndc = vec2<f32>(pixelUv.x * 2.0 - 1.0, 1.0 - pixelUv.y * 2.0);
+        let tanHalf = tan(max(V.fovY, 0.001) * 0.5);
+        let rayDir = normalize(V.fwd + V.right * (ndc.x * V.aspect * tanHalf) + V.up * (ndc.y * tanHalf));
+        let hit = intersectBootstrapBox(V.camPos, rayDir);
+        let tStart = max(hit.x, 0.0);
+        let tEnd = hit.y;
+        if (tEnd <= tStart) { return vec4<f32>(0.0); }
+
+        // Combine a few depth slices into one shaded proxy. Accumulating them as
+        // march steps exposes horizontal strata in the intentionally coarse frame.
+        let segment = tEnd - tStart;
+        let p0 = V.camPos + rayDir * (tStart + segment * 0.30);
+        let p1 = V.camPos + rayDir * (tStart + segment * 0.52);
+        let p2 = V.camPos + rayDir * (tStart + segment * 0.74);
+        let field0 = planarDensityAt(p0);
+        let field1 = planarDensityAt(p1);
+        let field2 = planarDensityAt(p2);
+        let density = clamp(field0.x * 0.24 + field1.x * 0.52 + field2.x * 0.24, 0.0, 1.0);
+        let weather = field1.yzw;
+        let lightProbe = planarDensityAt(p1 + normalize(L.sunDir) * 0.22).x;
+        let shadowColor = max(C.shadowLightColor, vec3<f32>(0.48, 0.54, 0.66));
+        let lightColor = max(C.frontLightColor * 0.82, vec3<f32>(0.82, 0.85, 0.90));
+        let sunUp = max(dot(normalize(L.sunDir), vec3<f32>(0.0, 1.0, 0.0)), 0.0);
+        let lightEscape = clamp((density - lightProbe) * 1.8 + 0.45, 0.0, 1.0);
+        let lightAmount = clamp(0.30 + weather.g * 0.22 + sunUp * 0.16 + lightEscape * 0.24, 0.0, 1.0);
+        var color = mix(shadowColor, lightColor, lightAmount) * mix(1.22, 0.80, density);
+        let silverEdge = smoothstep(0.035, 0.20, density) * (1.0 - smoothstep(0.34, 0.72, density));
+        color = color + max(C.sunColor, vec3<f32>(0.8)) * silverEdge * (0.18 + lightEscape * 0.18);
+        let alpha = clamp(smoothstep(0.015, 0.88, density) * 0.80, 0.0, 0.80);
+        return vec4<f32>(color, alpha);
+      }
+
+      @compute @workgroup_size(8, 8, 1)
+      fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+        if (gid.x >= frame.fullWidth || gid.y >= frame.fullHeight) { return; }
+        let dims = vec2<f32>(max(f32(frame.fullWidth), 1.0), max(f32(frame.fullHeight), 1.0));
+        let pixelUv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / dims;
+
+        if (V.planetRadius <= 0.001) {
+          textureStore(outTex, vec2<i32>(gid.xy), frame.layerIndex, planarPreview(pixelUv));
+          return;
+        }
+
+        let ndc = vec2<f32>(pixelUv.x * 2.0 - 1.0, 1.0 - pixelUv.y * 2.0);
+        let tanHalf = tan(max(V.fovY, 0.001) * 0.5);
+        let rayDir = normalize(V.fwd + V.right * (ndc.x * V.aspect * tanHalf) + V.up * (ndc.y * tanHalf));
+        let outerRadius = V.planetRadius + max(V.cloudTop, V.cloudBottom + 0.01);
+        let innerRadius = V.planetRadius + max(V.cloudBottom, 0.0);
+        let b = dot(V.camPos, rayDir);
+        let outerH = b * b - (dot(V.camPos, V.camPos) - outerRadius * outerRadius);
+        if (outerH <= 0.0) {
+          textureStore(outTex, vec2<i32>(gid.xy), frame.layerIndex, vec4<f32>(0.0));
+          return;
+        }
+
+        let outerRoot = sqrt(outerH);
+        var tStart = max(0.0, -b - outerRoot);
+        var tEnd = -b + outerRoot;
+        let innerH = b * b - (dot(V.camPos, V.camPos) - innerRadius * innerRadius);
+        if (innerH > 0.0) {
+          let innerNear = -b - sqrt(innerH);
+          if (innerNear > tStart) { tEnd = min(tEnd, innerNear); }
+        }
+        if (tEnd <= tStart) {
+          textureStore(outTex, vec2<i32>(gid.xy), frame.layerIndex, vec4<f32>(0.0));
+          return;
+        }
+
+        let segment = tEnd - tStart;
+        let stepLength = segment / 8.0;
+        var alpha = 0.0;
+        var color = vec3<f32>(0.0);
+        for (var i = 0u; i < 8u; i = i + 1u) {
+          let t = tStart + (f32(i) + 0.5) * stepLength;
+          let p = V.camPos + rayDir * t;
+          let height01 = clamp((length(p) - innerRadius) / max(outerRadius - innerRadius, 0.001), 0.0, 1.0);
+          let density = bootstrapDensity(p, height01);
+          let stepAlpha = 1.0 - exp(-density * stepLength * 1.10);
+          let normal = normalize(p);
+          let sun = clamp(dot(normal, normalize(L.sunDir)) * 0.5 + 0.5, 0.0, 1.0);
+          let sampleColor = mix(C.shadowLightColor, C.frontLightColor * C.sunColor, 0.24 + sun * 0.76);
+          color = color + (1.0 - alpha) * sampleColor * stepAlpha;
+          alpha = alpha + (1.0 - alpha) * stepAlpha;
+          if (alpha > 0.96) { break; }
+        }
+        textureStore(outTex, vec2<i32>(gid.xy), frame.layerIndex, vec4<f32>(color, clamp(alpha, 0.0, 1.0)));
+      }
+    `;
+    const module = this.device.createShaderModule({ code });
+    const descriptor = {
+      layout: this._computePipelineLayout,
+      compute: { module, entryPoint: "main" },
+    };
+    return { descriptor, format: fmt };
+  }
+
+  _ensureBootstrapComputePipeline(format = this.outFormat) {
+    const fmt = format || this.outFormat;
+    const cache = getCloudGpuCache(this.device).bootstrapComputeByFormat;
+    const cached = cache.get(fmt);
+    if (cached) return cached;
+    const { descriptor } = this._createBootstrapComputePipelineSetup(fmt);
+    const pipeline = this.device.createComputePipeline(descriptor);
+    cache.set(fmt, pipeline);
+    return pipeline;
+  }
+
+  async ensureBootstrapComputePipelineReadyAsync(format = this.outFormat) {
+    const fmt = format || this.outFormat;
+    const deviceCache = getCloudGpuCache(this.device);
+    const cached = deviceCache.bootstrapComputeByFormat.get(fmt);
+    if (cached) return cached;
+    const existing = deviceCache.bootstrapComputePromises.get(fmt);
+    if (existing) return existing;
+    const { descriptor } = this._createBootstrapComputePipelineSetup(fmt);
+    const pending = (async () => {
+      const pipeline = typeof this.device.createComputePipelineAsync === "function"
+        ? await this.device.createComputePipelineAsync(descriptor)
+        : this.device.createComputePipeline(descriptor);
+      const installed = deviceCache.bootstrapComputeByFormat.get(fmt);
+      if (installed) return installed;
+      deviceCache.bootstrapComputeByFormat.set(fmt, pipeline);
+      return pipeline;
+    })();
+    deviceCache.bootstrapComputePromises.set(fmt, pending);
+    try {
+      return await pending;
+    } finally {
+      if (deviceCache.bootstrapComputePromises.get(fmt) === pending) {
+        deviceCache.bootstrapComputePromises.delete(fmt);
+      }
+    }
+  }
+
+  encodeBootstrapPreviewPass(encoder) {
+    if (!encoder || !this.outView) return null;
+    this._writeCommonComputeUniforms();
+    this._makeBindGroups();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this._ensureBootstrapComputePipeline(this.outFormat));
+    pass.setBindGroup(0, this._currentBg0);
+    pass.setBindGroup(1, this._currentBg1);
+    pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8), Math.max(1, this.layers));
+    pass.end();
+    return { width: this.width, height: this.height, layers: this.layers };
+  }
+
+  async dispatchBootstrapPreview({ wait = false } = {}) {
+    const encoder = this.device.createCommandEncoder();
+    const encoded = this.encodeBootstrapPreviewPass(encoder);
+    if (!encoded) throw new Error("dispatchBootstrapPreview: createOutputTexture/setOutputView first.");
+    this.queue.submit([encoder.finish()]);
+    if (wait && typeof this.queue.onSubmittedWorkDone === "function") {
+      await this.queue.onSubmittedWorkDone();
+    }
+    this._lastHadWork = true;
+    return this.outView;
+  }
+
+  _createBootstrapRenderPipelineSetup(format = "bgra8unorm") {
+    const code = `
+      @group(0) @binding(0) var samp: sampler;
+      @group(0) @binding(1) var tex: texture_2d_array<f32>;
+
+      struct VSOut {
+        @builtin(position) position: vec4<f32>,
+        @location(0) uv: vec2<f32>,
+      };
+
+      @vertex
+      fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
+        var positions = array<vec2<f32>, 6>(
+          vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
+          vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)
+        );
+        var uvs = array<vec2<f32>, 6>(
+          vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 0.0),
+          vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(1.0, 0.0)
+        );
+        var output: VSOut;
+        output.position = vec4<f32>(positions[vertexIndex], 0.0, 1.0);
+        output.uv = uvs[vertexIndex];
+        return output;
+      }
+
+      @fragment
+      fn fs_main(input: VSOut) -> @location(0) vec4<f32> {
+        let cloud = textureSampleLevel(tex, samp, input.uv, 0, 0.0);
+        let alpha = clamp(cloud.a, 0.0, 1.0);
+        let mapped = clamp(
+          vec3<f32>(1.0) - exp(-max(cloud.rgb, vec3<f32>(0.0)) * 1.22),
+          vec3<f32>(0.0),
+          vec3<f32>(1.0)
+        );
+        return vec4<f32>(mapped * alpha, alpha);
+      }
+    `;
+    const module = this.device.createShaderModule({ code });
+    const bgl = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d-array" } },
+      ],
+    });
+    const descriptor = {
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+      vertex: { module, entryPoint: "vs_main" },
+      fragment: {
+        module,
+        entryPoint: "fs_main",
+        targets: [{
+          format,
+          blend: {
+            color: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+          },
+        }],
+      },
+      primitive: { topology: "triangle-list" },
+    };
+    const sampler = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
+    return { descriptor, bgl, sampler, format };
+  }
+
+  _ensureBootstrapRenderPipeline(format = "bgra8unorm") {
+    const deviceCache = getCloudGpuCache(this.device);
+    const cached = deviceCache.bootstrapPreviewByFormat.get(format);
+    if (cached) return cached;
+    const setup = this._createBootstrapRenderPipelineSetup(format);
+    const pipeline = this.device.createRenderPipeline(setup.descriptor);
+    const result = { pipeline, bgl: setup.bgl, sampler: setup.sampler, format };
+    deviceCache.bootstrapPreviewByFormat.set(format, result);
+    return result;
+  }
+
+  async ensureBootstrapRenderPipelineReadyAsync(format = "bgra8unorm") {
+    const deviceCache = getCloudGpuCache(this.device);
+    const cached = deviceCache.bootstrapPreviewByFormat.get(format);
+    if (cached) return cached;
+    const existing = deviceCache.bootstrapPreviewPromises.get(format);
+    if (existing) return existing;
+    const setup = this._createBootstrapRenderPipelineSetup(format);
+    const pending = (async () => {
+      const pipeline = typeof this.device.createRenderPipelineAsync === "function"
+        ? await this.device.createRenderPipelineAsync(setup.descriptor)
+        : this.device.createRenderPipeline(setup.descriptor);
+      const installed = deviceCache.bootstrapPreviewByFormat.get(format);
+      if (installed) return installed;
+      const result = { pipeline, bgl: setup.bgl, sampler: setup.sampler, format };
+      deviceCache.bootstrapPreviewByFormat.set(format, result);
+      return result;
+    })();
+    deviceCache.bootstrapPreviewPromises.set(format, pending);
+    try {
+      return await pending;
+    } finally {
+      if (deviceCache.bootstrapPreviewPromises.get(format) === pending) {
+        deviceCache.bootstrapPreviewPromises.delete(format);
+      }
+    }
+  }
+
+  encodeBootstrapRenderPass(encoder, targetView, {
+    format = "bgra8unorm",
+    clearValue = { r: 0.5, g: 0.6, b: 0.8, a: 1.0 },
+  } = {}) {
+    if (!encoder || !targetView || !this.outView) return false;
+    const { pipeline, bgl, sampler } = this._ensureBootstrapRenderPipeline(format);
+    let bindGroup = this._bootstrapRenderBgCache.get(this.outView);
+    if (!bindGroup) {
+      bindGroup = this.device.createBindGroup({
+        layout: bgl,
+        entries: [
+          { binding: 0, resource: sampler },
+          { binding: 1, resource: this.outView },
+        ],
+      });
+      this._bootstrapRenderBgCache.set(this.outView, bindGroup);
+    }
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: targetView,
+        loadOp: "clear",
+        clearValue,
+        storeOp: "store",
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6, 1, 0, 0);
+    pass.end();
+    return true;
   }
 
   _destroyDummyHistory() {
@@ -647,7 +1579,28 @@ export class CloudComputeBuilder {
     const d = this.device;
     const deviceCache = getCloudGpuCache(d);
     if (!deviceCache.module) {
-      deviceCache.module = d.createShaderModule({ code: cloudWGSL });
+      const started = performance.now();
+      const code = commonWGSL + "\n" + scratchWGSL + "\n" + layerWGSL + "\n" + resolveWGSL + "\n" + INLINE_LAYER_OUTPUT;
+      deviceCache.module = d.createShaderModule({ label: "cloud-raymarch", code });
+      const timing = deviceCache.moduleTiming = {
+        sourceBytes: code.length,
+        createMs: performance.now() - started,
+        validationMs: null,
+        status: "created",
+      };
+      if (typeof deviceCache.module.getCompilationInfo === "function") {
+        const validationStarted = performance.now();
+        deviceCache.module.getCompilationInfo().then(info => {
+          timing.validationMs = performance.now() - validationStarted;
+          const errors = info.messages.filter(message => message.type === "error");
+          timing.status = errors.length ? "error" : "validated";
+          if (errors.length) timing.error = errors.map(message => message.message).join("\n");
+        }).catch(error => {
+          timing.validationMs = performance.now() - validationStarted;
+          timing.status = "error";
+          timing.error = String(error?.message || error);
+        });
+      }
     }
     this.module = deviceCache.module;
 
@@ -787,7 +1740,9 @@ export class CloudComputeBuilder {
     this._dummy2DDepthView = this._dummy2DDepth.createView({ dimension: "2d" });
     this.queue.writeTexture(
       { texture: this._dummy2DMotion },
-      new Uint8Array([128]),
+      // Motion is decoded as a direct pixel/UV offset, not a signed UNORM.
+      // 128 meant a half-pixel horizontal shift on every stationary frame.
+      new Uint8Array([0]),
       { bytesPerRow: 1 },
       { width: 1, height: 1, depthOrArrayLayers: 1 },
     );
@@ -873,6 +1828,7 @@ export class CloudComputeBuilder {
 
   // -------------------- UBO setters --------------------
   setOptions(opts = {}) {
+    if (typeof opts.planetStyleMode === 'boolean') this._planetStyleMode = opts.planetStyleMode;
     const s = this._state.options;
 
     if (_has(opts, "useCustomPos")) s.useCustomPos = !!opts.useCustomPos;
@@ -1352,6 +2308,7 @@ export class CloudComputeBuilder {
       viewExtraA = 0.0,
       viewExtraB = 0.0,
       viewExtraC = 0.0,
+      aircraft = {},
     } = opts;
 
     const dv = this._dvView;
@@ -1385,15 +2342,15 @@ export class CloudComputeBuilder {
       camPos[0],
       camPos[1],
       camPos[2],
-      0,
+      aircraft.enabled ? 1 : 0,
       r[0],
       r[1],
       r[2],
-      0,
+      aircraft.bank || 0,
       u[0],
       u[1],
       u[2],
-      0,
+      aircraft.pitch || 0,
       f[0],
       f[1],
       f[2],
@@ -1410,10 +2367,10 @@ export class CloudComputeBuilder {
       viewExtraA,
       viewExtraB,
       viewExtraC,
-      0,
-      0,
-      0,
-      0,
+      aircraft.position?.[0] ?? camPos[0]+f[0]*2.4-u[0]*.55,
+      aircraft.position?.[1] ?? camPos[1]+f[1]*2.4-u[1]*.55,
+      aircraft.position?.[2] ?? camPos[2]+f[2]*2.4-u[2]*.55,
+      aircraft.yaw || 0,
     ];
 
     for (let i = 0; i < floats.length; i++)
@@ -1434,7 +2391,7 @@ export class CloudComputeBuilder {
     putI(0, s.maxSteps);
     putI(4, s.sunSteps);
     putI(8, s.sunStride);
-    putI(12, 0);
+    putI(12, s.lightingFinish || 0);
 
     putF(16, s.minStep);
     putF(20, s.maxStep);
@@ -1505,8 +2462,10 @@ export class CloudComputeBuilder {
     putF(232, s.sparsity ?? 0.42);
     putF(236, s.definition ?? 0.62);
 
-    for (let i = 240; i < this._abTuning.byteLength; i += 4)
-      dv.setUint32(i, 0, true);
+    putF(240, Math.max(0, Math.min(7, s.formType ?? 0)));
+    putF(244, Math.max(0.75, s.puffScale ?? 3.6));
+    putF(248, Math.max(0, Math.min(1, s.aoStrength ?? 0)));
+    putF(252, Math.max(0, Math.min(0.9, s.towerHeightVariation ?? 0.35)));
 
     this._writeIfChanged("tuning", this.tuningBuffer, this._abTuning);
   }
@@ -1611,7 +2570,70 @@ export class CloudComputeBuilder {
   }
 
   // -------------------- outputs --------------------
+  // Records the logical full-resolution extent without requiring a matching
+  // allocation. Direct coarse presentation uses this to avoid an unused target.
+  setOutputExtent(
+    width,
+    height,
+    layers = 1,
+    format = "rgba16float",
+    { releaseOutput = false } = {},
+  ) {
+    const nextWidth = Math.max(1, width | 0);
+    const nextHeight = Math.max(1, height | 0);
+    const nextLayers = Math.max(1, layers | 0);
+    const extentChanged =
+      this.width !== nextWidth ||
+      this.height !== nextHeight ||
+      this.layers !== nextLayers ||
+      this.outFormat !== format;
+
+    this._ensureComputeFormat(format);
+
+    if ((extentChanged || releaseOutput) && this.outTexture) {
+      const oldOutTex = this.outTexture;
+      this.outTexture = null;
+      this.outView = null;
+      try {
+        this._retireTexture(oldOutTex);
+      } catch (_) {}
+    }
+
+    this.width = nextWidth;
+    this.height = nextHeight;
+    this.layers = nextLayers;
+
+    this._reprojFullW = nextWidth;
+    this._reprojFullH = nextHeight;
+    this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
+    this._dvReproj.setUint32(36, this._reprojFullH >>> 0, true);
+    this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
+
+    this.setFrame({
+      fullWidth: nextWidth,
+      fullHeight: nextHeight,
+      tileWidth: nextWidth,
+      tileHeight: nextHeight,
+      originX: 0,
+      originY: 0,
+      originZ: 0,
+      layerIndex: 0,
+      originXf: 0.0,
+      originYf: 0.0,
+    });
+
+    this._renderSourceView = null;
+    this._bg0Dirty = true;
+    this._bg1Dirty = true;
+    this._renderBgCache = new WeakMap();
+    this._renderBundleCache = new WeakMap();
+    this._lastHadWork = false;
+
+    return this.outView;
+  }
+
   createOutputTexture(width, height, layers = 1, format = "rgba16float") {
+    const previousFormat = this.outFormat;
     this._ensureComputeFormat(format);
 
     if (
@@ -1619,7 +2641,7 @@ export class CloudComputeBuilder {
       this.width === width &&
       this.height === height &&
       this.layers === layers &&
-      this.outFormat === format
+      previousFormat === format
     ) {
       return this.outView;
     }
@@ -1635,8 +2657,10 @@ export class CloudComputeBuilder {
       } catch (_) {}
     }
 
+    this.setOutputExtent(width, height, layers, format);
+
     this.outTexture = this.device.createTexture({
-      size: [width, height, layers],
+      size: [this.width, this.height, this.layers],
       format: this.outFormat,
       usage:
         GPUTextureUsage.STORAGE_BINDING |
@@ -1647,37 +2671,8 @@ export class CloudComputeBuilder {
 
     this.outView = this.outTexture.createView({
       dimension: "2d-array",
-      arrayLayerCount: layers,
+      arrayLayerCount: this.layers,
     });
-
-    this.width = width;
-    this.height = height;
-    this.layers = layers;
-
-    this._reprojFullW = width;
-    this._reprojFullH = height;
-    this._dvReproj.setUint32(32, this._reprojFullW >>> 0, true);
-    this._dvReproj.setUint32(36, this._reprojFullH >>> 0, true);
-    this._writeIfChanged("reproj", this.reprojBuffer, this._abReproj);
-
-    this.setFrame({
-      fullWidth: width,
-      fullHeight: height,
-      tileWidth: width,
-      tileHeight: height,
-      originX: 0,
-      originY: 0,
-      originZ: 0,
-      layerIndex: 0,
-      originXf: 0.0,
-      originYf: 0.0,
-    });
-
-    this._bg0Dirty = true;
-    this._bg1Dirty = true;
-    this._renderBgCache = new WeakMap();
-    this._renderBundleCache = new WeakMap();
-    this._lastHadWork = false;
 
     return this.outView;
   }
@@ -2094,15 +3089,9 @@ export class CloudComputeBuilder {
     this._makeBindGroups();
 
     const enc = this.device.createCommandEncoder();
-    const pipeline = this.ensureComputePipelineReady();
     for (let layer = 0; layer < this.layers; ++layer) {
       this.setLayerIndex(layer);
-      const pass = enc.beginComputePass();
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, this._currentBg0);
-      pass.setBindGroup(1, this._currentBg1);
-      pass.dispatchWorkgroups(this._wgX, this._wgY, 1);
-      pass.end();
+      this._encodeCurrentComputePass(enc);
     }
     this.queue.submit([enc.finish()]);
     if (wait && typeof this.queue.onSubmittedWorkDone === "function")
@@ -2311,20 +3300,36 @@ export class CloudComputeBuilder {
       fraction: compactShape ? Math.min(1, compactShape.updatedPixels / fullPixels) : 1,
       tile: compactShape ? compactShape.tile : 1,
     };
+    const pipeline = this.ensureComputePipelineReady();
+    const stageBindGroup = (this._computePipelineKey & 96) ? this._getFlatStageBindGroup() : null;
+    const timings = [];
     const pass = enc.beginComputePass();
-    pass.setPipeline(this.ensureComputePipelineReady());
+    if (this._computePipelineKey & 64) this._encodeFlatFields(pass, timings);
+    const rayStarted = performance.now();
+    pass.setPipeline(pipeline);
     pass.setBindGroup(0, this._currentBg0);
     pass.setBindGroup(1, this._currentBg1);
+    const staged = !!(this._computePipelineKey & 32);
+    if (stageBindGroup) pass.setBindGroup(2, stageBindGroup);
     pass.dispatchWorkgroups(compactShape ? compactShape.wgX : this._wgX, compactShape ? compactShape.wgY : this._wgY, 1);
+    timings.push({ stage: "cloud-raymarch", encodeMs: performance.now() - rayStarted, dispatched: true });
+    if (staged) {
+      const resolveStarted = performance.now();
+      pass.setPipeline(this._ensureFlatStagePipeline("resolveCloudFlat"));
+      pass.dispatchWorkgroups(compactShape ? compactShape.wgX : this._wgX, compactShape ? compactShape.wgY : this._wgY, 1);
+      timings.push({ stage: "cloud-temporal-resolve", encodeMs: performance.now() - resolveStarted, dispatched: true });
+    }
     pass.end();
+    this._lastStageTimings = timings;
   }
 
   encodeDispatchPasses(enc, { coarseFactor = 1, reconstructAtPresentation = false } = {}) {
     if (!enc) throw new Error("encodeDispatchPasses: command encoder required.");
-    if (!this.outView)
+    const cf = Math.max(1, coarseFactor | 0);
+    const directCoarse = cf >= 2 && !!reconstructAtPresentation;
+    if (!this.outView && !directCoarse)
       throw new Error("encodeDispatchPasses: createOutputTexture/setOutputView first.");
 
-    const cf = Math.max(1, coarseFactor | 0);
     this._renderSourceView = this.outView;
     if (cf < 2) {
       const layer = this._dvFrame.getInt32(36, true) | 0;
@@ -2341,7 +3346,7 @@ export class CloudComputeBuilder {
         originYf: 0.0,
       });
     }
-    if (cf >= 2 && this.outTexture) {
+    if (cf >= 2 && (this.outTexture || directCoarse)) {
       const cW = Math.max(1, Math.ceil(this.width / cf));
       const cH = Math.max(1, Math.ceil(this.height / cf));
       this._ensureCoarseTexture(cW, cH, this.layers);
@@ -2413,6 +3418,7 @@ export class CloudComputeBuilder {
         directFullResReconstruction: !!reconstructAtPresentation,
         previewView: this._renderSourceView,
         interleaveStats: this._lastInterleaveStats,
+        stageTimings: this._lastStageTimings,
         restoreAfterSubmit: () => {
           this._bg0Dirty = true;
         },
@@ -2425,6 +3431,7 @@ export class CloudComputeBuilder {
       coarseFactor: 1,
       restoreAfterSubmit: null,
       interleaveStats: this._lastInterleaveStats,
+      stageTimings: this._lastStageTimings,
     };
   }
 
@@ -2662,16 +3669,12 @@ export class CloudComputeBuilder {
   }
 
   // -------------------- preview render --------------------
-  _ensureRenderPipeline(format = "bgra8unorm") {
-    if (this._render && this._render.format === format) return this._render;
+  _createRenderPipelineSetup(format = "bgra8unorm") {
     const deviceCache = getCloudGpuCache(this.device);
-    const cachedRender = deviceCache.previewByFormat.get(format);
-    if (cachedRender) {
-      this._render = cachedRender;
-      return this._render;
+    if (!deviceCache.previewModule) {
+      deviceCache.previewModule = this.device.createShaderModule({ code: previewWGSL + '\n' + aircraftWGSL });
     }
 
-    const mod = this.device.createShaderModule({ code: previewWGSL });
     const bgl = this.device.createBindGroupLayout({
       entries: [
         {
@@ -2691,12 +3694,12 @@ export class CloudComputeBuilder {
         },
       ],
     });
-    const pipe = this.device.createRenderPipeline({
+    const descriptor = {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
-      vertex: { module: mod, entryPoint: "vs_main" },
-      fragment: { module: mod, entryPoint: "fs_main", targets: [{ format }] },
+      vertex: { module: deviceCache.previewModule, entryPoint: "vs_main" },
+      fragment: { module: deviceCache.previewModule, entryPoint: "fs_main", targets: [{ format }] },
       primitive: { topology: "triangle-list" },
-    });
+    };
     const samp = this.device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
@@ -2704,9 +3707,63 @@ export class CloudComputeBuilder {
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });
+    return { descriptor, bgl, samp };
+  }
+
+  _ensureRenderPipeline(format = "bgra8unorm") {
+    if (this._render && this._render.format === format) return this._render;
+    const deviceCache = getCloudGpuCache(this.device);
+    const cachedRender = deviceCache.previewByFormat.get(format);
+    if (cachedRender) {
+      this._render = cachedRender;
+      return this._render;
+    }
+
+    const { descriptor, bgl, samp } = this._createRenderPipelineSetup(format);
+    const pipe = this.device.createRenderPipeline(descriptor);
     deviceCache.previewByFormat.set(format, { pipe, bgl, samp, format });
     this._render = deviceCache.previewByFormat.get(format);
     return this._render;
+  }
+
+  async ensureRenderPipelineReadyAsync(format = "bgra8unorm") {
+    if (this._render && this._render.format === format) return this._render;
+    const renderAtStart = this._render;
+    const deviceCache = getCloudGpuCache(this.device);
+    const cachedRender = deviceCache.previewByFormat.get(format);
+    if (cachedRender) {
+      this._render = cachedRender;
+      return this._render;
+    }
+
+    let pending = deviceCache.previewPromises.get(format);
+    if (!pending) {
+      const { descriptor, bgl, samp } = this._createRenderPipelineSetup(format);
+      const create = async () => {
+        const pipe = typeof this.device.createRenderPipelineAsync === "function"
+          ? await this.device.createRenderPipelineAsync(descriptor)
+          : this.device.createRenderPipeline(descriptor);
+        const installed = deviceCache.previewByFormat.get(format);
+        if (installed) return installed;
+        const render = { pipe, bgl, samp, format };
+        deviceCache.previewByFormat.set(format, render);
+        return render;
+      };
+      pending = create();
+      deviceCache.previewPromises.set(format, pending);
+    }
+
+    try {
+      const render = await pending;
+      if (this._render === renderAtStart || this._render?.format === format) {
+        this._render = render;
+      }
+      return render;
+    } finally {
+      if (deviceCache.previewPromises.get(format) === pending) {
+        deviceCache.previewPromises.delete(format);
+      }
+    }
   }
 
   _getRenderSourceView() {
@@ -2856,25 +3913,37 @@ export class CloudComputeBuilder {
     dv.setUint32(0, layerIndex, true);
     dv.setUint32(4, compositeQuality, true);
     dv.setFloat32(8, styleShadowDarkness, true);
-    dv.setFloat32(12, 0.0, true);
+    // The field raymarch already shades its volume. Keep the legacy finishing
+    // pass for layer/spherical clouds, rather than painting over these normals.
+    dv.setFloat32(12, (this._currentComputeVariantKey() & 64) !== 0 ? 1.0 : 0.0, true);
     writeVec3Padded(dv, 16, camPos);
+    dv.setFloat32(28, Math.max(0,Math.min(1,opts.nightAmount ?? 0)), true);
     writeVec3Padded(dv, 32, right);
+    dv.setFloat32(44, opts.aircraft?.enabled ? 1 : 0, true);
     writeVec3Padded(dv, 48, up);
+    dv.setFloat32(60, opts.aircraft?.bank || 0, true);
     writeVec3Padded(dv, 64, fwd);
+    dv.setFloat32(76, opts.aircraft?.pitch || 0, true);
     dv.setFloat32(80, fovYRad, true);
     dv.setFloat32(84, aspect, true);
     dv.setFloat32(88, exposure, true);
     dv.setFloat32(92, sunBloom, true);
     writeVec3Padded(dv, 96, sunDir);
+    dv.setFloat32(108, Math.max(0,Math.min(1,opts.celestialVisibility ?? 1)), true);
     writeVec3Padded(dv, 112, skyColor);
+    dv.setFloat32(124, opts.skyCycle ? 1 : 0, true);
     dv.setUint32(128, gradeStyle, true);
     dv.setFloat32(132, styleShadowStrength, true);
     dv.setFloat32(136, styleColorLift, true);
     dv.setFloat32(140, styleSaturation, true);
     writeVec3Padded(dv, 144, sunColorTint);
+    const finish = !opts.cloudShading || opts.cloudShading === 'auto' ? intendedCloudShading(gradeStyle) : opts.cloudShading;
+    dv.setFloat32(156, finish === 'soft' ? 1 : finish === 'sculpted' ? 2 : 0, true);
     writeVec3Padded(dv, 160, lightTint);
     writeVec3Padded(dv, 176, shadowTint);
     writeVec3Padded(dv, 192, edgeTint);
+    // Reuse vec3 padding; the preview uniform remains 304 bytes.
+    dv.setFloat32(204, opts.styleSkyOverride ? 1 : 0, true);
     dv.setFloat32(208, styleRimStrength, true);
     dv.setFloat32(212, styleSunBleed, true);
     dv.setFloat32(216, styleShadowEdge, true);
@@ -2893,6 +3962,11 @@ export class CloudComputeBuilder {
     dv.setFloat32(268, outputHeight, true);
     writeVec3Padded(dv, 272, boxCenter);
     writeVec3Padded(dv, 288, boxHalf);
+    const aircraftPosition=opts.aircraft?.position || camPos.map((v,i)=>v+fwd[i]*2.4-up[i]*.55);
+    dv.setFloat32(172, aircraftPosition[0], true);
+    dv.setFloat32(188, aircraftPosition[1], true);
+    dv.setFloat32(284, aircraftPosition[2], true);
+    dv.setFloat32(300, opts.aircraft?.yaw || 0, true);
 
     this._writeIfChanged("render", this.renderParams, this._abRender);
   }
