@@ -1,6 +1,8 @@
 
 # WebGPU Noise Playground
 
+### [Demo](http://webgpunoise.netlify.app/)
+
 GPU driven noise toolkit for 2D tiled textures and true 3D volumes, plus a small UI for inspecting stacks of noise modes and a toroidal 4D slice viewer.
 
 This repo has two main parts:
