@@ -4,7 +4,7 @@ import { NoiseComputeBuilder } from "./noiseCompute.js";
 
 document.body.insertAdjacentHTML("afterbegin", html);
 
-const UI_EXCLUDE_TRAILING_ENTRY_POINTS = 6;
+const UI_EXCLUDE_TRAILING_ENTRY_POINTS = 9;
 
 const LABEL_OVERRIDES_BY_ENTRY = {
   computeCellular: "CellularPattern",
@@ -141,7 +141,7 @@ function getSortedOverrideBits() {
   for (let i = 0; i < ENTRY_POINTS.length; i++) {
     const ep = ENTRY_POINTS[i];
     if (typeof ep !== "string" || !ep) continue;
-    if (ep === "clearTexture") continue;
+    if (ep === "clearTexture" || ep.startsWith("computeStudioSphere")) continue;
     out.push(i);
   }
   return out;

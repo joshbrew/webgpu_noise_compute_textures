@@ -13,6 +13,13 @@ struct NoiseComputeOptions {
   heightScale : f32,
   sphereOffset : f32,
   sphereOffset2 : f32,
+  sphereBlend : f32,
+  sphereBlendPhase : f32,
+  sphereRangeWeight : f32,
+  spherePolarFade : f32,
+  sphereLandscape : u32,
+  sphereLandscapeStrength : f32,
+  sphereFeatureDensity : f32,
 };
 @group(0) @binding(0) var<uniform> options : NoiseComputeOptions;
 
@@ -185,30 +192,25 @@ fn fetchPlanetSpherePos(fx: i32, fy: i32) -> vec3<f32> {
   let theta = f32(lat) * PI / f32(maxLat);
   let phi = f32(lon) * TWO_PI / f32(segments);
 
-  let sinTheta = sin(theta);
-  let cosTheta = cos(theta);
-  let sinPhi = sin(phi);
-  let cosPhi = cos(phi);
+  let dir=vec3<f32>(sin(theta)*cos(phi),cos(theta),sin(theta)*sin(phi));
+  return studio_sphere_position(dir,theta,phi);
+}
 
-  // Match the Babylon / spherical cloud convention: Y is the polar axis and
-  // longitude runs around X/Z. This keeps the baked spherical weather field in
-  // parity with sphereUVFromWorld(), so the cloud weather map is actually baked
-  // onto the same manifold it is sampled from at render time.
-  let x = sinTheta * cosPhi;
-  let y = cosTheta;
-  let z = sinTheta * sinPhi;
-
-  // Fade the procedural offset by latitude only so it stays symmetric around the
-  // seam and vanishes cleanly at the poles.
-  let equatorScale = sinTheta;
+fn studio_sphere_position(dir:vec3<f32>,theta:f32,phi:f32)->vec3<f32>{
+  let sinTheta=length(dir.xz);
+  // The first longitude harmonic is already a smooth tangent displacement.
+  // Only the second harmonic needs to disappear faster than polar radius.
   let offset = options.sphereOffset;
   let offset2 = options.sphereOffset2;
-
-  return vec3<f32>(
-    x + 2.0 + equatorScale * (offset * sin(phi + theta) + offset2 * cos(2.0 * phi)),
-    y + 2.0 + equatorScale * (offset * cos(theta + phi) + offset2 * sin(2.0 * theta)),
-    z + 2.0 + equatorScale * (offset * sin(2.0 * phi + theta) + offset2 * cos(2.0 * theta + phi))
-  );
+  let second = vec2<f32>(offset2 * cos(2.0 * phi),offset * sin(2.0 * phi + theta));
+  var warp=vec3<f32>(offset * sin(phi + theta) + second.x,
+    offset * cos(theta + phi) + offset2 * sin(2.0 * theta),
+    second.y + offset2 * cos(2.0 * theta + phi));
+  if(options.spherePolarFade>0.0){
+    let fade=1.0-smoothstep(0.0,options.spherePolarFade,sinTheta);
+    warp-=fade*vec3<f32>(second.x,0.0,second.y);
+  }
+  return dir+2.0+sinTheta*warp;
 }
 
 
@@ -316,7 +318,10 @@ fn writeChannel(fx:i32, fy:i32, fz:i32, v0:f32, channel:u32, overwrite:u32) {
     if (fx < 0 || fy < 0 || fx >= i32(frame.fullWidth) || fy >= i32(frame.fullHeight)) { return; }
   }
 
-  let v = v0 * params.scalar + params.transform;
+  var v = v0 * params.scalar + params.transform;
+  if(options.useCustomPos==2u && options.sphereBlend>0.0){
+    v*=studio_layer_mask(fetchPos(fx,fy,fz));
+  }
   let needsAccum = (overwrite == 0u);
   let writesAll = (channel == 0u);
   let skipRead = (!needsAccum) && (writesAll || channel == 5u);
@@ -333,6 +338,13 @@ fn writeChannel(fx:i32, fy:i32, fz:i32, v0:f32, channel:u32, overwrite:u32) {
   else if (channel == 6u) { let p = fetchPos(fx, fy, fz); let h = select(v + inCol.w, v, overwrite == 1u); outCol = vec4<f32>(p.x, p.y, h, inCol.w); }
 
   storeRGBA(fx, fy, fz, outCol);
+}
+
+fn studio_layer_mask(p:vec3<f32>)->f32{
+  let phase=options.sphereBlendPhase;
+  let province=simplex3D(p*3.1+vec3<f32>(phase,-.51*phase,1.31*phase));
+  let mask=mix(.36,1.0,smoothstep(-.55,.32,province));
+  return mix(1.0,mask,clamp(options.sphereBlend,0.0,1.0));
 }
 
 // ───────── math / noise bits ─────────
@@ -656,7 +668,7 @@ fn worley3D(p : vec3<f32>) -> f32 {
       }
     }
     return sqrt(minD);
-  
+
 }
 
 
@@ -1148,11 +1160,6 @@ fn voro_eval3D_metrics(m: Voro3DMetrics, params: NoiseParams, freqOrScale: f32) 
     max(params.threshold, 0.0),
     freqOrScale
   );
-}
-
-fn voro_legacy_cell_or_eval3D(m: Voro3DMetrics, params: NoiseParams, freqOrScale: f32, legacyCellValue: f32) -> f32 {
-  let modeValue = voro_eval3D_metrics(m, params, freqOrScale);
-  return select(modeValue, legacyCellValue, params.voroMode == VORO_CELL);
 }
 
 
@@ -2820,7 +2827,7 @@ fn generateCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {
   return 2.0 * sum - 1.0;
 }
 
-fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 { 
+fn generateAntiCellular(pos: vec3<f32>, params: NoiseParams) -> f32 {
   return -generateCellular(pos,params);
 }
 
@@ -2862,7 +2869,7 @@ fn generateWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {
   return sum - 1.0;
 }
 
-fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 { 
+fn generateAntiWorley(pos: vec3<f32>, params: NoiseParams) -> f32 {
   return -generateWorley(pos,params);
 }
 
@@ -3399,10 +3406,8 @@ fn voronoiCircleGradient(pos: vec3<f32>, params: NoiseParams) -> f32 {
     let centerGrad = 1.0 - min(minDist, 1.0);
     let edgeDist = max(secondDist - minDist, 0.0);
     let edgeGrad = select(1.0, 0.0, edgeDist < params.threshold);
-    let legacyCellValue = centerGrad * edgeGrad;
-
-    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
-    return select(modeValue * centerGrad, legacyCellValue, params.voroMode == VORO_CELL);
+    let modeValue = voro_eval3D_metrics(m, params, max(params.freq, 1e-6));
+    return select(modeValue, edgeGrad, params.voroMode == VORO_CELL) * centerGrad;
 }
 
 // Octaved generator matching your JS .generateNoise()
@@ -3466,10 +3471,8 @@ fn voronoiCircleGradient2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {
     let m = voro3D_metrics(pos);
     let centerDist = sqrt(max(m.f1Sq, 0.0));
     let gradient = sin(centerDist * PI);
-    let legacyCellValue = m.cellVal * gradient;
-
-    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
-    return select(modeValue * gradient, legacyCellValue, params.voroMode == VORO_CELL);
+    let modeValue = voro_eval3D_metrics(m, params, max(params.freq, 1e-6));
+    return select(modeValue, m.cellVal, params.voroMode == VORO_CELL) * gradient;
 }
 
 fn generateVoronoiCircle2(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -3550,10 +3553,8 @@ fn voronoiRipple3DRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
     let edgeDist = voro_edge_dist(m.f1Sq, m.f2Sq);
     let ripple = sin(PI + edgeDist * PI * params.rippleFreq + params.time);
     let rippleAmp = (1.0 + ripple) * 0.5;
-    let legacyCellValue = m.cellVal * rippleAmp;
-
-    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
-    return select(modeValue * rippleAmp, legacyCellValue, params.voroMode == VORO_CELL);
+    let modeValue = voro_eval3D_metrics(m, params, max(params.freq, 1e-6));
+    return select(modeValue, m.cellVal, params.voroMode == VORO_CELL) * rippleAmp;
 }
 
 fn generateVoronoiRipple3D(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -3584,10 +3585,8 @@ fn voronoiRipple3D2Raw(pos: vec3<f32>, params: NoiseParams) -> f32 {
     let edgeDist = voro_edge_dist(m.f1Sq, m.f2Sq);
     let ripple = sin(PI + params.zoom * edgeDist * PI * params.rippleFreq + params.time);
     let rippleAmp = (1.0 + ripple) * 0.5;
-    let legacyCellValue = m.cellVal * rippleAmp;
-
-    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
-    return select(modeValue * rippleAmp, legacyCellValue, params.voroMode == VORO_CELL);
+    let modeValue = voro_eval3D_metrics(m, params, max(params.freq, 1e-6));
+    return select(modeValue, m.cellVal, params.voroMode == VORO_CELL) * rippleAmp;
 }
 
 fn generateVoronoiRipple3D2(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -3618,10 +3617,8 @@ fn voronoiCircularRippleRaw(pos: vec3<f32>, params: NoiseParams) -> f32 {
     let minDist = sqrt(max(m.f1Sq, 0.0));
     let ripple = sin(PI + minDist * PI * params.rippleFreq + params.time);
     let rippleAmp = (1.0 + ripple) * 0.5;
-    let legacyCellValue = m.cellVal * rippleAmp;
-
-    let modeValue = voro_legacy_cell_or_eval3D(m, params, max(params.freq, 1e-6), legacyCellValue);
-    return select(modeValue * rippleAmp, legacyCellValue, params.voroMode == VORO_CELL);
+    let modeValue = voro_eval3D_metrics(m, params, max(params.freq, 1e-6));
+    return select(modeValue, m.cellVal, params.voroMode == VORO_CELL) * rippleAmp;
 }
 
 fn generateVoronoiCircularRipple(pos: vec3<f32>, params: NoiseParams) -> f32 {
@@ -4582,6 +4579,797 @@ fn erosionFilter(
   return vec4<f32>(delta, magnitude);
 }
 
+fn studioSphereHeight(x:i32,y:i32,last:i32)->f32 {
+  return loadPrevRGBA((x+last)%last,clamp(y,0,last),0).x;
+}
+
+struct StudioErosionChart { position:vec2<f32>, slope:vec2<f32>, pixelSpan:f32 }
+
+fn studioErosionChart(
+  dir:vec3<f32>,gradient:vec3<f32>,hemisphere:f32,pixelSpan:f32
+)->StudioErosionChart {
+  // Stereographic charts preserve the downhill angle. Their overlap avoids a
+  // longitude seam and keeps the noise cells finite at both poles.
+  let projection=1.0+hemisphere*dir.y;
+  let uv=dir.xz/projection;
+  let inverse=2.0/(1.0+dot(uv,uv));
+  let angular=vec3<f32>(dir.x,hemisphere+dir.y,dir.z);
+  let du=inverse*(vec3<f32>(1,0,0)-uv.x*angular);
+  let dv=inverse*(vec3<f32>(0,0,1)-uv.y*angular);
+  let slope=vec2<f32>(dot(gradient,du),dot(gradient,dv))*.14;
+  let offset=seedOffset3(params.seed).xy;
+  return StudioErosionChart(uv+offset,slope,pixelSpan/projection);
+}
+
+fn studioMountainCut(chart:StudioErosionChart,height:f32,ranges:bool)->f32 {
+  let fade=2.0*smoothstep(.05,select(1.62,1.20,ranges),height)-1.0;
+  var ridge=0.0;
+  let mountain=erosionFilter(
+    chart.position+vec2<f32>(.29,-.44),vec3<f32>(height,chart.slope),fade,
+    select(4.4,5.8,ranges),.48,select(.76,.55,ranges),1.03,1.40,
+    vec4<f32>(select(.10,.035,ranges),0,.10,2.0),vec4<f32>(1.10,1.25,2.80,1.50),
+    vec2<f32>(.70,.88),select(.145,.083,ranges),select(1u,6u,ranges),
+    2.08,.54,.82,.52,chart.pixelSpan,&ridge
+  );
+  if(ranges){
+    // Preserve the fade contribution at crests. Clipping uplift rounds off
+    // the exact divides the lower carrier weight is meant to keep.
+    return mountain.x-.22*max(0.0,-mountain.x);
+  }
+  let incision=smoothstep(.065,.52,-mountain.x);
+  let shoulder=smoothstep(.06,.48,mountain.x);
+  return .10*shoulder-.55*incision;
+}
+
+fn studioGullyCut(chart:StudioErosionChart,height:f32)->f32 {
+  let strength=select(3.05,3.55,params.voroMode==1u);
+  var ridge=0.0;
+  let erosion=erosionFilter(
+    chart.position,vec3<f32>(height,chart.slope),-.17,strength,.48,.83,1.03,1.50,
+    vec4<f32>(.10,0,.10,2.0),vec4<f32>(1.20,1.25,2.80,1.50),
+    vec2<f32>(.72,.72),.076,3u,2.2,.48,.82,.52,chart.pixelSpan,&ridge
+  );
+  // Smaller tributaries start from the coarse pass's eroded slope.
+  let tributaries=erosionFilter(
+    chart.position+vec2<f32>(.57,.31),
+    vec3<f32>(height+erosion.x,chart.slope+.30*erosion.yz),-.10,1.55,.37,.69,.92,1.38,
+    vec4<f32>(.10,0,.10,1.8),vec4<f32>(1.20,1.25,2.80,1.50),
+    vec2<f32>(.66,.68),.041,2u,2.1,.47,.83,.52,chart.pixelSpan,&ridge
+  );
+  return clamp(erosion.x+tributaries.x,-.265,.16);
+}
+
+fn studioVolcanicRelief(dir:vec3<f32>,texel:f32)->vec2<f32> {
+  var relief=0.0;
+  var foundation=0.0;
+  var collapse=0.0;
+  let density=options.sphereFeatureDensity;
+  let vents=u32(clamp(round(12.0*density),5.0,32.0));
+  for(var i=0u;i<vents;i++){
+    let seed=params.seed+i*73856093u;
+    let q=(seedOffset3(seed)-vec3<f32>(17.173,31.947,47.521))/
+      vec3<f32>(131.0,137.0,149.0);
+    let y=2.0*q.x-1.0;
+    let ring=sqrt(max(0.0,1.0-y*y));
+    let phi=TWO_PI*q.y;
+    let center=vec3<f32>(ring*cos(phi),y,ring*sin(phi));
+    let radius=mix(.035,.134,q.z*q.z);
+    let distance2=max(0.0,2.0-2.0*dot(dir,center));
+    let reach=mix(.11,.21,q.z)+.44*radius;
+    let extent=max(radius*1.45,reach+.024);
+    if(distance2*density*density>extent*extent){continue;}
+    let east=vec3<f32>(-sin(phi),0,cos(phi));
+    let north=cross(center,east);
+    let angle=TWO_PI*canyon_bed_random(19,seed);
+    let course=east*cos(angle)+north*sin(angle);
+    let local=density*vec2<f32>(dot(dir,course),dot(dir,cross(center,course)));
+    if(distance2*density*density<radius*radius*1.45*1.45){
+      let shape=vec3<f32>(1.0-q.z,canyon_bed_random(23,seed),canyon_bed_random(37,seed));
+      let profile=local/radius;
+      let roughness=mix(.105,.040,shape.x)*simplex3D(dir*104.0+q*19.0);
+      relief+=volcanic_vent(profile,shape,roughness);
+      // Loose ejecta bury the old relief beneath the crater and upper flank.
+      foundation=max(foundation,(1.0-smoothstep(.38,1.21,length(profile)))*mix(.45,1.0,shape.x));
+    }
+    // Off-axis flank vents and multiple tube directions follow the same
+    // eruptive center. The world seed controls which branches survive.
+    if(canyon_bed_random(5,seed)>.33){
+      let flank=vec2<f32>(local.x*.64+local.y*.77,-local.x*.77+local.y*.64);
+      let offset=radius*vec2<f32>(mix(.81,1.36,q.x),mix(-.34,.48,q.y));
+      let smallRadius=clamp(radius*.45,.023,.044);
+      let vent=(flank-offset)/smallRadius;
+      if(dot(vent,vent)<1.45*1.45){
+        let shape=vec3<f32>(mix(.56,.91,q.y),q.x,q.z);
+        relief+=.62*volcanic_vent(vent,shape,.075*simplex3D(dir*140.0-q*17.0));
+      }
+    }
+    collapse=min(collapse,lava_tube_collapse(local,radius,reach,seed,texel*density));
+    if(q.x>.63){
+      let branch=vec2<f32>(local.x*.78-local.y*.626,local.x*.626+local.y*.78);
+      collapse=min(collapse,lava_tube_collapse(branch,radius*1.33,reach*.78,seed+8009u,texel*density));
+    }
+  }
+  return vec2<f32>(clamp(relief,-.55,1.10)+collapse,foundation);
+}
+
+fn studioVolcanicCraterFields(dir:vec3<f32>,broad:f32,province:f32)->vec2<f32>{
+  let volcanic=smoothstep(.22,.65,province);
+  if(volcanic<=0.0){return vec2<f32>(0.0);}
+  // Jitter vent centers in 3D so the fields wrap over every meridian.
+  let shellRadius=24.0*options.sphereFeatureDensity;
+  let position=dir*shellRadius;
+  let base=vec3<i32>(floor(position));
+  let next=select(vec3<i32>(1),vec3<i32>(-1),fract(position)<vec3<f32>(.5));
+  let upland=smoothstep(-.36,.68,broad);
+  let belt=smoothstep(-.53,.37,simplex3D(dir*11.0*options.sphereFeatureDensity+seedOffset3(params.seed)));
+  let chance=volcanic*(.17+.31*upland+.21*belt);
+  var raised=0.0;
+  var carved=0.0;
+  var foundation=0.0;
+  // The radius and jitter bounds let each axis skip its farther neighbor.
+  for(var i=0u;i<8u;i++){
+    let cell=base+next*vec3<i32>(i32(i&1u),i32((i>>1u)&1u),i32(i>>2u));
+    let key=params.seed^(bitcast<u32>(cell.x)*0x8da6b343u)^
+      (bitcast<u32>(cell.y)*0xd8163841u)^(bitcast<u32>(cell.z)*0xcb1ab31fu);
+    let activation=1.0-smoothstep(chance-.09,chance,canyon_bed_random(2,key));
+    if(activation<=0.0){continue;}
+    let shape=vec3<f32>(canyon_bed_random(5,key),canyon_bed_random(7,key),canyon_bed_random(11,key));
+    let site=vec3<f32>(cell)+.22+.56*shape;
+    let offset=site-position;
+    if(dot(offset,offset)>.49){continue;}
+    let lengthFromCenter=length(site);
+    if(abs(lengthFromCenter-shellRadius)>.24){continue;}
+    let center=site/lengthFromCenter;
+    let width=mix(.19,.40,canyon_bed_random(19,key));
+    let distance2=max(0.0,2.0-2.0*dot(dir,center))*shellRadius*shellRadius;
+    if(distance2>width*width*2.56){continue;}
+    let axis=select(vec3<f32>(0,1,0),vec3<f32>(1,0,0),abs(center.y)>.9);
+    let east=normalize(cross(axis,center));
+    let north=cross(center,east);
+    let angle=TWO_PI*canyon_bed_random(23,key);
+    let facing=east*cos(angle)+north*sin(angle);
+    let point=vec2<f32>(dot(dir,facing),dot(dir,cross(center,facing)))*(shellRadius/width);
+    let roughness=.064*simplex3D(dir*142.0*options.sphereFeatureDensity+shape*17.0);
+    let threshold=mix(.63,.38,upland);
+    let cinder=smoothstep(threshold-.07,threshold+.07,canyon_bed_random(29,key));
+    var height=0.0;
+    if(cinder>0.0){
+      height+=cinder*volcanic_vent(point,vec3<f32>(mix(.70,1.0,shape.x),shape.y,shape.z),roughness);
+    }
+    if(cinder<1.0){
+      height+=(1.0-cinder)*volcanic_caldera(point,shape,roughness);
+    }
+    let edge=1.0-smoothstep(1.30,1.55,length(point));
+    height*=edge*activation*mix(.31,.62,width/.40);
+    raised=max(raised,height);
+    carved=min(carved,height);
+    foundation=max(foundation,activation*(1.0-smoothstep(.28,1.28,length(point))));
+  }
+  return vec2<f32>(raised+carved,foundation);
+}
+
+fn studioRidge(value:f32,width:f32)->f32 {
+  return max(0.0,1.0-abs(value)/width);
+}
+
+fn studioMountainRange(radial:vec3<f32>,height:f32,broad:f32,offset:vec3<f32>)->f32 {
+  let dir=radial*options.sphereFeatureDensity;
+  // Fold the mountain belt and rotate the spurs away from the main divide.
+  let fault=vec3<f32>(
+    dot(dir,vec3<f32>(4,-20,22)/30.0),
+    dot(dir,vec3<f32>(28,10,4)/30.0),
+    dot(dir,vec3<f32>(-10,20,20)/30.0)
+  );
+  let province=simplex3D(dir*5.0-offset);
+  let fold=simplex3D(dir*9.0+offset);
+  let fracture=smoothstep(-.28,.52,province+.33*fold);
+  let belt=fault*vec3<f32>(17,6,9)+vec3<f32>(.72*fold,.25*province,.34*fold);
+  let line=simplex3D(belt+offset);
+  let flank=abs(line)/(select(.82,1.22,line>0.0)*mix(1.12,.77,fracture));
+  let crest=max(0.0,1.0-flank);
+  // Oblique ribs cross the divide and split as the two limbs descend.
+  // Intersect each rib with a dipping profile to make wedge-shaped faces.
+  let spurDomain=vec3<f32>(belt.x*.77+1.05*belt.y,belt.y-.30*belt.x,belt.z);
+  let spurLine=simplex3D(spurDomain*vec3<f32>(1.72,2.58,2.15)-offset)+.31*line;
+  let opening=smoothstep(.07,.77,flank)*mix(.23,.55,.5+.5*fold);
+  let fork=min(abs(spurLine-opening),abs(spurLine+.81*opening));
+  let spur=studioRidge(fork,.53);
+  let face=max(0.0,min(spur,1.22-1.09*flank));
+  let ribs=studioRidge(simplex3D(spurDomain*vec3<f32>(3.7,5.6,4.6)+offset.yzx+.24*spurLine),.48);
+  let relief=crest*(.57+.19*crest)+mix(.34,.55,fracture)*face+
+    mix(.13,.28,fracture)*ribs*face*crest-.53;
+  let uplift=smoothstep(-.58,.69,broad)*mix(.39,1.0,smoothstep(-.60,.34,province));
+  let strength=select(.68,.89,params.voroMode==1u)*options.sphereRangeWeight;
+  return strength*uplift*(relief+.82*(broad-height));
+}
+
+fn studioProvinces(dir:vec3<f32>,offset:vec3<f32>,hotspot:f32)->vec4<f32>{
+  var home=vec4<f32>(1,0,0,0);
+  if(params.voroMode==2u){home=vec4<f32>(0,1,0,0);}
+  if(params.voroMode==3u){home=vec4<f32>(0,0,0,1);}
+  if(options.sphereBlend<=0.0){return home;}
+  let domain=dir*options.sphereFeatureDensity;
+  let p=domain*3.45;
+  let warp=.31*simplex3D(domain*6.7+offset.zxy);
+  let scores=vec4<f32>(
+    simplex3D(p+offset+warp),
+    simplex3D(p-offset.yzx+warp),
+    simplex3D(p*1.13+offset.zxy-warp),
+    simplex3D(p*.93-offset-warp)+.68*hotspot
+  )+home*select(.12,.38,params.voroMode!=0u);
+  let top=max(max(scores.x,scores.y),max(scores.z,scores.w));
+  let edge=max(vec4<f32>(0),1.0-(top-scores)/.44);
+  let weights=edge*edge;
+  var provinces=mix(home,weights/dot(weights,vec4<f32>(1)),smoothstep(0.0,.92,options.sphereBlend));
+  // Let granite and alpine interiors keep their own profiles. Leave the
+  // sandstone and volcanic shares intact at contacts with either one.
+  let upland=provinces.x+provinces.z;
+  let granite=provinces.z/max(.001,upland);
+  provinces.z=upland*mix(granite,smoothstep(.12,.88,granite),.82*options.sphereBlend);
+  provinces.x=upland-provinces.z;
+  return provinces;
+}
+
+fn studioCanyonRelief(radial:vec3<f32>,height:f32,broad:f32,offset:vec3<f32>)->f32{
+  let dir=radial*options.sphereFeatureDensity;
+  let strata=simplex3D(dir*8.0+offset);
+  let fracture=simplex3D(dir*24.0-offset+strata*.5);
+  let exposure=smoothstep(-.40,.32,strata)*smoothstep(-.44,.23,broad);
+  let remnant=smoothstep(-.24,.30,fracture+.24*strata);
+  // In some formations the same drainage widens into a basin, in others
+  // it cuts a slot through the plateau. The shelf profile is applied later.
+  var channel=simplex3D(dir*12.0-offset.zxy+1.55*strata);
+  let basin=simplex3D(dir*4.1+offset.yzx);
+  let winding=smoothstep(-.02,.54,basin)*smoothstep(-.48,-.08,broad)*
+    (1.0-smoothstep(.42,.92,broad));
+  var curvature=0.0;
+  if(winding>0.0){
+    // Bend an elongated channel field through the basin. Two bend scales
+    // give long sweeps with smaller turns, and the domain stays spherical.
+    let normal=normalize(fract(offset*vec3<f32>(.093,.127,.079))-.5+vec3<f32>(.001));
+    let crosswise=normalize(cross(normal,select(vec3<f32>(0,1,0),vec3<f32>(0,0,1),abs(normal.y)>.9)));
+    let along=dot(dir,crosswise);
+    let across=dot(dir,normal);
+    let lengthwise=along*14.0+1.9*basin;
+    curvature=.72*sin(lengthwise)+.28*sin(lengthwise*2.31+.60*strata);
+    let meander=vec3<f32>(10.0*across-1.55*curvature,along*6.0,
+      9.0*dot(dir,cross(crosswise,normal)))+offset.zxy;
+    channel=mix(channel,simplex3D(meander),winding*.76);
+  }
+  // Bedding can dip toward either bank. On the softer side the same
+  // canyon opens into an apron, while the harder side holds its scarp.
+  let dip=smoothstep(-.32,.32,strata)*2.0-1.0;
+  let bend=mix(dip,curvature,winding*.86);
+  let bank=(smoothstep(-.15,.15,channel)*2.0-1.0)*bend;
+  let canyon=abs(channel)/mix(.69,1.40,.5+.5*bank);
+  let narrow=smoothstep(-.49,.57,fracture);
+  let width=mix(.47,.24,narrow)*(1.0+.46*winding);
+  let wall=canyon/width;
+  var tributary=0.0;
+  var debris=0.0;
+  var headcut=0.0;
+  if(wall>.20 && wall<1.91){
+    // Branches work back from the trunk along fractures. Their width
+    // narrows upslope and both the cuts and the debris taper into the host.
+    let joint=fracture+.31*channel+.19*strata;
+    let head=smoothstep(.68,1.66,wall);
+    let span=mix(.27,.105,head)*mix(.74,1.20,.5+.5*bank);
+    let notch=1.0-smoothstep(.20*span,span,abs(joint));
+    let weathered=smoothstep(-.48,.45,strata+.28*bank);
+    let apron=smoothstep(.20,.47,wall);
+    tributary=notch*apron*(1.0-head)*mix(.27,.57,weathered);
+    debris=.060*notch*apron*(1.0-smoothstep(.43,.76,wall))*(.40+.60*weathered);
+    if(wall>.67){
+      // Persistent joints cut back through the upper rim. Where two arms
+      // split, the strip between them keeps its cap as a spur or butte.
+      let rim=smoothstep(.67,1.03,wall)*(1.0-smoothstep(1.46,1.91,wall));
+      let deflect=simplex3D(dir*35.0+offset.yzx+.48*strata);
+      let opening=.19*smoothstep(.79,1.49,wall)*smoothstep(-.52,.58,deflect);
+      let fork=abs(abs(joint+.12*deflect)-opening);
+      let cut=1.0-smoothstep(.042,mix(.16,.27,weathered),fork);
+      headcut=rim*cut*mix(.19,.52,weathered)*(1.0-.32*exposure);
+    }
+  }
+  let cutWall=wall-tributary;
+  // A talus ramp leads to a middle bench, then a steeper caprock wall.
+  // Its flat top follows the broad regional surface above the smaller hills.
+  let apron=smoothstep(.04,.40,cutWall);
+  let hardCap=smoothstep(-.18,.49,strata+.24*fracture);
+  let capWall=mix(smoothstep(.38,1.14,cutWall),smoothstep(.57,.98,cutWall),hardCap);
+  let ramp=mix(.32,.53,.5+.5*bank);
+  let profile=ramp*apron+(1.0-ramp)*capWall;
+  // A resistant cap follows the slow regional bedding, so small changes
+  // in the underlying relief don't turn the top into a chain of peaks.
+  let shelf=.24+.19*broad+.24*basin+.067*strata;
+  let table=shelf+.065*remnant*exposure;
+  let depth=mix(.30,.86,smoothstep(-.40,.52,broad))*mix(.76,1.0,narrow);
+  // Cut an inset channel through the broad floor. The inside bench stays
+  // shallower, leaving room for the sediment and runoff passes downstream.
+  let inset=winding*.15*(1.0-smoothstep(.045,.23,cutWall));
+  let pointBar=winding*.074*max(0.0,bank)*smoothstep(.07,.23,cutWall)*
+    (1.0-smoothstep(.39,.62,cutWall));
+  let canyonHeight=table-depth*max(1.0-profile,headcut)-inset+pointBar+debris;
+  // Resistant beds recess softer sections of the wall. Fade them through
+  // tributaries so the shelves break at gullies and at the foot of the cliff.
+  let bed=canyon_bed(radial,canyonHeight,params.seed);
+  let scarp=smoothstep(.19,.47,cutWall)*(1.0-smoothstep(.91,1.22,cutWall));
+  let ledgeWeight=scarp*mix(.32,1.0,hardCap)*(1.0-smoothstep(.10,.48,max(tributary,headcut)));
+  let ledges=ledgeWeight*clamp(bed.displacement,-.068,.068);
+  let fit=smoothstep(-.66,.04,broad)*mix(.56,1.0,exposure);
+  return fit*(canyonHeight+ledges-height);
+}
+
+fn graniteDome(cell:Voro3DMetrics,spread:f32)->f32{
+  let center=pow(max(0.0,1.0-cell.f1Sq/spread),1.45);
+  let interior=smoothstep(0.0,.24,cell.f2Sq-cell.f1Sq);
+  return center*(.65+interior*mix(.04,.65,cell.cellVal));
+}
+
+fn studioGraniteRelief(radial:vec3<f32>,height:f32,broad:f32,offset:vec3<f32>,granite:f32,texel:f32)->f32{
+  let dir=radial*options.sphereFeatureDensity;
+  let intrusion=simplex3D(dir*5.7+offset.zxy);
+  let strike=normalize(offset.yzx-vec3<f32>(100.447,122.021,82.673));
+  let along=dot(dir,strike);
+  let hills=simplex3D(dir*13.0-offset+intrusion*.51);
+  let knolls=simplex3D(dir*28.0+offset.yzx+hills*.59);
+  let district=smoothstep(-.38,.46,intrusion+.39*hills);
+  let field=dir*13.0-2.1*along*strike+offset+
+    mix(.48,1.20,district)*vec3<f32>(.60*hills,.67*intrusion,.42*knolls);
+  let coarse=voro3D_metrics(field);
+  let mass=graniteDome(coarse,.92);
+  let foothills=.46*broad+.15*hills+.059*knolls-.10;
+  let outcrop=smoothstep(-.65,.37,intrusion+.28*hills);
+  let packing=district*mix(.54,1.0,smoothstep(-.43,.52,knolls-.32*intrusion));
+  var domes=mix(.31,.94,district)*mass;
+  if(granite>.14 && outcrop>0.0){
+    let medium=voro3D_metrics(field.yzx*2.14-offset.zxy);
+    let knoll=graniteDome(medium,.83);
+    let interstice=1.0-smoothstep(.45,.94,mass);
+    domes+=smoothstep(.14,.49,granite)*mix(.09,.61,packing)*knoll*mix(.30,1.0,interstice);
+    let fine=1.0-smoothstep(.004,.013,texel*options.sphereFeatureDensity);
+    if(granite>.46 && fine>0.0){
+      let blocks=voro3D_metrics(field.zxy*4.36-offset.yzx);
+      domes+=fine*smoothstep(.46,.77,granite)*mix(.06,.17,packing)*graniteDome(blocks,.70);
+    }
+  }
+  return foothills+outcrop*domes-height;
+}
+
+fn studio_mosaic(dir:vec3<f32>)->vec2<f32>{
+  let key=params.seed*1664525u+1013904223u;
+  let selection=key>>30u;
+  let phase=f32(key&65535u)*(TWO_PI/65536.0);
+  let bend=sin(dot(dir,vec3<f32>(-3.4,6.2,4.1))-phase);
+  let belt=.72*sin(dot(dir,vec3<f32>(7.2,-4.6,3.8))+phase+.94*bend)+
+    .28*sin(dot(dir,vec3<f32>(11.8,5.7,-7.3))-phase);
+  return vec2<f32>(select(smoothstep(.15,.78,belt),0.0,selection==1u),
+    select(smoothstep(.15,.78,-belt),0.0,selection==0u));
+}
+
+fn studioLandscape(dir:vec3<f32>,height:f32,broad:f32,offset:vec3<f32>,canyon:f32)->f32{
+  let mode=options.sphereLandscape;
+  var mixWeights=vec2<f32>(select(0.0,1.0,mode==1u),select(0.0,1.0,mode==2u));
+  if(mode==3u){mixWeights=studio_mosaic(dir);}
+  if(mixWeights.x+mixWeights.y<=0.0){return height;}
+  let province=simplex3D(dir*4.1+offset.yzx);
+  let local=mix(1.0,smoothstep(-.58,.42,province),options.sphereBlend);
+  let influence=options.sphereLandscapeStrength*select(local,1.0,mode==3u);
+  let fold=simplex3D(dir*9.0-offset.zxy);
+  if(mixWeights.x>0.0){
+    // The broad profile sets the tablelands. Each contact has its own
+    // elevation and thickness, and folds tilt whole runs of benches.
+    let tilt=.09*fold+.08*dot(dir,vec3<f32>(.64,-.72,.38));
+    let spacing=mix(.37,.65,smoothstep(-.65,.65,province+.27*fold));
+    let column=(mix(broad,height,.80)-tilt)/spacing;
+    let seed=params.seed+3167u;
+    var layer=i32(floor(column));
+    if(column<canyon_contact(layer,seed)){layer-=1;}
+    let base=canyon_contact(layer,seed);
+    let top=canyon_contact(layer+1,seed);
+    let phase=clamp((column-base)/(top-base),0.0,1.0);
+    let rim=mix(.38,.62,canyon_bed_random(layer,seed+9029u));
+    let step=mix(phase,smoothstep(rim-.19,rim+.20,phase),.67);
+    let table=(base+(top-base)*step)*spacing+tilt;
+    let wash=abs(simplex3D(dir*23.0+offset.zxy+.97*fold));
+    let cut=(1.0-smoothstep(.045,.32,wash))*.15;
+    // Resistant horizons cross the region at different elevations. The
+    // same eroded outline controls the apron, intermediate bench and cap.
+    let block=simplex3D(dir*14.0+offset.zxy+.70*fold)+.24*simplex3D(dir*33.0-offset.yzx);
+    let cap=.60+.36*province+.08*fold+tilt;
+    let interval=mix(.21,.38,smoothstep(-.65,.65,fold-.28*province));
+    let apron=smoothstep(-.48,-.27,block);
+    let lowerCliff=smoothstep(-.28,-.10,block);
+    let upperCliff=smoothstep(-.02,.16,block);
+    let basin=mix(table-cut,min(table-cut,cap-1.85*interval),apron);
+    let benchExposure=smoothstep(-.40,.53,fold+.31*province);
+    let bench=mix(basin,cap-1.70*interval,mix(.24,.76,benchExposure)*apron);
+    let shoulder=mix(bench,cap-.87*interval,lowerCliff);
+    var landform=mix(shoulder,cap,upperCliff);
+    let brokenRim=smoothstep(-.39,-.24,block)*(1.0-smoothstep(-.065,.085,block));
+    if(brokenRim>0.0){
+      // Closely spaced gullies isolate resistant fingers along some rims.
+      // The pinnacles taper into the same bedrock as the adjoining cliffs.
+      let weathering=smoothstep(-.05,.54,province+.65*fold);
+      let fractures=abs(simplex3D(dir*47.0-offset.zxy+1.12*block));
+      let ribs=(1.0-smoothstep(.055,.31,fractures))*brokenRim*weathering;
+      let remnant=min(cap-.045,landform+interval*(.86+.56*wash));
+      landform=mix(landform,max(landform,remnant),ribs);
+    }
+    let upland=smoothstep(-.98,-.26,broad);
+    let strength=max(influence,options.sphereLandscapeStrength*smoothstep(.20,.68,canyon));
+    let plateau=smoothstep(-.35,.45,province+.32*fold);
+    return mix(height,landform,mixWeights.x*strength*upland*mix(.54,.91,plateau));
+  }
+  // Outward billows grow from the same coarse landscape. Smaller octaves
+  // break up the shoulders while the host valleys remain between them.
+  let p=dir*12.0+offset+vec3<f32>(.89*fold,.71*province,-.64*fold);
+  let a=simplex3D(p);
+  let b=simplex3D(p.yzx*2.07-offset.zxy+.68*a);
+  let c=simplex3D(p.zxy*4.31+offset.yzx+.56*b);
+  let d=simplex3D(p*8.91-offset+.51*c);
+  let fbm=a+.49*b+.235*c+.106*d;
+  let lobe=max(0.0,fbm+.31);
+  let face=smoothstep(.04,.62,lobe);
+  let ribs=1.0-smoothstep(.025,.32,abs(b+.46*c));
+  return height+mixWeights.y*influence*(.64*lobe*min(.98,lobe)+.27*face*ribs-.10*face);
+}
+
+fn studioWindRelief(dir:vec3<f32>,height:f32,broad:f32,offset:vec3<f32>,rock:vec4<f32>)->f32{
+  let arid=studio_dryness(dir,rock,params.seed)*options.sphereBlend;
+  if(arid<.025){return 0.0;}
+  let wind=studio_wind_dir(params.seed);
+  let along=dot(dir,wind);
+  let across=dot(dir,vec3<f32>(-wind.z,0,wind.x));
+  let warp=simplex3D(dir*11.0-offset.zxy);
+  let corridor=simplex3D(vec3<f32>(along*10.0,across*37.0,dir.y*19.0)+offset.yzx+.55*warp);
+  // Sand collects below the harder rock and thins across exposed uplands.
+  let sediment=(1.0-smoothstep(.13,.58,broad))*(1.0-smoothstep(.10,.39,abs(height-broad)));
+  let phase=fract(along*36.0+2.3*warp+.58*corridor+.28*cos(across*31.0+warp*3.1));
+  let crest=mix(.50,.79,smoothstep(-.46,.46,warp));
+  let dune=min(phase/crest,(1.0-phase)/(1.0-crest));
+  let sand=sediment*smoothstep(-.63,.17,corridor)*(.37*dune*dune-.074-.75*(height-broad));
+  // Wind runs along the resistant ribs. The soft material between them
+  // wears into broad corridors that can still be cut by downstream runoff.
+  let rib=studioRidge(corridor,.47);
+  let erodible=smoothstep(-.53,.37,warp)*smoothstep(-.46,.15,broad);
+  let abrasion=(1.0-sediment)*erodible*(.32*rib*rib-.19);
+  let mesaRock=rock.y*smoothstep(-.02,.52,broad);
+  return arid*smoothstep(.025,.13,arid)*(sand+abrasion)*(1.0-.65*mesaRock);
+}
+
+fn studioFaultRelief(dir:vec3<f32>,height:f32,broad:f32,offset:vec3<f32>,rock:vec4<f32>)->f32{
+  let crystalline=4.0*rock.z*rock.w;
+  let sedimentary=4.0*rock.y*rock.z;
+  let susceptible=options.sphereBlend*(.37*rock.w+.67*crystalline+.36*sedimentary);
+  if(susceptible<.025){return 0.0;}
+
+  let strike=normalize(fract(offset*vec3<f32>(.109,.073,.127))-.5+vec3<f32>(.001));
+  let east=normalize(cross(strike,select(vec3<f32>(0,1,0),vec3<f32>(1,0,0),abs(strike.y)>.9)));
+  let plane=vec3<f32>(dot(dir,east),dot(dir,strike),dot(dir,cross(east,strike)));
+  let extension=simplex3D(dir*4.6+offset.zxy);
+  let activity=smoothstep(-.43,.37,extension);
+  if(activity<=0.0){return 0.0;}
+  let blocks=plane*vec3<f32>(15.0,5.0,10.0)+vec3<f32>(.84,.24,.45)*extension;
+  let trace=simplex3D(blocks-offset);
+  let relay=simplex3D(blocks*vec3<f32>(.74,2.7,1.6)+offset.yzx);
+
+  // The hanging wall drops into the rift. Its footwall has a steep face
+  // and a long tilted backslope. A relay passes the throw between strands.
+  let slip=mix(.24,.76,smoothstep(-.56,.57,relay));
+  let hanging=trace+.19*relay;
+  let scarp=smoothstep(-.08,.135,hanging);
+  let backSlope=1.0-smoothstep(.25,.97,hanging);
+  let floor=1.0-smoothstep(.12,mix(.34,.68,slip),abs(hanging+.21));
+  let outlet=smoothstep(.13,.57,abs(relay-.25*trace));
+  let rift=floor*(.72+.28*outlet);
+  let shoulder=scarp*backSlope*(.29+.17*slip);
+  let shelf=smoothstep(.04,.20,hanging)*(1.0-smoothstep(.22,.41,hanging));
+  let tilt=.17*scarp*hanging*smoothstep(-.49,.68,broad);
+  let incision=(.42+.33*slip)*rift;
+  // Preserve rough bedrock above the scarp and partially bury it on the
+  // valley floor, where runoff will cut tributaries into the faulted blocks.
+  let fill=.58*rift*(broad-height);
+  return susceptible*activity*(shoulder+.10*shelf*crystalline-tilt-incision+fill);
+}
+
+// The same contact field runs through the whole sphere. It shapes rock
+// where two provinces meet and leaves each pure province to its own profile.
+fn studioContactRelief(dir:vec3<f32>,broad:f32,offset:vec3<f32>,rock:vec4<f32>)->f32{
+  let graniteBelt=4.0*rock.x*rock.z;
+  let tiltedBeds=4.0*rock.x*rock.y;
+  let lavaPlateau=4.0*rock.w*rock.y;
+  let sandstoneFins=4.0*rock.z*rock.y;
+  let volcanicHighlands=4.0*rock.w*rock.x;
+  let strength=graniteBelt+tiltedBeds+lavaPlateau+sandstoneFins+volcanicHighlands;
+  if(strength<.008){return 0.0;}
+  let uplift=smoothstep(-.57,.32,broad);
+  if(uplift<=0.0){return 0.0;}
+
+  let axis=normalize(fract(offset*vec3<f32>(.071,.113,.137))-.5+vec3<f32>(.001));
+  let across=normalize(cross(axis,select(vec3<f32>(0,1,0),vec3<f32>(0,0,1),abs(axis.y)>.90)));
+  let chart=vec3<f32>(dot(dir,across),dot(dir,cross(axis,across)),dot(dir,axis));
+  let flexure=simplex3D(dir*6.3+offset.zxy);
+  let belt=chart*vec3<f32>(22.0,8.0,11.0)+vec3<f32>(.68,.23,.39)*flexure;
+  let line=simplex3D(belt+offset.yzx);
+  let joints=simplex3D(belt*vec3<f32>(1.39,2.53,2.12)-offset+.24*line);
+
+  // Granite ribs survive along the divide. Weathering widens the spaces
+  // between them toward the domes and breaks their ends into rock steps.
+  let rib=studioRidge(line,.81);
+  let joint=1.0-smoothstep(.03,.26,abs(joints));
+  let granite=.42*(rib*mix(.64,1.0,rib)-.29)-.14*joint*rib;
+
+  // Folded beds leave triangular remnants on the softer flanks of a range.
+  let dip=mix(.53,1.03,smoothstep(-.52,.52,flexure));
+  let flank=abs(line)/select(dip,1.45-dip,line>0.0);
+  let jointLine=abs(joints+.41*line);
+  let wedge=max(0.0,min(1.0-flank,1.02-1.35*jointLine));
+  let flankGully=smoothstep(.11,.46,flank)*(1.0-smoothstep(.84,1.24,flank))*
+    smoothstep(.27,.61,jointLine);
+  let flatiron=.77*wedge-.25*flankGully-.20;
+
+  // Resistant lava caps a valley fill. Breaches in the cap become outlets
+  // for runoff during the following erosion passes.
+  let flow=smoothstep(-.42,.34,line+.37*flexure);
+  let breach=1.0-smoothstep(.06,.42,abs(joints+.44*line));
+  let cap=flow*mix(.19,.43,smoothstep(-.44,.44,flexure))*(1.0-.84*breach);
+  let terrace=cap-.19*breach*smoothstep(.12,.76,flow)-.12;
+
+  // Broken sedimentary ribs taper into the older crystalline floor. The
+  // crest is offset by joints so the fins bend, break, and vary in length.
+  let finAxis=abs(line+.21*joints);
+  let fin=1.0-smoothstep(.08,.42,finAxis);
+  let cover=smoothstep(-.48,.33,joints+.32*flexure);
+  let shoulder=1.0-smoothstep(.23,.68,finAxis);
+  let fins=cover*(.47*fin*fin+.15*shoulder)-.16;
+
+  // Solid lava shoulders follow the flanks of the alpine divide. Glancing
+  // fractures open into gullies while the harder flow tops remain above them.
+  let flankRock=smoothstep(.14,.52,flank)*(1.0-smoothstep(.78,1.26,flank));
+  let flowCap=smoothstep(-.42,.24,joints-.51*line)*flankRock;
+  let spurCut=joint*smoothstep(.27,.93,flank);
+  let basalt=.49*flowCap-.24*spurCut-.07;
+  return uplift*smoothstep(.008,.065,strength)*
+    (graniteBelt*granite+tiltedBeds*flatiron+lavaPlateau*terrace+
+     sandstoneFins*fins+volcanicHighlands*basalt);
+}
+
+// Hotspots track an oblique arc. Older cones broaden and subside along it.
+// The surrounding swell is wide enough for islands to emerge in ocean basins.
+fn studioIslandArc(dir:vec3<f32>,broad:f32,texel:f32)->vec2<f32>{
+  var height=0.0;
+  var influence=0.0;
+  var collapse=0.0;
+  let density=options.sphereFeatureDensity;
+  for(var chain=0u;chain<6u;chain++){
+    let q=(seedOffset3(params.seed+chain*7302013u)-vec3<f32>(17.173,31.947,47.521))/
+      vec3<f32>(131,137,149);
+    let y=1.72*q.x-.86;
+    let ring=sqrt(1.0-y*y);
+    let angle=TWO_PI*q.y;
+    let center=vec3<f32>(ring*cos(angle),y,ring*sin(angle));
+    let span=max(0.0,2.0-2.0*dot(dir,center));
+    if(span*density*density>.065){continue;}
+    let east=vec3<f32>(-sin(angle),0,cos(angle));
+    let course=normalize(east+(q.z-.5)*1.55*cross(center,east));
+    if(q.z>.30){
+      let tangent=cross(center,course);
+      let flow=normalize(tangent+(q.y-.5)*course);
+      let local=density*vec2<f32>(dot(dir,flow),dot(dir,cross(center,flow)));
+      collapse=min(collapse,lava_tube_collapse(local,.047,mix(.12,.18,q.z),params.seed+chain*23179u,texel*density));
+    }
+    for(var i=0u;i<4u;i++){
+      let age=f32(i)/3.0;
+      let vent=normalize(center+course*((age-.50)*.22/density));
+      let size=mix(.065,.029,age)*mix(.86,1.2,q.z)/density;
+      let d=sqrt(max(0.0,2.0-2.0*dot(dir,vent)))/size;
+      let tangent=normalize(course-vent*dot(vent,course));
+      let local=vec2<f32>(dot(dir,tangent),dot(dir,cross(vent,tangent)))/size;
+      let young=mix(.91,.37,age)*mix(.90,1.1,q.z);
+      let shape=vec3<f32>(young,q.z,fract(q.x+age*1.7));
+      let cone=volcanic_vent(local,shape,.065*simplex3D(dir*96.0+q*17.0));
+      let pedestal=.32*(1.0-smoothstep(.22,1.64,d))*(1.0-smoothstep(-.60,.28,broad));
+      height=max(height,cone+pedestal);
+      influence=max(influence,1.0-smoothstep(.48,1.76,d));
+    }
+  }
+  return vec2<f32>(height+collapse,influence);
+}
+
+@compute @workgroup_size(8,8,1)
+fn computeStudioSphereRelief(@builtin(global_invocation_id) gid:vec3<u32>){
+  let x=i32(gid.x)+frame.originX;
+  let y=i32(gid.y)+frame.originY;
+  let last=i32(frame.fullWidth)-1;
+  if(x>last||y>last){return;}
+  let col=x%last;
+  let raw=studioSphereHeight(col,y,last);
+  let step=PI/f32(last);
+  let latitude=f32(y)*step;
+  let longitude=2.0*f32(col)*step;
+  let radial=sin(latitude);
+  let dir=vec3<f32>(select(radial*cos(longitude),0.0,y==0||y==last),cos(latitude),
+    select(radial*sin(longitude),0.0,y==0||y==last));
+  var broad=raw;
+  if(params.voroMode!=3u||options.sphereBlend>0.0){
+    let spanY=max(1,i32(round(f32(last)*.017/options.sphereFeatureDensity)));
+    let spanX=max(1,i32(round(f32(spanY)/max(.50,2.0*radial))));
+    let around=studioSphereHeight(col-spanX,y-spanY,last)+studioSphereHeight(col+spanX,y-spanY,last)+
+      studioSphereHeight(col-spanX,y+spanY,last)+studioSphereHeight(col+spanX,y+spanY,last);
+    // The longitude box ceases to describe a square near a pole.
+    broad=mix(raw,.28*raw+.18*around,smoothstep(.035,.155,radial));
+  }
+  let texel=step*max(1.0,2.0*radial);
+  storeRGBA(x,y,0,studio_sphere_relief(dir,raw,broad,texel));
+}
+
+fn studio_sphere_relief(dir:vec3<f32>,raw:f32,broad:f32,texel:f32)->vec4<f32>{
+  let radial=length(dir.xz);
+  let offset=seedOffset3(params.seed);
+  var arc=vec2<f32>(0);
+  if(options.sphereBlend>0.0){arc=studioIslandArc(dir,broad,texel);}
+  let weights=studioProvinces(dir,offset,arc.y);
+  var relief=0.0;
+  if(weights.x>0.0){relief+=weights.x*studioMountainRange(dir,raw,broad,offset);}
+  if(weights.z>0.0){relief+=weights.z*studioGraniteRelief(dir,raw,broad,offset,weights.z,texel);}
+  if(weights.w>0.0){
+    let volcanic=studioVolcanicRelief(dir,texel);
+    let craters=studioVolcanicCraterFields(dir,broad,weights.w);
+    relief+=weights.w*(volcanic.x+craters.x+max(volcanic.y,craters.y)*(broad-raw));
+  }
+  if(weights.y>0.0){
+    // Broad caprock takes over inside sandstone country while the
+    // existing province weights still blend it into neighboring ranges.
+    let caprock=smoothstep(.10,.76,weights.y);
+    relief=relief*((1.0-caprock)/max(.001,1.0-weights.y))+
+      caprock*studioCanyonRelief(dir,raw,broad,offset);
+  }
+  relief+=studioContactRelief(dir,broad,offset,weights);
+  relief+=studioWindRelief(dir,raw,broad,offset,weights);
+  relief+=studioFaultRelief(dir,raw,broad,offset,weights);
+  // A hot island can interrupt its host province without a terrain seam.
+  relief+=arc.x*options.sphereBlend;
+  var cap=0.0;
+  if(radial<.23){
+    // Reintroduce midsize landforms where longitude-based erosion fades.
+    // The noise is evaluated in 3D, so ridges continue across the pole.
+    let folds=simplex3D(dir*27.0+offset.zxy);
+    let crest=studioRidge(simplex3D(dir*49.0-offset+folds*.69),.75);
+    let rubble=simplex3D(dir*79.0+offset.yzx);
+    let sharp=mix(.16,.26,weights.x+weights.y*.6);
+    cap=(1.0-smoothstep(.075,.23,radial))*(.11*folds+.68*sharp*(crest*crest-.36)+.052*rubble);
+  }
+  var height=raw+relief+cap;
+  if(options.sphereLandscape!=0u&&options.sphereLandscapeStrength>0.0){
+    height=studioLandscape(dir,height,broad,offset,weights.y);
+  }
+  return vec4<f32>(height,weights.yzw);
+}
+
+fn applyStudioSphereErosion(gid:vec3<u32>,mountain:bool){
+  let x=i32(gid.x)+frame.originX;
+  let y=i32(gid.y)+frame.originY;
+  let last=i32(frame.fullWidth)-1;
+  if(x>last||y>last){return;}
+  let col=x%last;
+  let sample=loadPrevRGBA(col,y,0);
+  let h=sample.x;
+  let canyon=sample.y;
+  let regional=options.sphereBlend>0.0;
+  let ranges=params.voroMode<=1u||regional;
+  if(y==0||y==last||(!mountain&&ranges&&!regional)){
+    storeRGBA(x,y,0,sample);
+    return;
+  }
+  let step=PI/f32(last);
+  let latitude=f32(y)*step;
+  let longitude=2.0*f32(col)*step;
+  let radial=sin(latitude);
+  let dir=vec3<f32>(radial*cos(longitude),cos(latitude),radial*sin(longitude));
+  let east=vec3<f32>(-sin(longitude),0,cos(longitude));
+  let north=cross(east,dir);
+  var rise:vec2<f32>;
+  var bankBend=vec2<f32>(0);
+  if(mountain){
+    // The angular window stays wide on smaller bakes and near the poles.
+    let guideY=max(2,i32(round(f32(last)*select(.012,.0045,ranges))));
+    let guideX=max(1,i32(round(f32(guideY)/max(.5,2.0*radial))));
+    rise=vec2<f32>(
+      (studioSphereHeight(col+guideX,y,last)-studioSphereHeight(col-guideX,y,last))/f32(guideX),
+      (studioSphereHeight(col,y-guideY,last)-studioSphereHeight(col,y+guideY,last))/f32(guideY)
+    );
+  }else{
+    // The local gullies read the mountain cuts from the previous dispatch.
+    let localX=studioSphereHeight(col+1,y,last)-studioSphereHeight(col-1,y,last);
+    let localY=studioSphereHeight(col,y-1,last)-studioSphereHeight(col,y+1,last);
+    let wideHigh=vec2<f32>(studioSphereHeight(col+4,y,last),studioSphereHeight(col,y-4,last));
+    let wideLow=vec2<f32>(studioSphereHeight(col-4,y,last),studioSphereHeight(col,y+4,last));
+    rise=mix(vec2<f32>(localX,localY),(wideHigh-wideLow)*.25,.76);
+    if(canyon>0.0){
+      // Match the angular span along both axes without fetching more heights.
+      let ratio=max(.5,2.0*radial);
+      let referenceSpan=(.023/(4.0*step))*(f32(last)/1000.0);
+      bankBend=(wideHigh+wideLow-2.0*h)*vec2<f32>(1.0/(ratio*ratio),1.0)*referenceSpan;
+    }
+  }
+  let dx=rise.x/(4.0*step*max(radial,.03));
+  let dy=rise.y/(2.0*step);
+  let grade=vec2<f32>(dx,dy);
+  let angularSample=step*max(1.0,2.0*radial);
+  storeRGBA(x,y,0,vec4<f32>(studio_point_erosion(dir,sample,grade,east*dx+north*dy,bankBend,
+    angularSample,mountain,ranges),sample.yzw));
+}
+
+fn studio_point_erosion(dir:vec3<f32>,sample:vec4<f32>,rise:vec2<f32>,gradient:vec3<f32>,
+  bankBend:vec2<f32>,angularSample:f32,mountain:bool,ranges:bool)->f32{
+  let h=sample.x;
+  let canyon=sample.y;
+  let granite=sample.z;
+  let volcanic=sample.w;
+  let alpine=clamp(1.0-canyon-granite-volcanic,0.0,1.0);
+  let grade=.023*length(gradient);
+  let mountainWear=smoothstep(.042,.25,grade)*select(1.0,.50,params.voroMode==3u);
+  let rangeWear=smoothstep(-.58,.10,h)*mix(.82,1.0,mountainWear);
+  let localWear=smoothstep(.06,.43,grade)*(canyon+.55*volcanic+.10*granite);
+  let wear=select(
+    select(smoothstep(.06,.43,grade),mountainWear,mountain),
+    select(localWear,rangeWear*(1.16*alpine+.15*canyon+.45*volcanic+.12*granite),mountain),
+    ranges);
+  let polar=smoothstep(.055,.25,length(dir.xz));
+  if(wear<=0.0){
+    return h;
+  }
+  let blend=smoothstep(-.19,.19,dir.y);
+  var delta=0.0;
+  if(blend>0.0){
+    let chart=studioErosionChart(dir,gradient,1.0,angularSample);
+    if(mountain){delta+=blend*studioMountainCut(chart,h,ranges);}
+    else{delta+=blend*studioGullyCut(chart,h);}
+  }
+  if(blend<1.0){
+    let chart=studioErosionChart(dir,gradient,-1.0,angularSample);
+    if(mountain){delta+=(1.0-blend)*studioMountainCut(chart,h,ranges);}
+    else{delta+=(1.0-blend)*studioGullyCut(chart,h);}
+  }
+  delta*=wear;
+  if(mountain){
+    let eroded=h+polar*delta;
+    let upland=max(0.0,eroded-.42);
+    // Compress the vertical relief of the upper mountain belt. Crests and
+    // branch cuts keep their shapes while broad slopes keep a wider base.
+    let compression=.29*upland*upland/(.34+upland)*polar*alpine;
+    return eroded-compression;
+  }
+  let elevation=h+delta;
+  var ledge=0.0;
+  if(canyon>0.0){
+    let strata=canyon_bed(dir,elevation,params.seed);
+    let resistant=smoothstep(.25,.83,strata.cement);
+    let gully=canyon_gully_wear(rise,bankBend,grade,-delta);
+    let exposure=smoothstep(.075,.49,grade)*
+      (1.0-mix(.64,.24,resistant)*smoothstep(.025,.22,-delta));
+    // Recess the shelf through the tributary and leave the adjacent spur proud.
+    ledge+=canyon*(.72*strata.displacement*exposure*(1.0-mix(.89,.63,resistant)*gully)-.087*gully);
+  }
+  if(volcanic>0.0&&grade>.12){
+    let flowBed=basalt_flow(dir,elevation,params.seed);
+    let exposure=volcanic*smoothstep(.12,.56,grade);
+    let scour=smoothstep(.02,.20,-delta);
+    ledge+=exposure*((1.0+.72*alpine)*flowBed.displacement-.065*flowBed.ash*scour);
+  }
+  return h+polar*(delta+ledge);
+}
+
+@compute @workgroup_size(8,8,1)
+fn computeStudioSphereMountainErosion(@builtin(global_invocation_id) gid:vec3<u32>){
+  applyStudioSphereErosion(gid,true);
+}
+
+@compute @workgroup_size(8,8,1)
+fn computeStudioSphereErosion(@builtin(global_invocation_id) gid:vec3<u32>){
+  applyStudioSphereErosion(gid,false);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn computeTerrainNoise(@builtin(global_invocation_id) gid: vec3<u32>) {
   let fx = i32(frame.originX) + i32(gid.x);
@@ -4924,7 +5712,7 @@ var<workgroup> normal8Tile : array<array<f32, TILE_W>, TILE_H>;
 var<workgroup> volumeTile  : array<array<f32, TILE_W>, TILE_H>;
 var<workgroup> sphereTile  : array<array<f32, TILE_W>, TILE_H>;
 
-// Height fetch 
+// Height fetch
 fn sampleHeight(x: i32, y: i32, z: i32) -> f32 { if (readFrom3D()) { return textureLoad(inputTex3D, vec3<i32>(x, y, clampZ(z)), 0).x; } return textureLoad(inputTex, vec2<i32>(x, y), frame.layerIndex, 0).x; } fn safeNormalize(v: vec3<f32>) -> vec3<f32> { let len2 = dot(v, v); if (len2 > 1e-12) { return v * inverseSqrt(len2); } return vec3<f32>(0.0, 0.0, 1.0); }
 
 @compute @workgroup_size(WGX, WGY, 1)
@@ -6390,7 +7178,7 @@ fn computeTurbulence4D(@builtin(global_invocation_id) gid: vec3<u32>) {
 //   textureStore(
 //     outputTex,
 //     vec2<i32>(fx, fy),
-//     frame.layerIndex,      
+//     frame.layerIndex,
 //     out
 //   );
 // }

@@ -1,3 +1,4 @@
+import { PlanetPresets } from '../planet/studioPresets.js';
 import * as BABYLON from 'babylonjs';
 import { NoiseComputeBuilder } from './noiseCompute.js';
 import {
@@ -1438,7 +1439,9 @@ function makePlanetRenderEditorOptions(options = {}) {
     segments: options.segments ?? DEFAULT_SEGMENTS,
     heightScale: options.heightScale ?? DEFAULT_HEIGHT_SCALE,
     gradientIndex: gradientIndexFromOptions(options, null),
-    normalMode: options.normalMode ?? 'sphere',
+    studioTerrain: options.studioTerrain ?? 'noise-stack',
+    studioOptions: options.studioOptions ?? {},
+    normalMode: options.normalMode ?? (options.studioTerrain && options.studioTerrain !== 'noise-stack' ? 'gpu' : 'sphere'),
     flipGpuNormals: options.flipGpuNormals ?? false,
     canonicalizeSeams: options.canonicalizeSeams ?? true,
     canonicalizePoles: options.canonicalizePoles ?? true,
@@ -2325,6 +2328,12 @@ function createTweakPanel(options = {}) {
     return control;
   }
 
+  addPlanetRenderControl('studioTerrain', 'terrain source', 'text', 'any', {
+    options: [
+      { value: 'noise-stack', label: 'Editable noise stack' },
+      ...PlanetPresets.map(({ id, name }) => ({ value: id, label: `Planet Studio · ${name}` })),
+    ],
+  });
   const gradientSelect = addPlanetRenderControl('gradientIndex', 'gradient', 'number', '1', {
     options: planetGradientOptions(),
   });
@@ -3944,6 +3953,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     const stack = readJson(planetStack, 'Planet noise stack');
     const cloudConfig = readJson(clouds, 'Spherical cloud settings');
     const opts = mergePlain(render, noise);
+    opts.studioTerrain = render.studioTerrain ?? 'noise-stack';
     opts.clouds = cloudConfig;
     if (noise.enabled && !opts.enabledNoise) opts.enabledNoise = noise.enabled;
     if (Array.isArray(stack) && stack.length) opts.noiseConfigs = stack;
@@ -5041,6 +5051,7 @@ export async function noisePlanetTest(options = {}) {
     ...options,
   };
 
+  mergedOptions.studioTerrain ??= mergedOptions.noiseConfigs?.length ? 'noise-stack' : 'lakeshore';
   const radius = mergedOptions.radius ?? DEFAULT_RADIUS;
   const ui = createContainer(mergedOptions);
   const engine = new BABYLON.WebGPUEngine(ui.canvas, {
@@ -5129,6 +5140,7 @@ export async function noisePlanetTest(options = {}) {
     runtime.currentGradientIndex = gradient;
     mergedOptions.gradientIndex = gradient;
     mergedOptions.gradient = gradient;
+    const studioTerrain = renderOptions.studioTerrain ?? mergedOptions.studioTerrain;
     const configSet = createNoisePlanetConfigSet(seed, {
       randomizeNoise: DEFAULT_RANDOMIZE_NOISE,
       ...mergedOptions,
@@ -5171,12 +5183,14 @@ export async function noisePlanetTest(options = {}) {
           segments,
           radius,
           noiseConfigs: configSet.noiseConfigs,
+          studioTerrain,
+          studioOptions: renderOptions.studioOptions ?? mergedOptions.studioOptions,
           offset: configSet.offset,
           offset2: configSet.offset2,
           heightScale,
           gradient,
           color: colorOptions,
-          normalMode: renderOptions.normalMode ?? mergedOptions.normalMode ?? 'sphere',
+          normalMode: renderOptions.normalMode ?? mergedOptions.normalMode ?? (studioTerrain === 'noise-stack' ? 'sphere' : 'gpu'),
           flipGpuNormals: renderOptions.flipGpuNormals ?? mergedOptions.flipGpuNormals ?? false,
           canonicalizeSeams: renderOptions.canonicalizeSeams ?? mergedOptions.canonicalizeSeams ?? true,
           canonicalizePoles: renderOptions.canonicalizePoles ?? mergedOptions.canonicalizePoles ?? true,

@@ -6,9 +6,9 @@
   "types": "./dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "start": "tinybuild",
-    "build": "tinybuild build",
-    "serve": "tinybuild serve",
+    "start": "npm run build && npm run serve",
+    "build": "node tools/build.js",
+    "serve": "node tools/build.js --serve",
     "init": "node tinybuild/init.js",
     "concurrent": "concurrently \"npm run python\" \"npm start\"",
     "dev": "npm run pip && npm i --save-dev concurrently && npm i --save-dev nodemon && npm run concurrent",
@@ -28,7 +28,9 @@
   ],
   "dependencies": {},
   "devDependencies": {
-    "babylonjs":"~9.12.0"
+    "babylonjs": "~9.12.0",
+    "tinybuild": "1.0.6",
+    "esbuild": "0.28.2"
   },
   "nodemonConfig": {
     "env": {

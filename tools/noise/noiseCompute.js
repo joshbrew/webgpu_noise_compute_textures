@@ -21,7 +21,7 @@
 // 5  VORO_FLAT_SHADE       cells=1, edges=0 where edges defined by (gap < threshold) with feather=edgeK
 // 6  VORO_FLAT_SHADE_INV   edges=1, cells=0  where edges defined by (gap < threshold) with feather=edgeK
 //
-// 7  VORO_INTERIOR_SQ       gapSq = F2^2 - F1^2  (legacy cellular3D semantics)
+// 7  VORO_INTERIOR_SQ       gapSq = F2^2 - F1^2  (cellular3D output)
 // 8  VORO_EDGES_SQ          clamp(gapSq * edgeK) (if edgeK<=0 uses default scale)
 // 9  VORO_EDGE_THRESH_SQ    (gapSq >= threshold) ? gapSq : 0
 // 10 VORO_FLAT_SHADE_SQ     cells=1, edges=0 where edges defined by (gapSq < threshold) with feather=edgeK
@@ -35,6 +35,9 @@
 // 16 VORO_EDGE_RCP_SQ      edge falloff = 1 / (1 + gapSq * edgeK)
 
 import noiseWGSL from "./noiseCompute.wgsl";
+import canyonBedsWGSL from "./canyon-beds.wgsl";
+import studioWindWGSL from "./studio-wind.wgsl";
+import volcanicReliefWGSL from "./volcanic-relief.wgsl";
 import blit2DWGSL from "./noiseBlit.wgsl";
 import blit3DWGSL from "./noiseBlit3D.wgsl";
 
@@ -169,9 +172,12 @@ export class NoiseComputeBuilder {
       "computeSphereNormal",
       "computeNormalVolume",
       "clearTexture",
+      "computeStudioSphereErosion",
+      "computeStudioSphereRelief",
+      "computeStudioSphereMountainErosion",
     ];
 
-    this.shaderModule = device.createShaderModule({ code: noiseWGSL });
+    this.shaderModule = device.createShaderModule({ code: canyonBedsWGSL + studioWindWGSL + volcanicReliefWGSL + noiseWGSL });
 
     // Bind group layout (matches WGSL)
     this.bindGroupLayout = device.createBindGroupLayout({
@@ -273,9 +279,9 @@ export class NoiseComputeBuilder {
     this.permBuffer?.destroy();
     this.nullPosBuffer?.destroy();
 
-    // Options UBO: 32 bytes payload
+    // Options UBO: 64 bytes
     this.optionsBuffer = this.device.createBuffer({
-      size: 32,
+      size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -298,7 +304,7 @@ export class NoiseComputeBuilder {
     });
 
     // Initialize with zeros / default perm
-    this.queue.writeBuffer(this.optionsBuffer, 0, new ArrayBuffer(32));
+    this.queue.writeBuffer(this.optionsBuffer, 0, new ArrayBuffer(64));
     this.queue.writeBuffer(this.paramsBuffer, 0, new ArrayBuffer(24 * 4)); // <- updated
     this.queue.writeBuffer(this.permBuffer, 0, new Uint32Array(512));
   }
@@ -572,11 +578,18 @@ export class NoiseComputeBuilder {
       ioFlags = 0,
       sphereOffset = 0,
       sphereOffset2 = 0,
+      sphereBlend = 0,
+      sphereBlendPhase = 0,
+      sphereRangeWeight = 1,
+      spherePolarFade = 0,
+      sphereLandscape = 0,
+      sphereLandscapeStrength = 0,
+      sphereFeatureDensity = 1,
     } = opts;
 
     this.useCustomPos = useCustomPos >>> 0;
 
-    const buf = new ArrayBuffer(32);
+    const buf = new ArrayBuffer(64);
     const dv = new DataView(buf);
     dv.setUint32(0, getGradient, true);
     dv.setUint32(4, this.useCustomPos, true);
@@ -586,6 +599,13 @@ export class NoiseComputeBuilder {
     dv.setFloat32(20, heightScale, true);
     dv.setFloat32(24, Number.isFinite(Number(sphereOffset)) ? Number(sphereOffset) : 0.0, true);
     dv.setFloat32(28, Number.isFinite(Number(sphereOffset2)) ? Number(sphereOffset2) : 0.0, true);
+    dv.setFloat32(32, sphereBlend, true);
+    dv.setFloat32(36, sphereBlendPhase, true);
+    dv.setFloat32(40, sphereRangeWeight, true);
+    dv.setFloat32(44, spherePolarFade, true);
+    dv.setUint32(48, sphereLandscape, true);
+    dv.setFloat32(52, sphereLandscapeStrength, true);
+    dv.setFloat32(56, sphereFeatureDensity, true);
     this.queue.writeBuffer(this.optionsBuffer, 0, buf);
 
     // mark tile bind groups dirty so new options are used
@@ -1049,6 +1069,26 @@ export class NoiseComputeBuilder {
   destroyAllTexturePairs() {
     const ids = Array.from(this._texPairs.keys());
     for (const id of ids) this.destroyTexturePair(id);
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.destroyAllTexturePairs();
+    this.destroyAllVolumes();
+    for (const resource of [
+      this.optionsBuffer,
+      this.paramsBuffer,
+      this.permBuffer,
+      this.nullPosBuffer,
+      this._dummy2D_sampleTex,
+      this._dummy2D_writeTex,
+      this._dummy3D_sampleTex,
+      this._dummy3D_writeTex,
+      this.blit2DUbo,
+      this.blit3DUbo,
+    ]) resource?.destroy();
+    this.pipelines.clear();
   }
 
   setActiveTexture(tid) {

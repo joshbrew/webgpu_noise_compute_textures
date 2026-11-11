@@ -1,6 +1,8 @@
 import * as BABYLON from 'babylonjs';
 import { NoiseComputeBuilder } from '../noise/noiseCompute';
 import * as colorGrads from './planetGradients';
+import { bakeStudioMap } from '../noise/studio-map.js';
+import { getPreset } from './studioPresets.js';
 
 export interface Range {
   start: number;
@@ -64,6 +66,20 @@ export interface PlanetGpuOptions {
   segments: number;
   radius: number;
   noiseConfigs?: NoiseConfig[];
+  /** A Studio terrain preset ID, or 'noise-stack' for custom noise layers. */
+  studioTerrain?: string;
+  studioOptions?: {
+    geology?: 'mixed' | 'alpine' | 'mesa' | 'volcanic';
+    landscape?: 'natural' | 'mesas' | 'fractal' | 'mosaic';
+    landscapeStrength?: number;
+    variation?: number;
+    rangeWeight?: number;
+    featureDensity?: number;
+    oceanCoverage?: number;
+    lunar?: boolean;
+    craterDetail?: number;
+    cryoGlaciers?: boolean;
+  };
   offset?: number;
   offset2?: number;
   heightScale?: number;
@@ -111,6 +127,7 @@ export interface PlanetHeightNormalMap {
   width: number;
   height: number;
   textureKey: string;
+  studioMaterial?: { side: number; values: Float32Array };
 }
 
 export interface PlanetNoiseConfigSet {
@@ -463,6 +480,8 @@ function validatePlanetOptions(builder: NoiseComputeBuilder, options: PlanetGpuO
     throw new Error('maxPositionsPerPartition must contain at least one vec3 position.');
   }
 
+  if (studioPreset(options)) return;
+
   if (options.useGpuSpherePositionMode === false) {
     const side = Math.floor(options.segments) + 1;
     const maxSide = Math.min(
@@ -803,6 +822,55 @@ async function readCurrentRGBA16FloatTexture(
   return { data: out, width: fullWidth, height: fullHeight };
 }
 
+function studioPreset(options: PlanetGpuOptions) {
+  return options.studioTerrain && options.studioTerrain !== 'noise-stack' ? getPreset(options.studioTerrain) : null;
+}
+
+function halfHeight(value: number, bits: Uint32Array, floats: Float32Array): number {
+  floats[0] = value;
+  const word = bits[0];
+  const sign = (word >>> 16) & 0x8000;
+  const magnitude = word & 0x7fffffff;
+  if (magnitude < 0x38800000) return sign | Math.round(Math.abs(value) * 16777216);
+  return sign | ((magnitude - 0x38000000 + 0x1000) >>> 13);
+}
+
+async function bakeStudioHeightNormalMap(
+  builder: NoiseComputeBuilder,
+  options: PlanetGpuOptions,
+  preset: NonNullable<ReturnType<typeof studioPreset>>,
+  textureKey: string,
+): Promise<PlanetHeightNormalMap> {
+  const atlas = await bakeStudioMap(builder, {
+    seed: options.seed, segments: options.segments, erosion: true,
+    geology: preset.geology, lunar: preset.lunar,
+    oceanCoverage: preset.dry ? 0 : preset.ocean?.coverage,
+    craterDetail: preset.craterDetail, cryoGlaciers: preset.cryoGlaciers,
+    ...options.studioOptions,
+  });
+  const side = atlas.side;
+  const pixels = new Uint16Array(side * side * 4);
+  const floats = new Float32Array(1), bits = new Uint32Array(floats.buffer);
+  for (let i = 0; i < atlas.values.length; i++) pixels[i * 4] = halfHeight(atlas.values[i], bits, floats);
+
+  builder.destroyTexturePair(textureKey);
+  try {
+    await builder.computeToTexture(side, side, { scalar: 1 }, { textureKey, noiseChoices: ['clearTexture'] });
+    const { texture } = builder.getCurrentTextureResource(textureKey);
+    builder.queue.writeTexture({ texture }, pixels, { bytesPerRow: side * 8 }, [side, side, 1]);
+    await builder.computeToTexture(side, side, { scalar: 1 }, {
+      textureKey, noiseChoices: ['computeSphereNormal'],
+      baseRadius: options.radius, heightScale: options.heightScale,
+    });
+    const readback = await readCurrentRGBA16FloatTexture(builder, textureKey);
+    canonicalizePlanetHeightNormalMap(readback.data, options.segments, options);
+    return { ...readback, textureKey, studioMaterial: atlas.glacialIce ?? atlas.impactMaterial };
+  } catch (error) {
+    builder.destroyTexturePair(textureKey);
+    throw error;
+  }
+}
+
 export async function generatePlanetHeightNormalMapGpu(
   builder: NoiseComputeBuilder,
   options: PlanetGpuOptions,
@@ -821,6 +889,8 @@ export async function generatePlanetHeightNormalMapGpu(
 
   const side = normalized.segments + 1;
   const textureKey = normalized.textureKey ?? `planet-height-normal-${normalized.seed}-${side}-${Math.random().toString(36).slice(2)}`;
+  const preset = studioPreset(normalized);
+  if (preset) return bakeStudioHeightNormalMap(builder, normalized, preset, textureKey);
   const useGpuSpherePositionMode = normalized.useGpuSpherePositionMode ?? true;
   const sphereNoisePositions = useGpuSpherePositionMode
     ? null
@@ -889,7 +959,7 @@ export function createPlanetMeshPartitionsFromHeightNormalMap(
   heightNormal: Float32Array,
   segments: number,
   radius: number,
-  getColor: (value: number) => RGB,
+  getColor: (value: number, index: number) => RGB,
   maxVerticesPerPartition = DEFAULT_MAX_VERTICES_PER_PARTITION,
   heightScale = DEFAULT_HEIGHT_SCALE,
   options: Pick<PlanetGpuOptions, 'normalMode' | 'flipGpuNormals' | 'polarCapMode' | 'partitionSkirts' | 'partitionSkirtDepth' | 'doubleSidedPartitionSkirts'> = {},
@@ -970,7 +1040,7 @@ export function createPlanetMeshPartitionsFromHeightNormalMap(
         }
 
         const index4 = vertexOffset * COLOR_SIZE;
-        const [r, g, b] = getColor(noiseValue);
+        const [r, g, b] = getColor(noiseValue, noiseIndex);
         splitColors[index4 + 0] = r / 255;
         splitColors[index4 + 1] = g / 255;
         splitColors[index4 + 2] = b / 255;
@@ -1114,7 +1184,8 @@ export async function generatePlanetMeshGpu(
   builder: NoiseComputeBuilder,
   options: PlanetGpuOptions,
 ): Promise<PlanetGpuResult> {
-  const noiseSet: PlanetNoiseConfigSet = options.noiseConfigs?.length
+  const preset = studioPreset(options);
+  const noiseSet: PlanetNoiseConfigSet = preset ? { noiseConfigs: [] } : options.noiseConfigs?.length
     ? { noiseConfigs: options.noiseConfigs, labels: options.noiseConfigs.map((config) => config.type) }
     : createDefaultPlanetNoiseConfigSet(options.seed, options);
 
@@ -1128,13 +1199,42 @@ export async function generatePlanetMeshGpu(
   };
 
   const heightNormal = await generatePlanetHeightNormalMapGpu(builder, normalized);
-  const rangedOptions = applyAutoColorRange(normalized, heightNormal.data);
+  const gradient = preset && !normalized.getColor ? {
+    name: preset.name,
+    colors: preset.stops.map((rgb: number): RGB => [rgb >>> 16, (rgb >>> 8) & 255, rgb & 255]),
+  } : normalized.gradient;
+  const rangedOptions = applyAutoColorRange({ ...normalized, gradient,
+    color: preset && !normalized.getColor ? { ...normalized.color, gradient } : normalized.color,
+  }, heightNormal.data);
   const color = resolvePartitionColorSampler(rangedOptions);
+  const material = heightNormal.studioMaterial;
+  const materialAt = (index: number) => {
+    if (!material) return 0;
+    const step = (material.side - 1) / rangedOptions.segments;
+    const u = (index % heightNormal.width) * step;
+    const v = Math.floor(index / heightNormal.width) * step;
+    const x = Math.min(material.side - 2, Math.floor(u));
+    const y = Math.min(material.side - 2, Math.floor(v));
+    const t = u - x, s = v - y, start = y * material.side + x;
+    const north = material.values[start] * (1 - t) + material.values[start + 1] * t;
+    const south = material.values[start + material.side] * (1 - t) + material.values[start + material.side + 1] * t;
+    return north * (1 - s) + south * s;
+  };
+  const getColor = (height: number, index: number): RGB => {
+    const rgb = color.getColor(height);
+    if (!preset || !material || normalized.getColor) return rgb;
+    const deposit = materialAt(index);
+    const ice = preset.material === 3;
+    const tint: RGB = ice ? [125, 177, 198] : deposit < 0 ? [52, 69, 103] : [173, 144, 128];
+    const weight = ice ? Math.min(.7, deposit * .85) : Math.min(.55, Math.abs(deposit) * 1.5);
+    return [rgb[0] + (tint[0] - rgb[0]) * weight, rgb[1] + (tint[1] - rgb[1]) * weight,
+      rgb[2] + (tint[2] - rgb[2]) * weight];
+  };
   const partitions = createPlanetMeshPartitionsFromHeightNormalMap(
     heightNormal.data,
     rangedOptions.segments,
     rangedOptions.radius,
-    color.getColor,
+    getColor,
     resolveMaxVerticesPerPartition(rangedOptions),
     rangedOptions.heightScale,
     rangedOptions,
@@ -1146,7 +1246,7 @@ export async function generatePlanetMeshGpu(
   const maxHeightValue = Math.max(...partitions.map((partition) => partition.maxHeightValue));
 
   const noiseSpan = maxNoiseValue - minNoiseValue;
-  if (!(rangedOptions.allowFlatHeightmap ?? false) && noiseSet.noiseConfigs.length > 0 && (!Number.isFinite(noiseSpan) || Math.abs(noiseSpan) < 1e-7)) {
+  if (!(rangedOptions.allowFlatHeightmap ?? false) && (preset || noiseSet.noiseConfigs.length > 0) && (!Number.isFinite(noiseSpan) || Math.abs(noiseSpan) < 1e-7)) {
     throw new Error(
       `Planet GPU heightmap is flat (${minNoiseValue} .. ${maxNoiseValue}). `
       + 'The compute path probably failed before meaningful noise was written.',
@@ -1178,7 +1278,7 @@ export async function generatePlanetMeshGpu(
     partitionSkirtDepth: resolvePartitionSkirtDepth(rangedOptions.radius, rangedOptions.heightScale!, rangedOptions),
     gradient: color.gradient,
     noiseConfigs: noiseSet.noiseConfigs,
-    noiseLabels: noiseSet.labels ?? noiseSet.noiseConfigs.map((config: NoiseConfig) => config.type),
+    noiseLabels: preset ? [`Planet Studio terrain: ${preset.name}`] : (noiseSet.labels ?? noiseSet.noiseConfigs.map((config: NoiseConfig) => config.type)),
     textureKey: heightNormal.textureKey,
     vertexCount: (rangedOptions.segments + 1) * (rangedOptions.segments + 1),
     partitionCount: partitions.length,

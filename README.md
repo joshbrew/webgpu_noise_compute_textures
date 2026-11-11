@@ -1,6 +1,12 @@
 
 # WebGPU Noise Playground
 
+## Planet Studio terrain
+
+Open the **Planet clouds** demo (or add `?demo=planet` to the local URL). Under the planet controls, **Terrain source** selects Planet Studio presets or the editable noise stack. Planet Studio uses the seeded spherical relief and erosion from [Planet Approach](https://github.com/joshbrew/MarchingCubes33_DynamicLODs), including **Pluto** ice canyons and **Ceres Crater Fields**. The existing cloud and atmosphere controls work with either source.
+
+Call `generatePlanetMeshGpu(builder, { seed, segments, radius, studioTerrain: 'ceres-crater-fields', normalMode: 'gpu' })` from `tools/planet/planetGpuMesh.ts` to use the same recipe in a mesh. For raw heights, `bakeStudioPlanetNoise(device, options)` in `tools/noise/studio-map.js` returns the spherical atlas and, with erosion enabled, landform and surface-material data. Use `studioOptions` on the mesh API to override settings such as `variation`, `landscape`, `rangeWeight` or `craterDetail`.
+
 ### [Demo](http://webgpunoise.netlify.app/)
 
 GPU driven noise toolkit for 2D and 3D generative texture tiling. Contains dozens of optimized compute shaders for 2D, 3D, and 4D (toroidal/tiling) variants from classic Perlin and FBM to custom Voronoi Fractal Brownian Motion and so on. You can make some gorgeous tilesets.
@@ -23,7 +29,7 @@ The helper aims to:
 - Visualize 2D array textures and 3D slices in WebGPU canvases
 - Reuse GPU resources where possible and dispose them explicitly when you are done
 
-To run the demo, run `npm install` then `tinybuild` within this repository. `npm i -g tinybuild` if you do not have it. You can also locally host `index.html` with prebuilt files.
+Run `npm install` and `npm start` from the repository root, then open the address printed by the server. `npm run build` refreshes the browser bundles in `dist/`.
 
 
 e.g. mixed Billow noise
