@@ -21,7 +21,7 @@ test('switching looks preserves anatomy, camera, sun direction, wind and render 
   const applyLook=new Function('preview','GRADE_PRESETS','normalizeRenderScaleDivider','lightingProfileForGrade','fogProfileForGrade',
     `${apply};return applyGradePreset;`)(preview,grades,x=>x,id=>grades[id],id=>grades[id]);
   // Repeat in reverse as well to catch appearance leaking between looks.
-  for(const id of [...Object.keys(REFERENCE_LOOK_PRESETS),...Object.keys(REFERENCE_LOOK_PRESETS).reverse()]) {
+  for(const id of [...Object.keys(grades),...Object.keys(grades).reverse()]) {
     applyLook(Number(id),false);
     for(const key of ['cam','box','cloudShading','cloudTurbulence','layerPreset','volumeShape','renderScaleDivider','temporalCellRate','fieldQuality'])
       assert.deepEqual(preview[key],scene[key],key);

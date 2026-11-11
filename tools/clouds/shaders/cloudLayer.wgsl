@@ -1,4 +1,39 @@
+// Distance to the next fixed cell face and its angle to the ray.
+fn nearMaterialCellInterval(ro:vec3<f32>,rd:vec3<f32>,t:f32,origin:vec3<f32>,pitch:f32)->vec2<f32> {
+  let at=ro+rd*t;
+  let cell=floor((at-origin)/pitch+sign(rd)*0.0001);
+  let face=origin+(cell+select(vec3<f32>(0.0),vec3<f32>(1.0),rd>=vec3<f32>(0.0)))*pitch;
+  let delta=select(vec3<f32>(1000000.0),abs((face-at)/rd),abs(rd)>vec3<f32>(0.000001));
+  var axis=0u;if(delta.y<delta.x){axis=1u;}if(delta.z<delta[axis]){axis=2u;}
+  return vec2<f32>(max(delta[axis],0.000001),abs(rd[axis]));
+}
+
 // ---------------------- Main compute
+// The builder selects wider groups for procedural flat rays. Standalone
+// consumers retain the original 8x8 dispatch unless they opt in.
+override CLOUD_WORKGROUP_WIDTH: u32 = 8u;
+
+// Analytic intersections with a selected subset of the procedural domain.
+// Density, detail and sun probes below still use the existing live renderer.
+fn proceduralSliceHit(ro:vec3<f32>,rd:vec3<f32>,cursor:f32)->vec2<f32>{
+  let packed=bitcast<u32>(TUNE._flowPad1);
+  let axis=(packed & 3u)-1u;
+  let first=f32((packed>>2u)&127u);let last=f32((packed>>9u)&127u);
+  let stride=max(f32((packed>>16u)&255u),1.0);
+  let cell=B.half[axis]*2.0/128.0;
+  let direction=rd[axis];
+  if(abs(direction)<0.00001){return vec2<f32>(1000000.0,0.0);}
+  let coordinate=(ro[axis]+direction*cursor-B.center[axis]+B.half[axis])/cell-0.5;
+  var index=first+select(floor((coordinate-first)/stride-0.0001),ceil((coordinate-first)/stride+0.0001),direction>0.0)*stride;
+  let lastOwned=first+floor((last-first)/stride)*stride;
+  if(direction>0.0){index=max(index,first);}else{index=min(index,lastOwned);}
+  if(index<first || index>lastOwned){return vec2<f32>(1000000.0,0.0);}
+  let plane=B.center[axis]-B.half[axis]+(index+0.5)*cell;
+  let t=(plane-ro[axis])/direction;
+  let thickness=cell*max(TUNE._flowPad2,0.1);
+  let opticalLength=thickness/max(abs(direction),0.10)*smoothstep(0.015,0.08,abs(direction))*smoothstep(0.0,thickness*1.5,t);
+  return vec2<f32>(t,opticalLength);
+}
 
 fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   // workgroup cache
@@ -66,8 +101,14 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let yTileTarget = rawBoxMaxXZ / max(wg_verticalRefBoxH * 2.75, 0.25);
     wg_verticalDomainScale = mix_f(1.0, clamp(yTileTarget, 1.0, 9.0), wg_verticalHomogeneity);
     wg_weatherAxisYAbs = max(abs(axisOrOne3(NTransform.weatherAxisScale).y), EPS);
-    wg_boxMinCached = B.center - B.half;
-    wg_boxMaxCached = B.center + B.half + vec3<f32>(0.0, anvilLiftWorld(), 0.0);
+    // The box describes the nominal weather layer. Its jittered columns can
+    // extend beyond both faces; traversal must include that support rather
+    // than clipping nonzero density against horizontal planes.
+    let layerHeight = max(B.half.y * 2.0, EPS);
+    let baseHeadroom = select(layerHeight * abs(TUNE.baseJitterFrac), 0.0, sphericalCloudMode());
+    let topHeadroom = select(layerHeight * abs(TUNE.topJitterFrac), 0.0, sphericalCloudMode());
+    wg_boxMinCached = B.center - B.half - vec3<f32>(0.0, baseHeadroom, 0.0);
+    wg_boxMaxCached = B.center + B.half + vec3<f32>(0.0, anvilLiftWorld() + topHeadroom, 0.0);
   }
   workgroupBarrier();
 
@@ -75,6 +116,11 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   let temporalRate = temporalCellRateNormalized();
   let temporalHistoryActive = reproj.enabled == 1u || temporalRate > 1u || reproj.temporalBlend > 0.0001;
   let compactInterleave = reproj.compactInterleave != 0u && temporalRate > 1u && reproj.frameIndex > 0u;
+  if (!compactInterleave &&
+      (gid_in.x >= select(frame.fullWidth, frame.tileWidth, frame.tileWidth > 0u) ||
+       gid_in.y >= select(frame.fullHeight, frame.tileHeight, frame.tileHeight > 0u))) {
+    return;
+  }
 
   var pixI = vec2<i32>(i32(gid_in.x), i32(gid_in.y)) + vec2<i32>(frame.originX, frame.originY);
   if (compactInterleave) {
@@ -110,23 +156,24 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   }
 
   // ray direction
-  // Keep the primary-ray dither stable per pixel. Frame-varying ray jitter was
-  // good for breaking seams, but it caused subtle lighting shimmer/flicker once
-  // the post resolve started blending thin cloud pixels.
-  let rayJx = hash11Fast(f32(fullPix.x) * 0.06711056 + f32(fullPix.y) * 0.00583715 + 0.754877666) - 0.5;
-  let rayJy = hash11Fast(f32(fullPix.x) * 0.01145137 + f32(fullPix.y) * 0.09324173 + 14.124877666) - 0.5;
-  let jitterPixScreen = vec2<f32>(rayJx, rayJy) * 0.18;
-  // Spherical planet clouds must stay locked to world/sphere coordinates.
-  // Screen-space subpixel jitter makes the volume crawl relative to the camera.
-  let jitterPix = jitterPixScreen * cloudModeF32(1.0, 0.0, 0.0);
+  // A pixel-centered primary ray avoids screen-locked dither crawling over
+  // the material during orbit and flight. Planet rays already used this.
+  let jitterPix = vec2<f32>(0.0);
   let jitteredUvPix = (vec2<f32>(pixI) + 0.5 + jitterPix) / fullResF;
   let ndc = jitteredUvPix * 2.0 - vec2<f32>(1.0, 1.0);
   let tanY = tan(0.5 * V.fovY);
 
   let rd_camera = normalize(vec3<f32>(ndc.x * V.aspect * tanY, -ndc.y * tanY, -1.0));
   let rayRd = normalize(basisRight * rd_camera.x + basisUp * rd_camera.y - camFwd * rd_camera.z);
-  let aircraft=sceneAircraft(rayRo,rayRd,V.aircraftPosition,V.right,V.up,V.fwd,V._v0,V._v1,V._v2,V.aircraftYaw,normalize(L.sunDir));
+  var aircraft=sceneAircraft(rayRo,rayRd,V.aircraftPosition,V.right,V.up,V.fwd,V._v0,V._v1,V._v2,V.aircraftYaw,normalize(L.sunDir));
+  let worldTerrainDistance=cloudTerrainDepth(cloudTerrainTexture,jitteredUvPix,select(V._v3,0.0,sphericalCloudMode()));
+  if(worldTerrainDistance<aircraft.distance){aircraft.distance=1000000.0;}
   let emptyRayColor=select(vec4<f32>(aircraft.color,1.0),vec4<f32>(0.0),aircraft.distance>=1000000.0);
+
+  let cloudScale=flatCloudScale();
+  let terrainDistance=worldTerrainDistance/cloudScale;
+  if(aircraft.distance<1000000.0){aircraft.distance/=cloudScale;}
+  rayRo=flatCloudMaterialOrigin(rayRo);
 
   // intersect volume
   let bmin = boxMin();
@@ -187,6 +234,8 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     }
   }
 
+  t1=min(t1,terrainDistance);
+  if(t0>=t1){storeLayerSample(pixI,emptyRayColor,0.0,temporalHistoryActive);return;}
   // Only cloud in front of the opaque hull contributes to its fogging.
   if(aircraft.distance<1000000.0){
     t1=min(t1,aircraft.distance);
@@ -227,11 +276,12 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   let nearFineDist = clamp(effectiveNearFluffDist * 0.12, 0.08, 0.35);
 
   // noise and jitter
-  let bnPix = distanceBlueScreen(pixI, entryRayDistance, effectiveNearFluffDist);
   let entryWorldForNoise = rayRo + rayRd * max(t0, 0.0);
   // World/sphere-locked smooth noise. Do not include frameIndex here:
   // frame-varying jitter turns x4 interleave into visible flicker.
-  var rand0 = bnPix;
+  // Flat procedural material should not change its integration phase merely
+  // because it moves to a different screen pixel during orbit or flight.
+  var rand0 = 0.5;
   if (sphericalCloudMode()) {
     let entryUvForNoise = shellUVFromWorld(entryWorldForNoise);
     let worldRandFreq = auroraModeF32(128.0, 56.0);
@@ -249,6 +299,8 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   let segmentAspect = raySegmentLength / max(max(B.half.x, B.half.z), max(B.half.y * 2.0, 1.0));
   let thickPerfF = saturate(thickBoxPerfStrength() * saturate(remap(segmentAspect, 0.35, 1.45, 0.0, 1.0)));
   let maxStepsF = max(f32(max(TUNE.maxSteps, 1)), 1.0);
+  // Allow dense material to close even at deliberately tiny ray budgets.
+  let targetOpticalDepth = max(0.08, 6.0 / maxStepsF);
   let horizonPerfF = smoothstep(24.0, 120.0, horizonFarScale) * smoothstep(0.30, 1.10, segmentAspect);
   let reachStepLimit = (raySegmentLength / maxStepsF) * mix_f(1.10, 1.55, horizonPerfF);
   let vStepBoost = verticalStepBoost();
@@ -259,19 +311,24 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   var baseStep = clamp(V.stepBase, TUNE.minStep, effectiveMaxStep);
   baseStep = min(baseStep, voxelBound * mix_f(1.0, 1.65, thickPerfF));
   let sphericalJitterScale = cloudModeF32(1.0, 0.46, 0.18);
-  baseStep = baseStep * mix_f(1.0, 1.0 + TUNE.stepJitter * nearJitterScale * sphericalJitterScale, rand0 * 2.0 - 1.0);
+  baseStep = baseStep * select(1.0,mix_f(1.0, 1.0 + TUNE.stepJitter * nearJitterScale * sphericalJitterScale, rand0 * 2.0 - 1.0),sphericalCloudMode());
   baseStep = clamp(baseStep, TUNE.minStep, effectiveMaxStep);
 
   let farStartWorld = max(TUNE.farStart * horizonFarScale, TUNE.farStart);
   let farFullWorld = max(TUNE.farFull * horizonFarScale, farStartWorld + 0.001);
 
-  let rayExitDepth = max(t1, entryRayDistance);
+  let rayExitDepth = max(t1, entryRayDistance) * cloudScale;
   let rayFarHistoryF = saturate(remap(rayExitDepth, farStartWorld, farFullWorld, 0.0, 1.0));
   let thickBudgetBoost = mix_f(1.08, max(1.08, TUNE.thickStepBoost), thickPerfF);
   let rayBudgetStep = clamp((raySegmentLength / maxStepsF) * max(thickBudgetBoost, vStepBoost), TUNE.minStep, effectiveMaxStep);
 
   let startPhaseJitter = TUNE.phaseJitter * mix_f(1.0, 0.30, entryNearF) * sphericalJitterScale;
-  var t = clamp(t0 + (rand0 * startPhaseJitter) * min(baseStep, rayBudgetStep), t0, t1);
+  var t = select(t0,clamp(t0 + (rand0 * startPhaseJitter) * min(baseStep, rayBudgetStep), t0, t1),sphericalCloudMode());
+  // Fixed near material cells remove the moving-camera phase and replace the
+  // excessively small distance-dependent samples with the resolved noise scale.
+  let nearCellPitch=max(wg_finestWorld*.50,baseStep);
+  let nearCellRate=dot(abs(rayRd),vec3<f32>(1.0/nearCellPitch));
+  let stableNearEnd=min(t1,t0+min(3.0,max(f32(TUNE.maxSteps)*.40-4.0,0.0)/max(nearCellRate,EPS)));
 
   // lighting setup. rayRd points from camera into the volume, matching the blog-style phase convention.
   let sunDir = normalize(L.sunDir);
@@ -307,6 +364,10 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   var runN: f32 = 0.0;
 
   var iter: i32 = 0;
+  var refineCloudInterval = false;
+  var refinementDensity = 0.0;
+  var previousLightingCell=vec3<i32>(2147483647);
+  var pendingNearLength=0.0;
 
   let maxMarchSteps = select(TUNE.maxSteps, min(TUNE.maxSteps, 56), auroraLayerMode());
 
@@ -321,12 +382,6 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let rayShallowF = 1.0 - smoothstep(0.025, 0.22, abs(rayRd.y));
     let planetSliceJitterScale = cloudModeF32(1.0, 0.58, 0.36);
     let sliceJitter = saturate(TUNE.sliceJitterStrength) * mix_f(1.0, 1.55, rayShallowF) * sphericalJitterScale * planetSliceJitterScale;
-    let sliceHashScreen = hash11Fast(
-      f32(fullPix.x) * 0.071324 +
-      f32(fullPix.y) * 0.117913 +
-      f32(iter) * 0.167351 +
-      rand0 * 19.1731
-    );
 
     let stepT = clamp(t, t0, t1);
     let stepRayDistance = max(stepT, 0.0);
@@ -339,13 +394,71 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     );
     let nearStepF = 1.0 - smoothstep(0.0, nearFineDist, stepRayDistance);
     let fineStep = baseStep * mix_f(1.0, clamp(TUNE.nearStepScale, 0.12, 1.0), nearStepF);
-    let baseStepLen = clamp(mix_f(coverageStep, fineStep, nearStepF), TUNE.minStep, effectiveMaxStep);
+    // Flat sampling follows camera distance, independent of which box face
+    // the ray exits. Exit-length spacing exposed horizontal boundaries while
+    // turning at cloud height. Dense intervals refine by optical depth below.
+    let cameraCoverageStep = baseStep * (1.0 + stepRayDistance * 1.25);
+    let flatBaseStep = clamp(mix_f(cameraCoverageStep, fineStep, nearStepF), TUNE.minStep, effectiveMaxStep);
+    let baseStepLen = select(flatBaseStep, clamp(mix_f(coverageStep, fineStep, nearStepF), TUNE.minStep, effectiveMaxStep), sphericalCloudMode());
     let auroraTargetStep = raySegmentLength / 42.0;
     let auroraStepMax = max(effectiveMaxStep, raySegmentLength / 28.0);
     let auroraStepLen = clamp(max(baseStepLen, auroraTargetStep), TUNE.minStep * 3.0, auroraStepMax);
-    let stepLen = select(baseStepLen, auroraStepLen, auroraLayerMode());
+    let extinctionPerDensity = VIEW_EXTINCTION_SCALE * max(C.cloudBeer, EPS);
+    let surfaceStep = clamp(targetOpticalDepth / max(refinementDensity * extinctionPerDensity, EPS), TUNE.minStep, baseStepLen);
+    let localStepLen = select(baseStepLen, surfaceStep, refineCloudInterval && !sphericalCloudMode());
+    let adaptiveStepLen = select(localStepLen, auroraStepLen, auroraLayerMode());
+    let stableNearSample=CLOUD_FROZEN_SLICES!=0u || (!sphericalCloudMode() && t<stableNearEnd);
+    var stepLen=adaptiveStepLen;
+    var nearFacing=1.0;
+    var materialPitch=nearCellPitch;
+    if(CLOUD_FROZEN_SLICES==0u && stableNearSample){
+      let crossing=nearMaterialCellInterval(rayRo,rayRd,t,B.center,nearCellPitch);
+      stepLen=min(crossing.x,stableNearEnd-t);
+      nearFacing=crossing.y;
+    }
+    else if(CLOUD_FROZEN_SLICES==0u && !sphericalCloudMode()){
+      let targetPitch=max(adaptiveStepLen*dot(abs(rayRd),vec3<f32>(1.0)),TUNE.minStep);
+      let pitch=nearCellPitch*exp2(ceil(log2(max(targetPitch/nearCellPitch,0.0625))));
+      materialPitch=pitch;
+      let crossing=nearMaterialCellInterval(rayRo,rayRd,t,B.center,pitch);
+      stepLen=crossing.x;
+      nearFacing=crossing.y;
+    }
+    stepLen=min(stepLen,t1-t);
+    var integrationStepLen=stepLen;
+    var integrationStart=t;
+    if(CLOUD_FROZEN_SLICES==0u && !sphericalCloudMode()){
+      // Fade only grazing quadrature boundaries, never the cloud density.
+      // The unintegrated distance is carried forward and flushed at the next
+      // face-on crossing or the ray exit, preserving coverage at every depth.
+      // The actual pixel ray includes the projection's full field of view.
+      // Faces within 30 degrees of parallel contribute no separate sample;
+      // blend smoothly back to full contribution by about 53 degrees.
+      var faceWeight=smoothstep(0.5,0.8,nearFacing);
+      if(t+stepLen>=t1-0.000001){faceWeight=1.0;}
+      integrationStart=t-pendingNearLength;
+      let total=pendingNearLength+stepLen;
+      integrationStepLen=total*faceWeight;
+      pendingNearLength=total-integrationStepLen;
+    }
 
-    var sliceHash = sliceHashScreen;
+    if(CLOUD_FROZEN_SLICES==0u && !sphericalCloudMode() && integrationStepLen<max(materialPitch*0.25,0.000001) && t+stepLen<t1-0.000001){
+      // Tiny grazing contributions are accumulated, never discarded. One
+      // resolved interval replaces multiple expensive density/light probes.
+      pendingNearLength+=integrationStepLen;
+      t=min(t+stepLen,t1);iter+=1;continue;
+    }
+    var selectedSliceT=t;
+    if(CLOUD_FROZEN_SLICES!=0u){
+      let selected=proceduralSliceHit(rayRo,rayRd,t+0.000001);
+      if(selected.x>t1){break;}
+      selectedSliceT=selected.x;
+      stepLen=max(selected.x-t+0.000002,0.000002);
+      integrationStepLen=selected.y;
+      pendingNearLength=0.0;
+    }
+    let flatSliceP = rayRo + rayRd * clamp(t + stepLen * 0.50, t0, t1);
+    var sliceHash = smoothCellHash2D(flatSliceP.xz + flatSliceP.y * vec2<f32>(0.37, 0.61), 24.0);
     if (sphericalCloudMode()) {
       let sliceProbeT = clamp(t + stepLen * 0.50, t0, t1);
       let sliceProbeP = rayRo + rayRd * sliceProbeT;
@@ -362,11 +475,12 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     // sampled. This breaks the straight-through shelf pattern without shrinking
     // the step length and losing the far side of the cloud box.
     let sampleWindowEnd = min(t + stepLen * 0.98, t1);
-    let jitterWindow = max(sampleWindowEnd - t, TUNE.minStep);
-    let jitterCenter = mix_f(0.50, 0.46, rayShallowF);
-    let jitterAmp = mix_f(0.18, 0.46, rayShallowF) * sliceJitter;
+    let jitterWindow = select(max(sampleWindowEnd - t, TUNE.minStep),stepLen,!sphericalCloudMode());
+    let jitterCenter = select(0.50,mix_f(0.50, 0.46, rayShallowF),sphericalCloudMode());
+    let jitterAmp = select(0.0,mix_f(0.18, 0.46, rayShallowF) * sliceJitter,sphericalCloudMode());
     let jitterPhase = clamp(jitterCenter + (sliceHash - 0.5) * jitterAmp, 0.04, 0.96);
-    var sampleT = clamp(t + jitterWindow * jitterPhase, t0, sampleWindowEnd);
+    var sampleT = select(clamp(integrationStart+integrationStepLen*0.5,t0,t1),clamp(t + jitterWindow * jitterPhase, t0, sampleWindowEnd),sphericalCloudMode());
+    if(CLOUD_FROZEN_SLICES!=0u){sampleT=selectedSliceT;}
     // Continuous interval quadrature, also when flying inside an aurora. The
     // old 44-shell snap re-solved a quadratic at every step and popped between
     // discrete radial sheets. Midpoint-biased jitter needs no shell re-solve.
@@ -388,7 +502,11 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     // On a planet it incorrectly forced a coarse mip even inside the shell.
     let minimumPixelWorld = select(wg_finestWorld * 0.50, sphericalFinestTexelWorld() * 0.50,
       sphericalCloudMode() && !auroraLayerMode());
-    let samplePixelWorld = max(sampleRayDistance * rayPixelWorldScale, minimumPixelWorld);
+    var samplePixelWorld = max(sampleRayDistance * rayPixelWorldScale, minimumPixelWorld);
+    if(CLOUD_FROZEN_SLICES!=0u){
+      let sliceAxis=(bitcast<u32>(TUNE._flowPad1)&3u)-1u;
+      samplePixelWorld/=max(abs(rayRd[sliceAxis]),0.08);
+    }
 
     let thickLodExtra = thickPerfF * saturate(TUNE.thickDetailSkip) * smoothstep(0.28, 0.96, sampleRayDistance);
     let weatherLOD = clamp(weatherLOD_base + TUNE.farLodPush * farF * 0.65, 0.0, wg_maxMipW);
@@ -403,13 +521,16 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let ph_coarse = computePH(p, wm_primary);
 
     var columnSkip = verticalColumnSkipDistance(p, rayRd, wm_primary, stepLen, effectiveMaxStep, thickPerfF, screenFarF);
-    columnSkip = mix_f(columnSkip, 0.0, nearHorizontalRayF);
+    columnSkip = select(mix_f(columnSkip, 0.0, nearHorizontalRayF),0.0,stableNearSample);
     if (columnSkip > stepLen * 1.12) {
+      refineCloudInterval = false;
+      refinementDensity = 0.0;
       prevDens = 0.0;
       prevMacroDens = 0.0;
       prevTsun = Tsun_cached;
       t = min(t + columnSkip, t1);
       iter = iter + 1;
+      pendingNearLength=0.0;
       continue;
     }
 
@@ -418,18 +539,23 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     // disappear from LOD shells while tall boxes avoid wasting full density work
     // above, below, or inside cut-out portions of the current weather column.
     if (ph_coarse < 0.0 || wm_primary.b >= 1.0) {
+      refineCloudInterval = false;
+      refinementDensity = 0.0;
       let missBoost = mix_f(1.35, min(max(TUNE.emptySkipMult, 1.0), 2.75), max(thickPerfF, screenFarF));
-      let missStep = clamp(stepLen * missBoost, TUNE.minStep, effectiveMaxStep * 2.0);
+      let missStep = select(clamp(stepLen * missBoost, TUNE.minStep, effectiveMaxStep * 2.0),stepLen,stableNearSample);
       prevDens = 0.0;
       prevMacroDens = 0.0;
       prevTsun = Tsun_cached;
       t = min(t + missStep, t1);
       iter = iter + 1;
+      pendingNearLength=0.0;
       continue;
     }
 
     let weatherGateFast = weatherCoverageGate(wm_primary);
     if (weatherGateFast >= TUNE.weatherRejectGate && sampleRayDistance > nearFineDist * 2.0 && nearHorizontalRayF < 0.35) {
+      refineCloudInterval = false;
+      refinementDensity = 0.0;
       let rejectF = smoothstep(TUNE.weatherRejectGate, 1.0, weatherGateFast);
       let rejectPerfF = max(max(rejectF, thickPerfF * 0.45), screenFarF * 0.50);
       let rejectBoost = mix_f(1.18, min(max(TUNE.emptySkipMult, 1.0), 4.35), rejectPerfF);
@@ -442,18 +568,20 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
           rejectStep = clamp(rejectStep + probeStep * mix_f(1.0, 2.45, runProbeF), TUNE.minStep, effectiveMaxStep * 8.0);
         }
       }
+      if(stableNearSample){rejectStep=stepLen;}
       prevDens = 0.0;
       prevMacroDens = 0.0;
       prevTsun = Tsun_cached;
       t = min(t + rejectStep, t1);
       iter = iter + 1;
+      pendingNearLength=0.0;
       continue;
     }
 
     // LOD from actual camera distance and FOV. Step length is still allowed to
     // raise far LODs, but near/in-volume samples stay anchored to screen-space
     // pixel footprint so clouds do not vanish while the camera passes through.
-    let stepLOD = clamp(log2(max(stepLen / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);
+    let stepLOD = clamp(log2(max(integrationStepLen / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);
     let pixelLOD = clamp(log2(max(samplePixelWorld / wg_finestWorld, 1.0)), 0.0, wg_maxMipS);
     let baseLOD = mix_f(pixelLOD, max(pixelLOD, stepLOD), smoothstep(0.70, 1.0, farF));
 
@@ -471,11 +599,14 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
 
     let auroraMask = auroraCapMask(p);
     if (auroraMask <= 0.0001) {
+      refineCloudInterval = false;
+      refinementDensity = 0.0;
       prevDens = 0.0;
       prevMacroDens = 0.0;
       prevTsun = Tsun_cached;
       t = min(t + clamp(stepLen * 2.5, TUNE.minStep, effectiveMaxStep * 5.0), t1);
       iter = iter + 1;
+      pendingNearLength=0.0;
       continue;
     }
     var stepWarp = vec2<f32>(0.0);
@@ -487,11 +618,25 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let visibleLodEaseDefined = visibleLodEase * mix_f(1.0, 0.74, definitionHold);
     var lodShapeVisible = clamp(min(lodShapeLighting, mix_f(1.10, 2.38, visibleLodEaseDefined)), 0.0, wg_maxMipS);
     var lodDetailVisibleBase = clamp(min(lodDetailLighting, mix_f(1.12, 2.72, visibleLodEaseDefined)), 0.0, wg_maxMipD);
-    if(!sphericalCloudMode() && max(B.half.x,B.half.z)>36.0){
-      // Wide skies must filter distant subpixel bands instead of forcing
-      // fine erosion through the artistic close-view mip caps.
-      lodShapeVisible=max(lodShapeVisible,clamp(log2(max(samplePixelWorld*wg_scaleS_effMax*wg_shapeDim.x,1.0)),0.0,wg_maxMipS));
-      lodDetailVisibleBase=max(lodDetailVisibleBase,clamp(log2(max(samplePixelWorld*wg_scaleD_effMax*wg_detailDim.x,1.0)),0.0,wg_maxMipD));
+    if (!sphericalCloudMode()) {
+      // Filter true texture texels across the pixel cone and march interval.
+      // verticalScaledDomainPos keeps world-space Y unchanged: the legacy
+      // vertical-domain scale would overfilter relief as sky span increases.
+      let domainStretch = vec3<f32>(1.0);
+      let shapeTexels = abs(axisOrOne3(NTransform.shapeAxisScale)) * wg_shapeDim * wg_scaleS
+        * max(select(NTransform.shapeScale, 1.0, NTransform.shapeScale == 0.0), EPS);
+      let detailTexels = abs(axisOrOne3(NTransform.detailAxisScale)) * wg_detailDim * wg_scaleD
+        * max(select(NTransform.detailScale, 1.0, NTransform.detailScale == 0.0), EPS);
+      let pixelWorld = sampleRayDistance * rayPixelWorldScale;
+      // A corner can split one cell into arbitrarily short intervals. Its
+      // texture footprint must not sharpen abruptly at that quadrature edge.
+      let materialFilterStep=max(nearCellPitch,adaptiveStepLen);
+      let shapePixelFootprint = pixelWorld * max(length(basisRight * domainStretch * shapeTexels), length(basisUp * domainStretch * shapeTexels));
+      let detailPixelFootprint = pixelWorld * max(length(basisRight * domainStretch * detailTexels), length(basisUp * domainStretch * detailTexels));
+      let shapeIntervalFootprint = materialFilterStep * length(rayRd * domainStretch * shapeTexels) * 0.5;
+      let detailIntervalFootprint = materialFilterStep * length(rayRd * domainStretch * detailTexels) * 0.5;
+      lodShapeVisible = max(lodShapeVisible, clamp(log2(max(max(shapePixelFootprint, shapeIntervalFootprint), 1.0)), 0.0, wg_maxMipS));
+      lodDetailVisibleBase = max(lodDetailVisibleBase, clamp(log2(max(max(detailPixelFootprint, detailIntervalFootprint), 1.0)), 0.0, wg_maxMipD));
     }
     if (sphericalCloudMode() && !auroraLayerMode()) {
       // Use the real texture texel footprint, not one whole noise tile. Retain
@@ -537,7 +682,9 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let macroEmptyThreshold = max(TUNE.sunDensityGate * mix_f(0.46, 0.94, thickPerfF), 0.00006);
     let macroMissF = smoothstep(macroEmptyThreshold * 2.5, macroEmptyThreshold * 0.45, max(densMacro, prevMacroDens));
     let macroMissAllowed = macroMissF * smoothstep(nearFineDist * 1.25, nearFineDist * 3.0, sampleRayDistance) * max(thickPerfF, screenFarF * 0.55) * (1.0 - nearHorizontalRayF * 0.90);
-    if (macroMissAllowed > 0.72 && densMacro < macroEmptyThreshold) {
+    if (CLOUD_FROZEN_SLICES==0u && macroMissAllowed > 0.72 && densMacro < macroEmptyThreshold) {
+      refineCloudInterval = false;
+      refinementDensity = 0.0;
       let missBoost = mix_f(1.35, min(max(TUNE.emptySkipMult, 1.0), 4.10), macroMissAllowed);
       let missStep = clamp(stepLen * missBoost, TUNE.minStep, effectiveMaxStep * 2.80);
       prevDens = 0.0;
@@ -545,6 +692,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
       prevTsun = Tsun_cached;
       t = min(t + missStep, t1);
       iter = iter + 1;
+      pendingNearLength=0.0;
       continue;
     }
 
@@ -588,9 +736,23 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let farSilhouetteKeep = smoothstep(0.36, 1.0, screenFarF) * saturate(remap(densMacro, 0.025, 0.20, 0.0, 1.0));
     dens = max(dens, densMacro * farSilhouetteKeep * 0.22);
 
+    // The macro envelope includes space that fine erosion removes. Refine only
+    // actual visible material; otherwise long empty envelope runs consume the
+    // surface budget and force oversized steps through the cloud farther on.
+    let desiredSurfaceStep = clamp(targetOpticalDepth / max(dens * extinctionPerDensity, EPS), TUNE.minStep, baseStepLen);
+    let surfaceNeedsRefinement = desiredSurfaceStep < baseStepLen * 0.95;
+    if (!sphericalCloudMode() && !stableNearSample && !refineCloudInterval && surfaceNeedsRefinement && stepLen > desiredSurfaceStep * 1.05) {
+      refineCloudInterval = true;
+      refinementDensity = dens;
+      pendingNearLength=0.0;
+      continue;
+    }
+    refineCloudInterval = !sphericalCloudMode() && surfaceNeedsRefinement;
+    refinementDensity = max(dens, 0.0);
+
     let bodySmooth = smoothstep(0.08, 0.42, max(densMacro, prevMacroDens));
-    let raySmoothDensAdaptive = saturate(mix_f(TUNE.raySmoothDens * 0.18, TUNE.raySmoothDens, bodySmooth) * mix_f(1.0, 0.58, definitionHold));
-    let densSmoothed = mix_f(dens, prevDens, raySmoothDensAdaptive);
+    let raySmoothDensAdaptive = select(saturate(mix_f(TUNE.raySmoothDens * 0.18, TUNE.raySmoothDens, bodySmooth) * mix_f(1.0, 0.58, definitionHold)),0.0,stableNearSample);
+    let densSmoothed = mix_f(dens, prevDens, raySmoothDensAdaptive)*wideCloudBoundaryFade(p);
     let densMacroSmoothed = mix_f(densMacro, prevMacroDens, saturate(raySmoothDensAdaptive * 0.90));
     let denseInteriorStepF = thickPerfF * smoothstep(0.22, 0.62, densMacroSmoothed) * smoothstep(0.20, 0.90, sampleRayDistance);
     let farProxyStepF = farProxySafeF * smoothstep(0.07, 0.28, densMacroSmoothed);
@@ -620,7 +782,9 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     let stepBoost = mix_f(1.0, stepBoostMax, adaptiveStepF);
     let occStepLimit = max(effectiveMaxStep, effectiveMaxStep * mix_f(1.0, occlusionStepBoost, frontOccF));
     let auroraStepLimit = select(occStepLimit, max(occStepLimit, stepLen), auroraLayerMode());
-    let sampleStepLen = clamp(stepLen * stepBoost, TUNE.minStep, auroraStepLimit);
+    // A midpoint sample represents the interval that was actually sampled.
+    // Expanding it afterwards skipped surface structure and painted comb bands.
+    let sampleStepLen = select(integrationStepLen, clamp(stepLen * stepBoost, TUNE.minStep, auroraStepLimit), sphericalCloudMode());
 
     if (densSmoothed > 0.00008) {
       if (auroraLayerMode()) {
@@ -641,18 +805,13 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
         prevDens = densSmoothed;
         prevMacroDens = densMacroSmoothed;
         prevTsun = 1.0;
-        t = min(t + sampleStepLen, t1);
+        t = min(t + select(stepLen,sampleStepLen,sphericalCloudMode()), t1);
         iter = iter + 1;
-        continue;
+        pendingNearLength=0.0;
+      continue;
       }
 
-      let localNoiseScreen = hash11Fast(
-        f32(fullPix.x) * 0.093427 +
-        f32(fullPix.y) * 0.047971 +
-        f32(iter) * 0.217873 +
-        rand0 * 23.731
-      );
-      var localNoise = localNoiseScreen;
+      var localNoise = smoothCellHash2D(p.xz + p.y * vec2<f32>(0.37, 0.61), 24.0);
       if (sphericalCloudMode()) {
         let localUvForNoise = shellUVFromWorld(p);
         localNoise = shellHash(
@@ -670,8 +829,17 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
       let thickLightPerfF = thickLightF * (1.0 - lightingEdgeProtect);
       let adaptiveStrideAdd = i32(floor(farF * 4.5 + screenFarF * 1.25 + shadowInteriorProbe * farF * 2.75 + proxyPerfF * 2.35 + thickLightPerfF * mix_f(1.2, 5.2, shadowInteriorProbe)));
       let sunStrideSafe = max(TUNE.sunStride + adaptiveStrideAdd, 1);
-      if ((iter % sunStrideSafe) == 0) {
-        if (densMacroSmoothed * sampleStepLen > TUNE.sunDensityGate) {
+      // Initialize lighting at each newly encountered cloud surface. Reusing
+      // the previous cloud (or the default normal) until a global iteration
+      // boundary paints coherent ray-step bands across side-on silhouettes.
+      let lightingCell=vec3<i32>(floor((p-B.center)/(nearCellPitch*f32(sunStrideSafe))));
+      let refreshMaterialLighting=any(lightingCell!=previousLightingCell);
+      if (stableNearSample || (!sphericalCloudMode() && (prevDens <= 0.00008 || refreshMaterialLighting)) || (sphericalCloudMode() && (iter % sunStrideSafe) == 0)) {
+        previousLightingCell=lightingCell;
+        let shadowProbeStep = select(0.02, sampleStepLen, sphericalCloudMode());
+        let shadowProbeOD = densMacroSmoothed * shadowProbeStep;
+        let shadowGateStart = TUNE.sunDensityGate * select(0.25, 1.0, sphericalCloudMode());
+        if (shadowProbeOD > shadowGateStart) {
           let lowTransCut = select(0i, 1i, Tr < max(transmittanceCutoff() * 1.1, 0.01));
           let cheapSun = (proxyPerfF > 0.68) && (shadowInteriorProbe < 0.16) && (sampleRayDistance > effectiveNearFluffDist * 1.40) && (lightingEdgeProtect < 0.14);
           let localConeSun = (thickLightPerfF > 0.42 && shadowInteriorProbe > 0.24 && sampleRayDistance > effectiveNearFluffDist * 1.65 && (farF > 0.22 || Tr < 0.62) && lightingEdgeProtect < 0.18);
@@ -686,11 +854,15 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
             Tsun_cached = sunTransmittance(
               p, sunDir, 0.0, lodShapeLighting, sunStepAdaptive,
               wScale, sunStepsAdaptive,
-              fract(bnLocal + rand0 * 0.61803398875 + f32(iter) * 0.131)
+              select(0.5, fract(bnLocal + rand0 * 0.61803398875 + f32(iter) * 0.131), sphericalCloudMode())
             );
           }
         } else {
           Tsun_cached = 1.0;
+        }
+        if (!sphericalCloudMode()) {
+          let shadowWeight = smoothstep(shadowGateStart, max(TUNE.sunDensityGate * 2.0, shadowGateStart + EPS), shadowProbeOD);
+          Tsun_cached = mix_f(1.0, Tsun_cached, shadowWeight);
         }
 
         let thickDenseFastLighting = thickLightPerfF > 0.30 && shadowInteriorProbe > 0.12 && lightingEdgeProtect < 0.20;
@@ -698,9 +870,11 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
         let ultraFastLighting = fastLighting && (thickDenseFastLighting || ((thickLightPerfF > 0.38 && shadowInteriorProbe > 0.18) && lightingEdgeProtect < 0.14) || proxyPerfF > 0.70 || Tr < 0.48);
         if (CLOUD_DETAILED_LIGHTING != 0u && !fastLighting && sunStrideSafe <= 1) {
           shapeN_cached = approxShapeNormal(p, max(ph_coarse, 0.0), max(0.0, lodShapeLighting));
-        } else if (ultraFastLighting) {
+        } else if (ultraFastLighting && sphericalCloudMode()) {
           shapeN_cached = approxShapeNormalFromChannels(s, p, max(ph_coarse, 0.0), sunDir, viewDir);
         } else {
+          // Keep one continuous material slope on flat shelves. Switching to
+          // an unrelated channel normal at a density threshold exposed seams.
           shapeN_cached = approxShapeNormalFast(p, max(ph_coarse, 0.0), max(0.0, lodShapeLighting + 0.45));
         }
 
@@ -737,7 +911,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
         upperExposure_cached = smoothstep(0.36, 0.82, upperRelative);
       }
 
-      let raySmoothSunAdaptive = saturate(mix_f(TUNE.raySmoothSun * 0.22, TUNE.raySmoothSun, bodySmooth) * mix_f(1.0, 0.45, lightingEdgeProtect));
+      let raySmoothSunAdaptive = select(saturate(mix_f(TUNE.raySmoothSun * 0.22, TUNE.raySmoothSun, bodySmooth) * mix_f(1.0, 0.45, lightingEdgeProtect)),0.0,stableNearSample);
       let TsunSmoothed = mix_f(Tsun_cached, prevTsun, raySmoothSunAdaptive);
       let shadowInterior = saturate(remap(densMacroSmoothed, 0.05, 0.32, 0.0, 1.0)) * (1.0 - saturate(TsunSmoothed * 1.35));
       let bnScaled = mix_f(bnLocal, bnLocal * TUNE.bnFarScale, farF) * mix_f(1.0, 0.18, shadowInterior);
@@ -748,14 +922,22 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
       let frontCardEdge = smoothstep(0.0008, 0.045, densSmoothed);
       let viewFrontCardOcclusion = rayShallowF * frontCardWindow * frontCardDensity * frontCardEdge;
       let shellFrontCardOcclusion = planetCardF * frontCardDensity * frontCardEdge * 0.46;
-      let frontCardOcclusion = cloudModeF32(viewFrontCardOcclusion, shellFrontCardOcclusion, shellFrontCardOcclusion);
+      // Flat opacity integrates the 3-D density only. The old front-card fill
+      // depended on ray progress to the box exit, changing opacity when only
+      // the enclosing bounds changed. Spherical card support is unchanged.
+      let frontCardOcclusion = cloudModeF32(0.0, shellFrontCardOcclusion, shellFrontCardOcclusion);
       let cardOcclusionStrength = 1.0 + frontCardOcclusion * mix_f(1.15, 2.65, saturate(TUNE.frontOcclusionStrength));
       let cardMacroFill = max(densSmoothed, densMacroSmoothed * mix_f(0.72, 1.28, frontCardOcclusion));
       let densForOpacity = mix_f(densSmoothed, cardMacroFill, frontCardOcclusion * 0.74);
 
       let rawSampleODFine = densForOpacity * sampleStepLen * VIEW_EXTINCTION_SCALE * cardOcclusionStrength;
       let rawSampleODMacro = densMacroSmoothed * sampleStepLen * VIEW_EXTINCTION_SCALE * mix_f(1.0, cardOcclusionStrength, frontCardOcclusion * 0.42);
-      let sampleOD = min(mix_f(rawSampleODFine, rawSampleODMacro, 0.58 * shadowInterior), max(C.attenuationClamp, 0.001));
+      // Camera extinction integrates density over distance. The historical
+      // per-sample lighting clamp limited each occupied interval to the same
+      // tiny opacity: longer steps and close side views therefore saw through
+      // dense banks. Keep the legacy spherical treatment independent.
+      let integratedOD = mix_f(rawSampleODFine, rawSampleODMacro, 0.58 * shadowInterior);
+      let sampleOD = select(integratedOD, min(integratedOD, max(C.attenuationClamp, 0.001)), sphericalCloudMode());
       let absorb = BeerLaw(sampleOD, C.cloudBeer);
       let alpha = 1.0 - absorb;
 
@@ -764,9 +946,21 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
       let exposureEffective = sunExposure_cached * mix_f(1.0, 0.28, shadowInterior);
       let sideEffective = mix_f(sunSide_cached, 0.62, 0.35 * shadowInterior);
 
+      // Shading describes the material, not the size of this integration cell.
+      // Feeding the actual cell alpha to powder/silver lighting made a larger
+      // coverage step turn the same cloud abruptly dark or bright. Keep the
+      // authored lighting clamp on a fixed local probe, while view extinction
+      // above continues to integrate the full, unclamped optical distance.
+      let materialOD = lightDensity * 0.02 * VIEW_EXTINCTION_SCALE;
+      let materialAlpha = 1.0 - BeerLaw(min(materialOD, max(C.attenuationClamp, 0.001)), C.cloudBeer);
+      let lightingAlpha = select(materialAlpha, alpha, sphericalCloudMode());
+      // Absorption-weighted mean transmission over this interval. Using the
+      // entry transmission biases coarse cells toward the front-lit profile.
+      let lightingTr = select(Tr * (1.0 + absorb) * 0.5, Tr, sphericalCloudMode());
+
       var lightCol = CalculateLight(
         lightDensity,
-        alpha,
+        lightingAlpha,
         TsunSmoothed,
         cosVS,
         ph_coarse,
@@ -775,7 +969,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
         rimEffective,
         sideEffective,
         sunRim_cached,
-        Tr,
+        lightingTr,
         exposureEffective,
         upperExposure_cached
       );
@@ -808,7 +1002,11 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
       lightCol *= frontCardBrightnessHold;
 
       let shadowLift = vec3<f32>(0.045, 0.050, 0.058) * shadowInterior;
-      lightCol = lightCol + shadowLift * alpha;
+      lightCol = lightCol + shadowLift * lightingAlpha;
+
+      if (TUNE.paintedLayers > 0.0 && TUNE.formType < 0.5 && !sphericalCloudMode()) {
+        lightCol *= mix_f(1.0, paintedLayerValue(ph_coarse, s), TUNE.paintedLayers);
+      }
 
       let lNow = luminance(lightCol);
       let meanL = select(lNow, runMeanL / max(runN, 1.0), runN > 0.0);
@@ -848,7 +1046,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
     prevMacroDens = densMacroSmoothed;
     prevTsun = Tsun_cached;
 
-    t = min(t + sampleStepLen, t1);
+    t = min(t + select(stepLen,sampleStepLen,sphericalCloudMode()), t1);
     iter = iter + 1;
   }
 
@@ -910,7 +1108,7 @@ fn computeCloudCore(gid_in: vec3<u32>, local_id: vec3<u32>) {
   storeLayerSample(pixI, newCol, rayFarHistoryF, temporalHistoryActive);
 }
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(CLOUD_WORKGROUP_WIDTH, 8, 1)
 fn computeCloudBox(
   @builtin(global_invocation_id) gid_in: vec3<u32>,
   @builtin(local_invocation_id) local_id: vec3<u32>

@@ -1,17 +1,23 @@
+import {installCloudLabTheme} from './cloudLabUi.js';
+
 export function selectedCloudDemo(url=window.location.href) {
- return new URL(url).searchParams.get('demo')==='planet'?'planet':'flat';
+ const demo=new URL(url).searchParams.get('demo');
+ return demo==='planet'||demo==='erosion'?demo:'flat';
 }
 export function cloudDemoUrl(demo,url=window.location.href) {
- const target=new URL(url);target.searchParams.set('demo',demo==='planet'?'planet':'flat');return target.href;
+ const target=new URL(url);target.searchParams.set('demo',demo==='planet'||demo==='erosion'?demo:'flat');return target.href;
 }
+// A segmented set of real links (switching demos is a full navigation that
+// releases the other scene's GPU resources). Styled by cloudLabUi.js; each
+// demo moves it into its control rail head, otherwise it floats bottom-right.
 export function mountCloudDemoNavigation(doc=document,url=window.location.href) {
+ installCloudLabTheme(doc);
  if(doc.getElementById('cloud-demo-navigation'))return;
- const nav=doc.createElement('nav');nav.id='cloud-demo-navigation';nav.setAttribute('aria-label','Cloud demos');
- nav.style.cssText='position:fixed;right:12px;bottom:12px;z-index:10000;display:flex;gap:5px;padding:5px;border:1px solid #536783;background:#08111ee8;border-radius:10px;font:13px system-ui,sans-serif;box-shadow:0 2px 12px #0006';
+ const nav=doc.createElement('nav');nav.id='cloud-demo-navigation';nav.setAttribute('aria-label','Noise demos');
+ nav.className='cl-switch cl-switch--floating';
  const current=selectedCloudDemo(url);
- for(const [demo,label] of [['flat','Flat clouds'],['planet','Planet clouds']]){
+ for(const [demo,label] of [['flat','Flat clouds'],['planet','Planet clouds'],['erosion','Erosion terrain']]){
   const link=doc.createElement('a');link.textContent=label;link.href=cloudDemoUrl(demo,url);
-  link.style.cssText='padding:8px 12px;text-decoration:none;color:#e6efff;border-radius:6px;background:'+(demo===current?'#304d73':'#131f31');
   if(demo===current){link.setAttribute('aria-current','page');link.addEventListener('click',event=>event.preventDefault());}
   nav.appendChild(link);
  }

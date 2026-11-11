@@ -1,4 +1,4 @@
-// Small, independent setup-only stages. Periodic value FBM has a continuous
+// Small, independent GPU stages. Periodic value FBM has a continuous
 // Cartesian domain, signed-safe integer hashing and no longitude seams.
 const SOURCE=`
 struct Settings { size:vec4<u32>, seed:vec4<u32> };
@@ -18,14 +18,16 @@ fn value(p:vec3<f32>,period:i32,seed:u32)->f32 {
  }}}return sum;
 }
 fn fbm(p:vec3<f32>,frequency:i32,seed:u32)->f32 {
+ let domain=p+vec3<f32>(.79,.23,-.57)*bitcast<f32>(settings.size.w);
  var sum=0.0;var amp=1.0;var total=0.0;var frequencyNow=frequency;
- for(var o=0u;o<3u;o++){sum+=value(p*f32(frequencyNow),frequencyNow,seed+o*1973u)*amp;total+=amp;amp*=0.45;frequencyNow*=2;}
+ for(var o=0u;o<3u;o++){sum+=value(domain*f32(frequencyNow),frequencyNow,seed+o*1973u)*amp;total+=amp;amp*=0.45;frequencyNow*=2;}
  return sum/total;
 }
 // Analytic smooth-noise gradient: the sphere equivalent of curl-FBM's
 // rotated gradient, without a flat longitude-domain discontinuity.
 fn valueGradient(p:vec3<f32>,seed:u32)->vec3<f32> {
- let cell=vec3<i32>(floor(p));let f=fract(p);
+ let domain=p+vec3<f32>(.79,.23,-.57)*bitcast<f32>(settings.size.w)*3.1;
+ let cell=vec3<i32>(floor(domain));let f=fract(domain);
  let t=f*f*f*(f*(f*6.0-15.0)+10.0);let dt=30.0*f*f*(f-1.0)*(f-1.0);
  var gradient=vec3<f32>(0);
  for(var z=0;z<2;z++){for(var y=0;y<2;y++){for(var x=0;x<2;x++){
@@ -95,8 +97,51 @@ fn stormWarp(direction:vec3<f32>,axis:vec3<f32>)->vec3<f32> {
  let hemisphere=smoothstep(-0.12,0.16,dot(direction,normalize(vec3<f32>(1.0,0.10,0.0)))+(b-0.5)*0.32);
  textureStore(weather,vec2<i32>(id.xy),0,vec4<f32>(a,b,0.0,hemisphere));
 }
-// Setup-only backtracing. Keep ordinary cloud setup on its small entry point;
-// gas turbulence is baked once and simply sampled in the animation loop.
+// Satellite cloud maps: connected fronts, curled storm shields and smaller
+// maritime clouds. This runs at setup or in-place regeneration, never per ray sample.
+@compute @workgroup_size(8,8,1) fn satelliteWeatherNoise(@builtin(global_invocation_id) id:vec3<u32>) {
+ if(any(id.xy>=settings.size.yz)){return;}
+ let uv=(vec2<f32>(id.xy)+.5)/vec2<f32>(settings.size.yz);
+ let lon=uv.x*6.283185307;let lat=uv.y*3.141592654;
+ let original=vec3<f32>(sin(lat)*cos(lon),cos(lat),sin(lat)*sin(lon));
+ var d=original;let seed=settings.seed.x;let mode=settings.seed.y;
+ var shields=0.0;
+ for(var i=0u;i<6u;i++){
+  let cell=vec3<i32>(i32(i),83,137);
+  let longitude=hash(cell,seed+17u)*6.283185307;
+  let latitude=(hash(cell,seed+347u)*2.0-1.0)*.70;
+  let axis=vec3<f32>(sqrt(1.0-latitude*latitude)*cos(longitude),latitude,sqrt(1.0-latitude*latitude)*sin(longitude));
+  let local=stormFrame(d,axis);
+  let q=local/vec2<f32>(.34,.24);
+  let reach=exp(-dot(q,q)*1.5)*smoothstep(.75,.94,dot(d,axis));
+  let handed=select(-1.0,1.0,axis.y>0.0);
+  d=vortex(d,axis,handed*select(3.0,5.0,mode==5u));
+  // An uneven central shield connects to the spiraling front, without rings.
+  shields=max(shields,reach);
+ }
+ for(var i=0;i<4;i++){
+  let curl=sphereCurl(d,seed+3191u);
+  d=normalize(d-curl*.012);
+ }
+ let p=d*.36+vec3<f32>(.5);
+ let broad=fbm(p,8,seed+911u);let fine=fbm(p,64,seed+1237u);
+ let banks=fbm(p,16,seed+5711u);
+ // Stretched cloud shields with one ragged side, rather than closed contour
+ // ropes. Backtracing rolls these elongated banks into comma-shaped fronts.
+ let frontDomain=vec3<f32>(dot(d,vec3<f32>(.36,.48,.80))*.58,
+   dot(d,vec3<f32>(-.80,.60,0))*1.45,dot(d,vec3<f32>(-.48,-.64,.60))*.42)+vec3<f32>(.5);
+ let front=smoothstep(.45,.64,fbm(frontDomain,8,seed+2101u)+(fine-.5)*.12);
+ let openings=smoothstep(.30,.58,fbm(p,4,seed+6029u));
+ let sheets=smoothstep(.44,.64,banks)*smoothstep(.35,.55,broad);
+ let cells=smoothstep(.45,.66,fine)*smoothstep(.38,.60,banks);
+ var cover=clamp(front*openings*.86+sheets*.43+shields*.65+cells*.20,0.0,1.0);
+ if(mode==5u){cover=clamp(front*openings*.82+shields*.90+sheets*.24+cells*.18,0.0,1.0);}
+ if(mode==6u){cover=clamp(front*openings*.36+sheets*.32+cells*.66+shields*.25,0.0,1.0);}
+ // Fine erosion softens ragged rims while keeping large cloud shields intact.
+ cover=clamp(cover+(fine-.5)*.16,0.0,1.0);
+ textureStore(weather,vec2<i32>(id.xy),0,vec4<f32>(cover,fine,0.0,1.0));
+}
+// Bake or regenerate the weather map; keep backtracing outside ray samples.
 @compute @workgroup_size(8,8,1) fn gasWeatherNoise(@builtin(global_invocation_id) id:vec3<u32>) {
  if(any(id.xy>=settings.size.yz)){return;}
  let uv=(vec2<f32>(id.xy)+.5)/vec2<f32>(settings.size.yz);
@@ -194,21 +239,36 @@ export class PlanetCloudNoise {
  async bake({key,seed=1,shapeSize=128,weatherWidth=1024,weatherHeight=512,gas=false,weatherStyle='legacy'}){
   for(const size of [shapeSize,weatherWidth,weatherHeight])if(!Number.isInteger(size)||size<1)throw new RangeError('Planet noise dimensions must be positive integers');
   const gasMode=weatherStyle==='neptune'?2:weatherStyle==='hail_mary'?3:weatherStyle==='gas_giant'||gas?1:0;
+  const satelliteMode=weatherStyle==='satellite'?4:weatherStyle==='cyclonic'?5:weatherStyle==='trade_winds'?6:0;
   gas=gasMode>0;
   await this.prepare();this.release(key);const d=this.device,usage=GPUTextureUsage.STORAGE_BINDING|GPUTextureUsage.TEXTURE_BINDING;
   if(gas && !this.gasPipelineReady)this.gasPipelineReady=d.createComputePipelineAsync({layout:this.pipelineLayout,compute:{module:this.module,entryPoint:'gasWeatherNoise'}}).catch(error=>{this.gasPipelineReady=null;throw error;});
-  const weatherPipeline=gas?await this.gasPipelineReady:this.weatherPipeline;
+  if(satelliteMode && !this.satellitePipelineReady)this.satellitePipelineReady=d.createComputePipelineAsync({layout:this.pipelineLayout,compute:{module:this.module,entryPoint:'satelliteWeatherNoise'}}).catch(error=>{this.satellitePipelineReady=null;throw error;});
+  const weatherPipeline=satelliteMode?await this.satellitePipelineReady:gas?await this.gasPipelineReady:this.weatherPipeline;
   const shape=d.createTexture({dimension:'3d',size:[shapeSize,shapeSize,shapeSize],format:'rgba16float',usage});
   const weather=d.createTexture({size:[weatherWidth,weatherHeight,1],format:'rgba16float',usage});
   const uniform=d.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
   const shapeView=shape.createView(),weatherView=weather.createView({dimension:'2d-array'});
-  const resource={shape,weather,shapeView,weatherView,uniform};this.resources.set(key,resource);
-  d.queue.writeBuffer(uniform,0,new Uint32Array([shapeSize,weatherWidth,weatherHeight,0,seed>>>0,gasMode,0,0]));
+  const resource={shape,weather,shapeView,weatherView,uniform,weatherPipeline,
+   weatherGroups:[Math.ceil(weatherWidth/8),Math.ceil(weatherHeight/8),1],phaseUniform:new Float32Array(1),weatherPhase:0};this.resources.set(key,resource);
+  d.queue.writeBuffer(uniform,0,new Uint32Array([shapeSize,weatherWidth,weatherHeight,0,seed>>>0,satelliteMode||gasMode,0,0]));
   const group=d.createBindGroup({layout:this.layout,entries:[{binding:0,resource:{buffer:uniform}},{binding:1,resource:shapeView},{binding:2,resource:weatherView}]});
+  resource.group=group;
   const encoder=d.createCommandEncoder();
   for(const [pipeline,groups] of [[this.shapePipeline,[Math.ceil(shapeSize/4),Math.ceil(shapeSize/4),Math.ceil(shapeSize/4)]],[weatherPipeline,[Math.ceil(weatherWidth/8),Math.ceil(weatherHeight/8),1]]]){
    const pass=encoder.beginComputePass();pass.setPipeline(pipeline);pass.setBindGroup(0,group);pass.dispatchWorkgroups(...groups);pass.end();
   }d.queue.submit([encoder.finish()]);return resource;
+ }
+ // Reuse the existing map/view/bindings. Shape/detail volumes are untouched.
+ regenerateWeather(key,phase){
+  const r=this.resources.get(key);
+  if(!r||!Number.isFinite(phase))return false;
+  r.phaseUniform[0]=phase;r.weatherPhase=phase;
+  this.device.queue.writeBuffer(r.uniform,12,r.phaseUniform);
+  const encoder=this.device.createCommandEncoder({label:'Planet weather texture regeneration'});
+  const pass=encoder.beginComputePass();pass.setPipeline(r.weatherPipeline);pass.setBindGroup(0,r.group);
+  pass.dispatchWorkgroups(...r.weatherGroups);pass.end();this.device.queue.submit([encoder.finish()]);
+  return true;
  }
  release(key){const r=this.resources.get(key);if(r){r.shape.destroy();r.weather.destroy();r.uniform.destroy();this.resources.delete(key);}}
  destroy(){for(const key of this.resources.keys())this.release(key);}

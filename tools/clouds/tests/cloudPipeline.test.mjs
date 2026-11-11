@@ -5,7 +5,10 @@ import test from 'node:test';
 // Exercise the real builder methods without requiring a GPU or WGSL bundler.
 const source = (await readFile(new URL('../clouds.js', import.meta.url), 'utf8'))
   .replace(/^import (\w+) from "\.\/[^" ]+\.wgsl";$/gm, 'const $1 = "";')
+  .replace('"./cloudTerrainMesh.js"',JSON.stringify(new URL('../cloudTerrainMesh.js',import.meta.url).href))
   .replace('"./cloudFieldQuality.js"',JSON.stringify(new URL('../cloudFieldQuality.js',import.meta.url).href))
+  .replace("'./cloudNavigation.js'",JSON.stringify(new URL('../cloudNavigation.js',import.meta.url).href))
+  .replace("'./cloudFrozenPattern.js'",JSON.stringify(new URL('../cloudFrozenPattern.js',import.meta.url).href))
   .replace("'./cloudLookPresets.js'",JSON.stringify(new URL('../cloudLookPresets.js',import.meta.url).href));
 const { CloudComputeBuilder } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
@@ -14,7 +17,7 @@ function fixture(device = {}) {
   Object.assign(builder, {
     device, outFormat: 'rgba16float', module: {}, _computePipelineLayout: {},
     _dvOptions: new DataView(new ArrayBuffer(32)),
-    _abTuning: new ArrayBuffer(256), _computePipelineKey: -1,
+    _abTuning: new ArrayBuffer(272), _computePipelineKey: -1,
     _computePipelines: new Map(), _computePipelinePromises: new Map(),
     _state: { tuning: {} }, _writeIfChanged() {},
     // These tests isolate main-variant caching; the stage cache is tested below.
@@ -28,6 +31,29 @@ function fixture(device = {}) {
   builder.setTuning({ sunStride: 4 });
   return builder;
 }
+
+test('shelf flow occupies its own uniform lane and keeps the original domain by default', () => {
+  const b = fixture();
+  assert.equal(b._dvTuning.getFloat32(256,true),0);
+  b.setTuning({shelfFlow:1.25,towerHeightVariation:.6});
+  assert.equal(b._dvTuning.getFloat32(256,true),1.25);
+  assert.ok(Math.abs(b._dvTuning.getFloat32(252,true)-.6)<1e-6);
+  b.setTuning({shelfFlow:20});
+  assert.equal(b._dvTuning.getFloat32(256,true),2);
+  b.setTuning({shelfFlow:0});
+  assert.equal(b._dvTuning.getFloat32(256,true),0);
+});
+
+test('painted-layer lighting defaults off and packs without changing geometry uniforms',()=>{
+  const b=fixture(),before=new Uint8Array(b._abTuning).slice();
+  assert.equal(b._dvTuning.getFloat32(260,true),0);
+  b.setTuning({paintedLayers:1});
+  assert.equal(b._dvTuning.getFloat32(260,true),1);
+  assert.deepEqual(new Uint8Array(b._abTuning).slice(0,260),before.slice(0,260));
+  assert.deepEqual(new Uint8Array(b._abTuning).slice(264),before.slice(264));
+  b.setTuning({paintedLayers:4});assert.equal(b._dvTuning.getFloat32(260,true),1);
+  b.setTuning({paintedLayers:0});assert.deepEqual(new Uint8Array(b._abTuning),before);
+});
 
 test('flat field fidelity replaces both cached textures without changing shader variants',()=>{
   globalThis.GPUTextureUsage={TEXTURE_BINDING:4,STORAGE_BINDING:8};
@@ -93,6 +119,24 @@ test('variant follows the uploaded stride and preserves all mode bits', () => {
       assert.equal(compute.entryPoint, spherical ? 'computeCloudSphere' : 'computeCloudBox');
     }
   }
+});
+
+test('procedural flat rays use wide groups while fields and planets keep their layout', () => {
+  const b = fixture();
+  b._dvFrame = new DataView(new ArrayBuffer(64));
+  b.setFrame({ fullWidth: 773, fullHeight: 435, tileWidth: 773, tileHeight: 435 });
+  assert.equal(b._computePipelineDescriptorForKey(40).compute.constants.CLOUD_WORKGROUP_WIDTH, 16);
+  b._getFieldShaderModule = () => ({});
+  assert.equal(b._computePipelineDescriptorForKey(104).compute.constants.CLOUD_WORKGROUP_WIDTH, undefined);
+  assert.equal(b._computePipelineDescriptorForKey(9).compute.constants.CLOUD_WORKGROUP_WIDTH, undefined);
+  assert.deepEqual(b._rayDispatchShape(40), [49, 55]);
+  assert.deepEqual(b._rayDispatchShape(104), [97, 55]);
+  assert.deepEqual(b._rayDispatchShape(9), [97, 55]);
+  b.setFrame({ tileWidth: 37, tileHeight: 19, originX: 12, originY: 7 });
+  assert.deepEqual(b._rayDispatchShape(40), [3, 3]);
+  assert.deepEqual(b._rayDispatchShape(40, { w: 388, h: 55 }), [25, 7]);
+  assert.deepEqual(b._rayDispatchShape(104, { w: 388, h: 55 }), [49, 7]);
+  assert.deepEqual([b._wgX, b._wgY], [5, 3], 'resolve remains in 8x8 groups');
 });
 
 test('styled planets share a compact entry while legacy and aurora retain their own path',()=>{
@@ -169,6 +213,21 @@ test('sync fallback retains cache and diagnostic behavior', async () => {
   assert.equal(builder.getComputePipelineTimings().variants[0].async, false);
 });
 
+test('live slices and frozen volume variants prewarm independently', async()=>{
+  const b=fixture();b._getFieldShaderModule=()=>({});
+  const keys=[];b._ensureComputePipelineForKeyAsync=async key=>{keys.push(key);return {};};
+  for(const formType of [0,2])for(const [enabled,axis] of [[false,0],[false,2],[true,0],[true,3]]){
+    b.setTuning({formType});b.setFrozenPattern({enabled,axis,first:.25,last:.75,spacing:8});
+    const key=b._currentComputeVariantKey();await b.prewarmComputePipelineVariantAsync();
+    assert.equal(keys.at(-1),key);
+    assert.equal(!!(key&512),axis>0,'slice layout is independent of capture');
+    assert.equal(!!(key&256),enabled&&formType>0,'only cached fields freeze');
+    const constants=b._computePipelineDescriptorForKey(key).compute.constants;
+    assert.equal(constants.CLOUD_FROZEN_SLICES,+(axis>0));
+    if(formType>0)assert.equal(constants.CLOUD_FROZEN_PATTERN,+enabled);
+  }
+});
+
 test('shader retains dynamic detailed lighting guard and compact probe loops', async () => {
   const shader = await readFile(new URL('../shaders/cloudCommon.wgsl', import.meta.url), 'utf8') + await readFile(new URL('../shaders/cloudLayer.wgsl', import.meta.url), 'utf8');
   assert.equal(shader.match(/CLOUD_DETAILED_LIGHTING != 0u && !fastLighting && sunStrideSafe <= 1/g)?.length, 2);
@@ -180,7 +239,7 @@ test('rounded forms share one variant and oversized outputs fall back to inline 
   const builder = fixture({ limits: { maxStorageBufferBindingSize: 1024 } });
   builder._getFieldShaderModule = () => 'fields';
   builder.width = 4; builder.height = 4; builder.layers = 1;
-  for (const formType of [1, 2, 3, 4, 5, 6, 7]) {
+  for (const formType of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
     builder.setTuning({ formType, sunStride: 1 });
     assert.equal(builder._currentComputeVariantKey(), 104);
     assert.equal(builder._computePipelineDescriptorForKey(104).compute.module, 'fields');
@@ -208,7 +267,7 @@ test('field cache reuses camera/AO changes, relights the sun, and rebakes change
   const builder = fixture();
   Object.assign(builder, {
     _u32Views: new WeakMap(), _abParams: new ArrayBuffer(96), _abNTransform: new ArrayBuffer(128), _abBox: new ArrayBuffer(32),
-    _dvView: new DataView(new ArrayBuffer(128)), _fieldParamsAB: new ArrayBuffer(80), _fieldResources: { dimensions: [128,64,128] },
+    _dvView: new DataView(new ArrayBuffer(128)), _fieldParamsAB: new ArrayBuffer(128), _fieldResources: { dimensions: [128,64,128] },
     _ensureFlatFieldResources() {}, _getResId(resource) { return resource; }, _fieldMipGroups:[[],[]],
     weatherView: 1, shape3DView: 2, detail3DView: 3,
   });
@@ -267,6 +326,17 @@ test('field cache reuses camera/AO changes, relights the sun, and rebakes change
   builder.setWeatherProfile();assert.deepEqual(stages(),both);
   builder.setVolumeMask({shape:'torus'});assert.deepEqual(stages(),both);
   builder.setWeatherProfile({shelf:1});assert.deepEqual(stages(),[]); // layer weights don't touch arbitrary volumes
+  builder.setVolumeMask({shape:'box'});
+  builder._state.box.half=[90,10,90];
+  builder.setTuning({formType:1});stages();
+  const fieldParams=new DataView(builder._fieldParamsAB);
+  assert.equal(fieldParams.getUint32(44,true),1,'ordinary wide skies retain their tiled cache');
+  for(const formType of [11,12]){
+    builder.setTuning({formType});assert.deepEqual(stages(),both);
+    assert.equal(fieldParams.getUint32(44,true),0,'finite storms never tile when enlarged');
+    assert.equal(fieldParams.getFloat32(16,true),180,'the whole storm uses the full box');
+    assert.deepEqual(stages(),[],'a stopped storm retains its baked fields');
+  }
 });
 
 test('rounded clouds advect their scaffold and grow billows without rescaling tower height', async () => {
@@ -286,8 +356,9 @@ test('hybrid clouds use volume noise for density, billow deformation and cached 
   assert.match(shader, /macroSigned = localBody \* 0\.85 \+ cellStructure/);
   assert.match(shader, /fineSigned = macroSigned - erosion/);
   assert.match(shader, /localForm \* 0\.85 \+ cellStructure \* 0\.65 - erosion/);
-  assert.match(shader, /p \+ detailWarp \+ NTransform\.shapeOffsetWorld/);
-  assert.match(shader, /detailScale = .*\* 0\.04;/);
+  assert.match(shader, /materialP \+ detailWarp \+ shapeAdvection/);
+  assert.match(shader, /var materialP=p;\s*if\(TUNE.formType>10.5 && TUNE.formType<12.5\)\{materialP=stormMaterialPosition\(p\);\}/);
+  assert.match(shader, /select\(0\.04,0\.065,TUNE.formType>11\.5 && TUNE.formType<12\.5\)/);
   // These compact density operations stay in the cached entrypoint. The
   // legacy recursive density/light graph must not return to the small raymarch.
   const rays = await readFile(new URL('../shaders/clouds.wgsl', import.meta.url), 'utf8');
@@ -316,7 +387,7 @@ test('rounded bulk develops continuously behind the noisy surface without extra 
   assert.match(shader, /coreDensity = interior \* 2\.0/);
   assert.match(shader, /fineDensity = max\(smoothstep\(-0\.025, 0\.24, fineSigned\), coreDensity\)/);
   assert.match(shader, /macroDensity = max\(smoothstep\(-0\.025, 0\.24, macroSigned\), coreDensity\)/);
-  assert.match(shader, /shapeScale = .* \* 0\.35;/);
+  assert.match(shader, /shapeScale = [\s\S]*?\* select\(0\.35,0\.85,TUNE\.formType>8\.5\);/);
   assert.match(shader, /detailWarp = .*vec3<f32>\(0\.16, 0\.12, 0\.16\)/);
   assert.equal(shader.match(/let detail = wrap3D_detail/g)?.length, 1);
   assert.equal(shader.match(/let shape = wrap3D_shape/g)?.length, 1);
@@ -331,14 +402,14 @@ test('cached lighting filters scalar responses instead of compressed-normal seam
   assert.match(rays, /upper = clamp\(lighting\.g, 0\.0, 1\.0\)/);
   assert.match(fields, /nearbyDensity = max\(nearbyDensity, neighbor\.g\)/);
   assert.match(fields, /if \(nearbyDensity < 0\.0001\)/);
-  assert.match(fields, /shadowSteps = u32\(clamp\(ceil\(reach \/ sunVoxelStep \* 2\.0\), 16\.0, 48\.0\)\)/);
+  assert.match(fields, /shadowSteps = u32\(clamp\(ceil\(reach \/ sunVoxelStep \* 2\.0\), 16\.0,\s*select\(48\.0,24\.0,TUNE\.formType>8\.5\)\)\)/);
   assert.match(fields, /f32\(i\) \+ 0\.5/);
-  assert.equal(rays.match(/textureSampleLevel\(cloudLightField/g)?.length, 1);
+  assert.equal(rays.slice(rays.indexOf('fn computeCloudBox(')).match(/cachedVisibleSample\(cloudLightField/g)?.length, 1);
 });
 
 test('automatic finishing follows the form while either shading style packs independently', async () => {
   const builder = fixture();
-  builder._abRender = new ArrayBuffer(304);
+  builder._abRender = new ArrayBuffer(320);
   builder._dvRender = new DataView(builder._abRender);
   for (const formType of [0,1,2,3]) for (const spherical of [false,true]) {
     builder.setTuning({formType});
@@ -359,6 +430,22 @@ test('automatic finishing follows the form while either shading style packs inde
   assert.match(volumeBranch, /volumeTint = mix\(userShadowTint, userLightTint/);
   assert.match(volumeBranch, /clamp\(R\.saturationBoost, 0\.0, 2\.20\)/);
   assert.doesNotMatch(volumeBranch, /gradLenCached|bodyShadow|sunEdgeSilver/);
+});
+
+test('preview fog bounds follow the march scale and its lower support in world space',()=>{
+ const b=fixture();b._abRender=new ArrayBuffer(320);b._dvRender=new DataView(b._abRender);
+ for(const formType of [0,1])for(const scale of [1,3,8]){
+  b.setTuning({formType,baseJitterFrac:.02});b._dvOptions.setFloat32(16,0,true);
+  b._writeRenderUniforms({box:{center:[2,6.45,-3],half:[90,.75,90]},cloudScale:scale});
+  const lower=formType?5.7:5.67;
+  assert.ok(Math.abs(b._dvRender.getFloat32(276,true)-(lower+(6.45-lower)*scale))<1e-5);
+  assert.equal(b._dvRender.getFloat32(272,true),2);assert.equal(b._dvRender.getFloat32(280,true),-3);
+  assert.equal(b._dvRender.getFloat32(288,true),90*scale);assert.equal(b._dvRender.getFloat32(292,true),.75*scale);
+ }
+ b._dvOptions.setFloat32(16,10,true);
+ b._writeRenderUniforms({box:{center:[2,6.45,-3],half:[90,.75,90]},cloudScale:8});
+ assert.ok(Math.abs(b._dvRender.getFloat32(276,true)-6.45)<1e-5);
+ assert.equal(b._dvRender.getFloat32(288,true),90);assert.equal(b._dvRender.getFloat32(292,true),.75);
 });
 
 test('aircraft state uses view padding without changing the cloud field or view-extra layout',()=>{
@@ -413,4 +500,23 @@ test('continuous weather profile weights normalize and clear without changing sh
   assert.equal(b._state.weatherProfile.asperitas,1/3);
   assert.equal(b._currentComputeVariantKey(),key);
   b.setWeatherProfile();assert.deepEqual(b._state.weatherProfile,{shelf:0,deck:0,wisps:0,cirrus:0,fluctus:0,asperitas:0});
+});
+
+test('flat terrain uses spare view padding and clears on planet views',()=>{
+ const b=fixture();b._abView=new ArrayBuffer(128);b._dvView=new DataView(b._abView);
+ b.setViewFromCamera({terrainEnabled:true});assert.equal(b._dvView.getFloat32(60,true),1);
+ b.setViewFromCamera({terrainEnabled:true,planetRadius:10});assert.equal(b._dvView.getFloat32(60,true),0);
+ b.setViewFromCamera();assert.equal(b._dvView.getFloat32(60,true),0);
+});
+
+
+test('cloud size uses a flat-only view lane without changing field input buffers',()=>{
+ const b=fixture();b._abView=new ArrayBuffer(128);b._dvView=new DataView(b._abView);
+ const before=new Uint8Array(b._abTuning).slice();
+ b.setViewFromCamera({cloudScale:3.5});assert.equal(b._dvView.getFloat32(100,true),3.5);
+ b.setViewFromCamera({cloudScale:50});assert.equal(b._dvView.getFloat32(100,true),8);
+ b.setViewFromCamera({cloudScale:-2});assert.equal(b._dvView.getFloat32(100,true),1);
+ b.setViewFromCamera({cloudScale:8,planetRadius:10,viewExtraA:7});assert.equal(b._dvView.getFloat32(100,true),7);
+ b.setViewFromCamera();assert.equal(b._dvView.getFloat32(100,true),0);
+ assert.deepEqual(new Uint8Array(b._abTuning),before);
 });

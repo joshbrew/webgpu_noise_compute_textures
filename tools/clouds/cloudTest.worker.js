@@ -211,7 +211,28 @@ let shapeAxisScale = [1, 1.22, 1],
 
 const renderBundleCache = new Map();
 const log = (...a) => postMessage({ type: "log", data: a });
-function emitTimingProgress(report, phase) {
+let lastFrameTimingPost = -Infinity;
+let navigationStatsStart = 0, navigationStatsLast = 0, navigationStatsFrames = 0;
+let pausedFrameGpuMs = 0;
+let workerPageVisible = true, wakeWorkerVisibility = null;
+
+function setWorkerPageVisibility(visible) {
+  workerPageVisible = visible !== false;
+  const wake = wakeWorkerVisibility;
+  wakeWorkerVisibility = null;
+  wake?.();
+}
+
+async function waitForWorkerVisibility() {
+  while (!workerPageVisible && loopEnabled) {
+    await new Promise(resolve => { wakeWorkerVisibility = resolve; });
+  }
+}
+function emitTimingProgress(report, phase, continuous = false) {
+  if (String(phase).startsWith('frame:') && (loopRunning || continuous)) {
+    if (phase !== 'frame:complete' || performance.now() - lastFrameTimingPost < 250) return;
+    lastFrameTimingPost = performance.now();
+  }
   try {
     postMessage({
       type: "timing",
@@ -1671,7 +1692,7 @@ function cloudViewSignature(preview, box, aspect) {
   const cam = preview?.cam || {};
   const sun = preview?.sun || {};
   return [
-    JSON.stringify(preview?.aircraft || {}),
+    JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,signatureScalar(preview?.cloudScale ?? 1),
     signatureScalar(cam.x || 0),
     signatureScalar(cam.y || 0),
     signatureScalar(cam.z || 0),
@@ -1694,7 +1715,7 @@ function renderUniformSignature(preview, aspect, layerIndex, cloudParams = {}, c
   return [
     layerIndex,
     fieldLighting ? 1 : 0,
-    JSON.stringify(preview?.aircraft || {}),
+    JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,signatureScalar(preview?.cloudScale ?? 1),
     preview?.skyCycle ? 1 : 0,
     preview?.styleSkyOverride ? 1 : 0,
     signatureScalar(preview?.nightAmount || 0),
@@ -1925,9 +1946,9 @@ function makeViewSignature(preview, w, h) {
   const sun = preview?.sun || {};
   // Evolving weather/light is expected motion, not a camera cut. Keeping its
   // colors in this invalidation key reset sparse history on every cycle frame.
-  if(preview?.weatherCycle) return ['weather-cycle',w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced',preview.cloudTurbulence ?? .75,JSON.stringify(preview?.aircraft || {})].join('|');
-  return [
-    JSON.stringify(preview?.aircraft || {}),
+  if(preview?.weatherCycle) return ['weather-cycle',JSON.stringify(preview?.frozenPattern || {}),w,h,cam.x,cam.y,cam.z,cam.yawDeg,cam.pitchDeg,cam.fovYDeg,previewRenderScaleDivider(preview),preview.temporalCellRate,preview.fieldQuality || 'balanced',preview.cloudTurbulence ?? .75,JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,roundSig(preview?.cloudScale ?? 1)].join('|');
+  return [JSON.stringify(preview?.frozenPattern || {}),
+    JSON.stringify(preview?.aircraft || {}),!!preview?.terrainEnabled,roundSig(preview?.cloudScale ?? 1),
     roundSig(cam.x),
     roundSig(cam.y),
     roundSig(cam.z),
@@ -2024,6 +2045,7 @@ async function runFrame({
   waitForGpu = false,
   logFrame = false,
   bootstrapPreview = false,
+  navigationFrame = false,
 } = {}) {
   const frameStarted = performance.now();
   const frameReport = new CloudTimingReport("cloud-frame", {
@@ -2032,7 +2054,7 @@ async function runFrame({
     bootstrapPreview: !!bootstrapPreview,
     outputSize: [MAIN_W, MAIN_H],
   });
-  emitTimingProgress(frameReport, "frame:start");
+  emitTimingProgress(frameReport, "frame:start", navigationFrame);
   const deviceStage = frameReport.start("ensure-device", undefined, "setup");
   await ensureDevice();
   frameReport.end(deviceStage);
@@ -2067,11 +2089,11 @@ async function runFrame({
   // Derive a frame from the manual payload; never store evolving values back
   // into it. Stopping the cycle therefore restores the authored scene.
   if (weatherCycle.enabled && weatherCycleGPU?.groups.length) {
-    weatherCycleState=sampleWeatherCycle(weatherCycleSeconds,weatherCycle);
+    if(!preview?.frozenPattern?.enabled || !weatherCycleState)weatherCycleState=sampleWeatherCycle(weatherCycleSeconds,weatherCycle);
     cloudParams=cycleCloudParams(cloudParams,weatherCycleState,weatherCycle.timeOfDay,preview||{});
     preview=cyclePreview(preview||{},weatherCycleState,weatherCycle.timeOfDay);
     const stage=frameReport.start('weather-map-blend',undefined,'gpu-submit');
-    const blended=weatherCycleGPU.blend(weatherCycleState,weatherCycleSeconds);
+    const blended=!preview?.frozenPattern?.enabled && weatherCycleGPU.blend(weatherCycleState,weatherCycleSeconds);
     if(blended) { weatherCycleBlendCount++; cb?.invalidateCloudFields(); }
     frameReport.end(stage,{cached:!blended,maps:6});
   }
@@ -2296,6 +2318,7 @@ async function runFrame({
   cb.setWeatherProfile(weatherCycle.enabled ? weatherCycleState?.fieldProfile : undefined);
   cb.setFieldQuality(preview?.fieldQuality || 'balanced');
   cb.setCloudTurbulence(preview?.cloudTurbulence ?? .75);
+  cb.setFrozenPattern({...preview?.frozenPattern,enabled:!!preview?.frozenPattern?.enabled && workerTuning.formType>0});
   if (cloudSig !== lastCloudSceneSignature) {
     cb.setBox(cloudBox);
     cb.setParams(cloudParams || {});
@@ -2340,6 +2363,8 @@ async function runFrame({
       stepInc: 0.04,
       volumeLayers: 1,
       aircraft: preview?.aircraft,
+      terrainEnabled: !!preview?.terrainEnabled,
+      cloudScale: Math.max(1,Math.min(8,finiteNumber(preview?.cloudScale,1))),
     });
 
     cb.setLight({
@@ -2377,7 +2402,8 @@ async function runFrame({
     }
   }
 
-  const shouldWaitForGpu = !!waitForGpu;
+  const shouldWaitForGpu = !!waitForGpu || (!loopRunning && !bootstrapPreviewMode);
+  const deferPresentation = !loopRunning && !bootstrapPreviewMode && pausedFrameGpuMs > 100;
   if (!bootstrapPreviewMode && cloudPipelineWarmupState === "running") {
     try {
       postMessage({ type: "progress", data: { message: "Finishing cloud shader compilation..." } });
@@ -2420,16 +2446,18 @@ async function runFrame({
   const tP1 = performance.now();
   const tAll0 = performance.now();
   const tPreDrain0 = performance.now();
-  if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
+  // Camera RPCs already complete the preceding frame before acknowledging it.
+  // Avoid another idle-queue round trip on every pointer update.
+  if (shouldWaitForGpu && !navigationFrame && typeof queue.onSubmittedWorkDone === "function") {
     frameReport.mark("pre-dispatch-queue-drain-start");
-    emitTimingProgress(frameReport, "frame:pre-dispatch-queue-drain");
+    emitTimingProgress(frameReport, "frame:pre-dispatch-queue-drain", navigationFrame);
     await queue.onSubmittedWorkDone();
   }
   const tPreDrain1 = performance.now();
 
   const cf = Math.max(1, effectiveCoarseFactor | 0);
   const tEncoder0 = performance.now();
-  const enc = device.createCommandEncoder();
+  let enc = device.createCommandEncoder();
   const tEncoder1 = performance.now();
   const tC0 = performance.now();
   const reconstructAtPresentation = cf >= 2;
@@ -2440,6 +2468,16 @@ async function runFrame({
       : null;
   if (!encodedDispatch) {
     throw new Error("CloudComputeBuilder.encodeDispatchPasses is required for fused frame submission.");
+  }
+  const tCEncodeEnd = performance.now();
+  // Keep the last completed canvas image available to the compositor while a
+  // slow paused frame computes. Acquire its next display image only afterward.
+  // Fast frames and animation retain their existing fused submission.
+  if (deferPresentation) {
+    queue.submit([enc.finish()]);
+    encodedDispatch.restoreAfterSubmit?.();
+    await queue.onSubmittedWorkDone();
+    enc = device.createCommandEncoder();
   }
   const tC1 = performance.now();
 
@@ -2499,6 +2537,8 @@ async function runFrame({
         gradeStyle: preview?.gradeStyle ?? 1,
         cloudShading: preview?.cloudShading || 'auto',
         aircraft: preview?.aircraft,
+      terrainEnabled: !!preview?.terrainEnabled,
+      cloudScale: Math.max(1,Math.min(8,finiteNumber(preview?.cloudScale,1))),
         sunColorTint: preview?.sunTint || [1.0, 1.0, 1.0],
         lightTint: preview?.cloudLitTint || [1.0, 1.0, 1.0],
         shadowTint: preview?.cloudShadowTint || [1.0, 1.0, 1.0],
@@ -2545,7 +2585,7 @@ async function runFrame({
   const tFinish1 = performance.now();
   queue.submit([commandBuffer]);
   const tQueueSubmit1 = performance.now();
-  encodedDispatch.restoreAfterSubmit?.();
+  if (!deferPresentation) encodedDispatch.restoreAfterSubmit?.();
 
   if (useTemporalHistory && historyAllocated) {
     historyPrevView = historyOutView;
@@ -2569,7 +2609,7 @@ async function runFrame({
   const tWait0 = performance.now();
   if (shouldWaitForGpu && typeof queue.onSubmittedWorkDone === "function") {
     frameReport.mark("post-submit-queue-wait-start");
-    emitTimingProgress(frameReport, "frame:post-submit-queue-wait");
+    emitTimingProgress(frameReport, "frame:post-submit-queue-wait", navigationFrame);
     await queue.onSubmittedWorkDone();
   }
   const tWait1 = performance.now();
@@ -2578,7 +2618,8 @@ async function runFrame({
   submittedFrameCount = (submittedFrameCount + 1) >>> 0;
 
   const timings = {
-    computeMs: tC1 - tC0,
+    computeMs: tCEncodeEnd - tC0,
+    computeGpuWaitMs: tC1 - tCEncodeEnd,
     renderMs: tR1 - tR0,
     submitMs: tSubmit1 - tSubmit0,
     gpuWaitMs: tWait1 - tWait0,
@@ -2586,6 +2627,7 @@ async function runFrame({
     commandEncoderMs: tEncoder1 - tEncoder0,
     commandFinishMs: tFinish1 - tFinish0,
     queueSubmitMs: tQueueSubmit1 - tFinish1,
+    deferredPresentation: deferPresentation,
     totalMs: tAll1 - tAll0,
     pipelineMs: tP1 - tP0,
     pipelineWarmupWaitMs: tWarmupWait1 - tWarmupWait0,
@@ -2608,6 +2650,7 @@ async function runFrame({
     computeStages: encodedDispatch.stageTimings || [],
     frame: submittedFrameCount,
   };
+  if (!loopRunning && !bootstrapPreviewMode) pausedFrameGpuMs = timings.computeGpuWaitMs + timings.gpuWaitMs + timings.queueSubmitMs;
 
   frameReport.record("pipeline-warmup-wait", timings.pipelineWarmupWaitMs, warmupTimings, "pipeline");
   frameReport.record("compute-pipeline-ready", timings.pipelineMs, undefined, "pipeline");
@@ -2616,6 +2659,7 @@ async function runFrame({
   frameReport.record("history-texture-allocation", historyAllocationMs, undefined, "buffering");
   frameReport.record("command-encoder-create", timings.commandEncoderMs, undefined, "dispatch");
   frameReport.record("cloud-dispatch-encode", timings.computeMs, { coarseFactor: cf }, "dispatch");
+  if (deferPresentation) frameReport.record("cloud-compute-completion", timings.computeGpuWaitMs, undefined, "gpu-wait");
   for (const stage of timings.computeStages) {
     frameReport.record(stage.stage, stage.encodeMs, stage, "dispatch");
   }
@@ -2630,9 +2674,9 @@ async function runFrame({
     waitedForGpu: shouldWaitForGpu,
     directFullResReconstruction: !!encodedDispatch.directFullResReconstruction,
   });
-  emitTimingProgress(timings.timingReport, "frame:complete");
+  emitTimingProgress(timings.timingReport, "frame:complete", navigationFrame);
 
-  if (shouldWaitForGpu || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
+  if ((!navigationFrame && shouldWaitForGpu) || logFrame || submittedFrameCount % FRAME_LOG_EVERY === 0) {
     log(
       shouldWaitForGpu ? "[BENCH waited]" : "[BENCH submitted]",
       "compute(ms):",
@@ -2721,6 +2765,17 @@ function startLoop() {
     }
 
     while (loopEnabled) {
+      if (!workerPageVisible) {
+        await waitForLoopGpuBackpressure(0);
+        await waitForWorkerVisibility();
+        // Hidden previews freeze their clock instead of jumping their noise
+        // offsets forward when the user returns to the page.
+        prevTime = performance.now();
+        lastPresentedTime = prevTime;
+        submitWindowStart = prevTime;
+        submitWindowFrames = 0;
+        continue;
+      }
       if (pendingResizePayload) {
         try {
           await waitForLoopGpuBackpressure(1);
@@ -2738,6 +2793,9 @@ function startLoop() {
       try {
         const dt = Math.max(0, (t0 - prevTime) / 1000);
         prevTime = t0;
+        if(cb?._frozenPattern?.enabled){
+          cb.advanceFrozenPattern(dt,shapeVel);
+        }else{
         if(weatherCycle.enabled) weatherCycleSeconds+=Math.min(dt,.25);
         volumeRotationAngle += dt * (lastVolumeShape==='gallery' ? 1.0 : 0.22);
 
@@ -2752,6 +2810,7 @@ function startLoop() {
         weatherOffsetWorld[0] += weatherVel[0] * dt;
         weatherOffsetWorld[1] += weatherVel[1] * dt;
         weatherOffsetWorld[2] += weatherVel[2] * dt;
+        }
 
         if (workerReproj && workerReproj.enabled) {
           workerReproj = normalizeReproj(workerReproj);
@@ -2840,6 +2899,8 @@ function startLoop() {
       }
     }
 
+    await waitForLoopGpuBackpressure(0);
+    try { await queue?.onSubmittedWorkDone?.(); } catch {}
     loopRunning = false;
     log("animation loop stopped");
     postMessage({ type: "loop-stopped" });
@@ -2856,6 +2917,9 @@ function startLoop() {
 function stopLoop() {
   loopEnabled = false;
   loopGpuFences.length = 0;
+  const wake = wakeWorkerVisibility;
+  wakeWorkerVisibility = null;
+  wake?.();
 }
 
 function waitForLoopStopped() {
@@ -2976,6 +3040,7 @@ async function _handleMessage(ev) {
 
   try {
     if (type === "init") {
+      setWorkerPageVisibility(payload?.pageVisible !== false);
       const initReport = new CloudTimingReport("cloud-worker-init");
       let initStage = initReport.start("receive-offscreen-canvases", undefined, "setup");
       const { canvases, constants } = payload;
@@ -3316,6 +3381,12 @@ async function _handleMessage(ev) {
       return;
     }
 
+    if (type === "setPageVisibility") {
+      setWorkerPageVisibility(payload?.visible !== false);
+      respond(true, {visible:workerPageVisible,enabled:loopEnabled,running:loopRunning,frame:submittedFrameCount,wind:shapeOffsetWorld.slice()});
+      return;
+    }
+
     if (type === "startLoop") {
       loopEnabled = true;
       startLoop();
@@ -3326,13 +3397,42 @@ async function _handleMessage(ev) {
     if (type === "stopLoop") {
       stopLoop();
       await waitForLoopStopped();
+      if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+      loopGpuFences.length = 0;
       respond(true, { ok: true });
       return;
     }
 
+    if (type === "captureFrame") {
+      // Studio "Save image": a PNG of the most recent frame at canvas size.
+      if (!canvasMain || !device) throw new Error("The renderer is not ready yet.");
+      if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+      const blob = await canvasMain.convertToBlob({ type: "image/png" });
+      respond(true, { blob, width: canvasMain.width, height: canvasMain.height });
+      return;
+    }
+
     if (type === "runFrame") {
+      // Complete the current camera frame before acknowledging it. The UI can
+      // then coalesce all intervening input into the latest pose instead of
+      // keeping a second obsolete view queued on a saturated GPU.
+      if (payload?.navigationFrame) await waitForLoopGpuBackpressure(0);
       if (payload?.tuning) mergeTuningPatch(payload.tuning);
-      const timings = await runFrame(payload);
+      const timings = await runFrame(payload?.navigationFrame ? {...payload,waitForGpu:true} : payload);
+      if (payload?.navigationFrame) {
+        const now = performance.now();
+        if (!navigationStatsStart || now - navigationStatsLast > 500) {
+          navigationStatsStart = now;
+          navigationStatsFrames = 0;
+        }
+        navigationStatsLast = now;
+        navigationStatsFrames++;
+        if (now - navigationStatsStart >= 250) {
+          postMessage({type:'frame',data:{loopFps:(navigationStatsFrames - 1) * 1000 / (now-navigationStatsStart),gpuQueueDepth:loopGpuFences.length}});
+          navigationStatsStart = now;
+          navigationStatsFrames = 1;
+        }
+      }
       respond(true, { timings });
       return;
     }

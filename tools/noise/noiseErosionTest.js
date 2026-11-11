@@ -1,4 +1,11 @@
 import { NoiseComputeBuilder } from "./noiseCompute.js";
+import { accumulateDownhill, readDrainageHeights } from "./flowAccumulation.js";
+
+const terrainScales = {
+  valley: { width: 3, relief: 0.42, frequency: 2.1, strength: 0.85, catchment: 0.012 },
+  watershed: { width: 24, relief: 3.4, frequency: 3, strength: 1.10, catchment: 0.42 },
+  range: { width: 96, relief: 8, frequency: 5.2, strength: 1.28, catchment: 4 },
+};
 
 const APP_HTML = `
 <div id="erosion-demo-app">
@@ -295,15 +302,23 @@ const APP_HTML = `
   </style>
 
   <aside id="erosion-sidebar">
-    <div class="title">Hydrology Erosion Stages</div>
+    <div id="erosion-navigation"></div>
+    <div class="title">Erosion terrain</div>
     <div class="subtitle">
-      Primitive base layers first, guide field second, erosion third, then drainage,
-      final composite, and a 3D terrain preview.
+      Shape slopes with erosion noise and trace downhill runoff into river channels.
     </div>
 
     <details class="group" open>
       <summary>Resolution</summary>
       <div class="group-body">
+        <div class="field">
+          <label for="terrain-scale">Terrain scale</label>
+          <select id="terrain-scale">
+            <option value="valley">Local valley (3 km)</option>
+            <option value="watershed" selected>Watershed (24 km)</option>
+            <option value="range">Mountain range (96 km)</option>
+          </select>
+        </div>
         <div class="field">
           <label for="res-size">Output size</label>
           <input id="res-size" type="number" min="128" step="64" value="1024" />
@@ -562,8 +577,12 @@ const APP_HTML = `
   <summary>Drainage extraction</summary>
   <div class="group-body">
     <div class="field">
-      <label for="drainage-width">Width</label>
+      <label for="drainage-width">River width</label>
       <input id="drainage-width" type="number" step="0.01" value="0.18" />
+    </div>
+    <div class="field">
+      <label for="catchment">Min. catchment (km²)</label>
+      <input id="catchment" type="number" min="0.001" step="0.01" value="0.42" />
     </div>
 
     <div class="field">
@@ -588,7 +607,7 @@ const APP_HTML = `
 
     <div class="field">
       <label for="drainage-carveDepth">Carve depth</label>
-      <input id="drainage-carveDepth" type="number" step="0.01" value="0.01" />
+      <input id="drainage-carveDepth" type="number" step="0.01" value="0.035" />
     </div>
   </div>
 </details>
@@ -1063,7 +1082,7 @@ function drawImageData(canvas, imageData) {
   ctx.putImageData(imageData, 0, 0);
 }
 
-function renderTerrain3D(heightData, colorData, canvas) {
+function renderTerrain3D(heightData, colorData, canvas, terrain) {
   const width = colorData.width;
   const height = colorData.height;
 
@@ -1089,7 +1108,7 @@ function renderTerrain3D(heightData, colorData, canvas) {
 
   const sxScale = width * 0.34;
   const syScale = width * 0.16;
-  const elevScale = width * 0.24;
+  const elevScale = (width * terrain.relief) / terrain.width;
   const yBase = height * 0.78;
 
   const light = (() => {
@@ -1140,9 +1159,10 @@ function renderTerrain3D(heightData, colorData, canvas) {
       const dx = (h10 + h11 - (h00 + h01)) * 0.5;
       const dz = (h01 + h11 - (h00 + h10)) * 0.5;
 
-      let nx = -dx * 4.0;
+      const grade = (terrain.relief / terrain.width) * ((srcW - 1) / step);
+      let nx = -dx * grade;
       let ny = 1.0;
-      let nz = -dz * 4.0;
+      let nz = -dz * grade;
       const nl = Math.hypot(nx, ny, nz) || 1;
       nx /= nl;
       ny /= nl;
@@ -1180,6 +1200,8 @@ function renderTerrain3D(heightData, colorData, canvas) {
 
 async function renderStages(builder, stageCanvases) {
   const size = getOutputSize(builder);
+  const terrain = terrainScales[$("terrain-scale").value] ?? terrainScales.watershed;
+  const minimumArea = Math.max(0.001, num("catchment", terrain.catchment));
 
   Object.values(stageCanvases).forEach((canvas) =>
     ensure2DCanvasSize(canvas, size),
@@ -1313,6 +1335,8 @@ async function renderStages(builder, stageCanvases) {
       3,
       stageCanvases.ridge,
     );
+    const { grid, values } = await readDrainageHeights(builder, size);
+    const catchment = accumulateDownhill(values, grid);
 
     if (builder.entryPoints.includes("computeHydrologyDrainageMask")) {
       const drainageParams = {
@@ -1361,6 +1385,28 @@ async function renderStages(builder, stageCanvases) {
     } else {
       drainageImage = blankCanvas(stageCanvases.drainage, size);
     }
+    const cellArea = (terrain.width / grid) ** 2;
+    const channels = Float32Array.from(catchment, (area) =>
+      clamp(Math.log2((area * cellArea) / minimumArea) / 3, 0, 1),
+    );
+    const widen = clamp(drainage.width * 2, 0, 1);
+    for (let y = 0; y < size; y++) {
+      const row = Math.floor((y * grid) / size) * grid;
+      for (let x = 0; x < size; x++) {
+        const col = Math.floor((x * grid) / size);
+        const river = Math.max(
+          channels[row + col],
+          channels[row + Math.max(0, col - 1)] * widen,
+          channels[row + Math.min(grid - 1, col + 1)] * widen,
+          channels[Math.max(0, row - grid) + col] * widen,
+          channels[Math.min((grid - 1) * grid, row + grid) + col] * widen,
+        );
+        const at = (y * size + x) * 4;
+        const value = Math.max(drainageImage.data[at] * 0.56, river * 255);
+        drainageImage.data.fill(value, at, at + 3);
+      }
+    }
+    drawImageData(stageCanvases.drainage, drainageImage);
   } else {
     const erodedCtx = stageCanvases.eroded.getContext("2d", {
       willReadFrequently: true,
@@ -1385,12 +1431,12 @@ async function renderStages(builder, stageCanvases) {
     drainageImage,
   );
   drawImageData(stageCanvases.final, finalImage);
-  renderTerrain3D(compositedHeightImage, finalImage, stageCanvases.render3d);
+  renderTerrain3D(compositedHeightImage, finalImage, stageCanvases.render3d, terrain);
 
   const t2 = performance.now();
 
   setStatus(
-    `Stages · ${size}×${size} · base: ${formatModeList(baseModes)}${erosion.enabled ? " · erosion on" : " · erosion off"}`,
+    `${terrain.width} km across · ${(terrain.width * 1000 / (size - 1)).toFixed(1)} m/sample · ${size}×${size} · ${formatModeList(baseModes)}${erosion.enabled ? " · erosion on" : " · erosion off"}`,
     `GPU + capture ${(t1 - t0).toFixed(1)} ms · CPU composite ${(t2 - t1).toFixed(1)} ms`,
   );
 }
@@ -1436,6 +1482,11 @@ async function saveFinalComposite(stageCanvas) {
 
 async function init() {
   insertAppHtml();
+  const nav = document.getElementById("cloud-demo-navigation");
+  if (nav) {
+    nav.classList.remove("cl-switch--floating");
+    $("erosion-navigation").appendChild(nav);
+  }
 
   if (!navigator.gpu) {
     setStatus("WebGPU not available", "");
@@ -1539,12 +1590,20 @@ async function init() {
     "erosion-yShift",
     "erosion-time",
     "drainage-width",
+    "catchment",
     "drainage-concavity",
     "drainage-slopeOnset",
     "drainage-contrast",
     "drainage-gain",
     "drainage-carveDepth",
   ];
+  $("terrain-scale").addEventListener("change", () => {
+    const terrain = terrainScales[$("terrain-scale").value];
+    $("base-freq").value = terrain.frequency;
+    $("erosion-strength").value = terrain.strength;
+    $("catchment").value = terrain.catchment;
+    scheduleRender();
+  });
 
   for (const id of rerenderIds) {
     const el = document.getElementById(id);
@@ -1586,7 +1645,7 @@ async function init() {
   scheduleRender();
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+function start() {
   init().catch((err) => {
     console.error(err);
     const meta = document.getElementById("preview-meta");
@@ -1594,4 +1653,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (meta) meta.textContent = "Init failed";
     if (stats) stats.textContent = String(err);
   });
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", start, { once: true });
+} else {
+  start();
+}

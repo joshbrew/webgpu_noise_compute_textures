@@ -7,9 +7,10 @@ export function planetCloudSimStylePatch(style='realistic',radius=50) {
  const p=planetCloudStyleOptions(style,radius);
  const base={cloudStyle:style,cloudRenderMode:'raymarch',showCloudStyleControl:false,
   progressiveStartup:false,bootstrapFrames:0};
- if(style==='legacy')return base;
+ if(style==='legacy')return {...base,tuning:{formType:0}};
  return {...base,nearSurfaceAdaptiveQuality:p.nearSurfaceAdaptiveQuality,surface:{surfaceOpacity:p.surfaceOpacity},
   shell:{cloudBottom:p.cloudBottom,cloudTop:p.cloudTop,maxHalfHeight:p.maxHalfHeight},
   render:{worldToUV:p.worldToUV,stepBase:p.stepBase,stepInc:p.stepInc,opacity:p.opacity,alphaPower:p.alphaPower,alphaCutoff:p.alphaCutoff},
+  ...(p.weatherWidth?{textures:{weatherWidth:p.weatherWidth,weatherHeight:p.weatherHeight}}:{}),
   motion:{spinSpeed:p.spinSpeed},params:p.params,tuning:p.tuning,transforms:p.transforms};
 }

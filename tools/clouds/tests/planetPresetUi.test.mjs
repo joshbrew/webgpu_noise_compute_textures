@@ -5,6 +5,20 @@ import {readFile} from 'node:fs/promises';
 // Exercise the actual editor state transitions without creating terrain or
 // a GPU. The regressions here concern staged edits and asynchronous bakes.
 const source=await readFile(new URL('../../noise/noisePlanetTest.js',import.meta.url),'utf8');
+
+test('planet motion menu exposes staged warp controls and uses readable status labels',()=>{
+ assert.match(source,/addCloudTransformControl\('motion.warpAmount', 'Warp amount'/);
+ assert.match(source,/addCloudTransformControl\('motion.warpSpeed', 'Warp speed'/);
+ assert.match(source,/addCloudTransformControl\('motion.textureMotion', 'Cloud motion preset', 'select'/);
+ assert.match(source,/addCloudTransformControl\('motion.textureScrollSpeed', 'Texture scroll speed'/);
+ assert.match(source,/textureMotion: config.motion\?\.textureMotion/);
+ assert.match(source,/textureScrollSpeed: config.motion\?\.textureScrollSpeed/);
+ assert.match(source,/warpAmount: config.motion\?\.warpAmount/);
+ assert.match(source,/warpSpeed: config.motion\?\.warpSpeed/);
+ assert.match(source,/Object.assign\(cfg.motion,keptMotion\)/);
+ assert.match(source,/textContent = 'Apply edits ·'/);
+ assert.doesNotMatch(source,/â€/);
+});
 const code=source.slice(source.indexOf('  function shouldLiveApplyCloudPath('),source.indexOf('  function updateEditorPath('));
 function fixture(handler=async()=>{}) {
   const window={timers:new Map(),next:0,setTimeout(fn){const id=++this.next;this.timers.set(id,fn);return id;},clearTimeout(id){this.timers.delete(id);}};
@@ -66,4 +80,11 @@ test('expensive texture edits remain pending and require rebuilding on Apply',()
   const ui=fixture();ui.texture(cfg=>cfg.textures.weatherWidth=512);
   assert.equal(ui.window.timers.size,0);assert.equal(ui.state().pendingCloudTextures,true);
   ui.markApplied();assert.equal(ui.state().pendingCloudTextures,false);
+});
+
+
+test('live planet preview only freezes its sun when explicitly requested',async()=>{
+ const server=await readFile(new URL('./browser/serveWeatherAnvil.mjs',import.meta.url),'utf8');
+ assert.match(server,/if\(process.env.PLANET_REVIEW_FREEZE_SUN==='1'\)b.onLoad/);
+ assert.match(source,/const t = performance.now\(\) \* 0.00008/);
 });

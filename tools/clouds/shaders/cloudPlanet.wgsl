@@ -1,7 +1,11 @@
 // Compact regular planet styles. Independent of flat morphology, detailed
 // legacy lighting and aurora call graphs; all seven styles share this entry.
 fn planetShape(p:vec3<f32>,lod:f32)->vec4<f32> {
- let moved=sphericalSampleDriftedWorld(p,vec3<f32>(NTransform.shapeOffsetWorld.x,0,NTransform.shapeOffsetWorld.z))-B.center;
+ var moved=sphericalSampleDriftedWorld(p,vec3<f32>(NTransform.shapeOffsetWorld.x,0,NTransform.shapeOffsetWorld.z))-B.center;
+ if(TUNE.formType>=.5 && TUNE.formType<4.5){
+  moved=planetWarpPosition(p-B.center,NTransform.shapeOffsetWorld.x*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase);
+  moved=sphericalDriftedWorld(B.center+moved,vec3<f32>(0,0,NTransform.shapeOffsetWorld.z))-B.center;
+ }
  let scale=max(V.worldToUV*B.uvScale,EPS)*max(NTransform.shapeScale,EPS);
  let domain=moved*axisOrOne3(NTransform.shapeAxisScale)*scale;
  return textureSampleLevel(shape3D,sampShape,planetEvolvingDomain(domain,NTransform.shapeOffsetWorld.y),lod);
@@ -17,8 +21,9 @@ fn planetWeather(p:vec3<f32>)->vec4<f32> {
  // coverage travel with the shell without sliding through a longitude seam.
  let wind=NTransform.weatherOffsetWorld;
  var moved=sphericalDriftedWorld(p,wind);
- if(TUNE.formType>=4.5){
-  moved=B.center+gasWeatherDirection(normalize(p-B.center),wind.x*6.283185307,TUNE.formType);
+ if(TUNE.formType>=.5){
+  moved=B.center+planetWarpDirection(normalize(p-B.center),wind.x*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase);
+  if(TUNE.formType<4.5){moved=sphericalDriftedWorld(moved,vec3<f32>(0,wind.y,wind.z));}
  }
  let uv=sphereUVFromWorld(moved);
  let latitudeScale=axisOrOne3(NTransform.weatherAxisScale).z*max(NTransform.weatherScale,EPS);
@@ -75,7 +80,12 @@ fn computeCloudPlanet(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(loca
     // mip filtering limits subpixel shimmer without a camera-relative reset.
     let detailScale=max(V.worldToUV*B.uvScale*4.0*NTransform.detailScale,EPS);
     let detailLod=clamp(log2(max(footprint*detailScale*f32(textureDimensions(detail3D).x),1.0)),0.0,f32(textureNumLevels(detail3D))-1.0);
-    let detail=textureSampleLevel(detail3D,sampDetail,(sphericalSampleDriftedWorld(p,NTransform.detailOffsetWorld)-B.center)*detailScale,detailLod).rgb;
+    var detailPos=sphericalSampleDriftedWorld(p,NTransform.detailOffsetWorld)-B.center;
+    if(TUNE.formType>=.5 && TUNE.formType<4.5){
+     detailPos=planetWarpPosition(p-B.center,NTransform.detailOffsetWorld.x*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase);
+     detailPos=sphericalDriftedWorld(B.center+detailPos,vec3<f32>(0,NTransform.detailOffsetWorld.y,NTransform.detailOffsetWorld.z))-B.center;
+    }
+    let detail=textureSampleLevel(detail3D,sampDetail,detailPos*detailScale,detailLod).rgb;
     density=styledPlanetDensity(ph,weather,s,dot(detail,vec3<f32>(.42,.34,.24))*.035)/max(C.globalDensity*10.0,EPS);
     if(!neptune&&litSamples%normalStride==0){
      let radial=normalize(p-B.center);

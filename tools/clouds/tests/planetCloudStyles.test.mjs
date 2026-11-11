@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {PLANET_CLOUD_STYLES,planetCloudStyleOptions} from '../planetCloudStyles.js';
+import {PLANET_CLOUD_STYLES,planetCloudStyleOptions,resolvePlanetCloudStyleOptions} from '../planetCloudStyles.js';
+import {planetCloudSimStylePatch} from '../planetCloudSimStyles.js';
 import {PlanetCloudNoise} from '../planetCloudNoise.js';
 
 test('planet styles scale with radius and keep one regular shader variant',()=>{
- assert.equal(PLANET_CLOUD_STYLES.length,8);
+ assert.equal(PLANET_CLOUD_STYLES.length,11);
  for(const {id} of PLANET_CLOUD_STYLES.slice(1)){
   const small=planetCloudStyleOptions(id,50),large=planetCloudStyleOptions(id,100);
   assert.equal(large.cloudBottom,small.cloudBottom*2);
@@ -37,7 +38,7 @@ test('styled planet close normals stay cheap and weather rotates in a continuous
  const source=await readFile(new URL('../shaders/cloudPlanet.wgsl',import.meta.url),'utf8');
  assert.match(source,/let wind=NTransform.weatherOffsetWorld/);
  assert.match(source,/moved=sphericalDriftedWorld\(p,wind\)/);
- assert.match(source,/gasWeatherDirection\(normalize\(p-B.center\)/);
+ assert.match(source,/planetWarpDirection\(normalize\(p-B.center\)/);
  assert.match(source,/min\(sunStride,2\)/);
  assert.match(source,/clamp\(TUNE.sunSteps,1,3\)/);
  assert.doesNotMatch(source,/frameIndex.*planetPixelRandom|planetPixelRandom.*frameIndex/);
@@ -75,26 +76,39 @@ test('planet setup noise shares tiny stages, records dimensions/seed and release
  await bake.bake({key:'a',shapeSize:32});assert.equal(calls.compile,3);assert.equal(calls.submit,2);
  assert.ok(allocations.slice(0,3).every(r=>r.destroyed));
  await bake.bake({key:'gas-again',shapeSize:32,gas:true});assert.equal(calls.compile,3,'gas bake pipeline must be reused');
- for(const [weatherStyle,mode] of [['gas_giant',1],['neptune',2],['hail_mary',3]]){
+ for(const [weatherStyle,mode] of [['gas_giant',1],['neptune',2],['hail_mary',3],['satellite',4],['cyclonic',5],['trade_winds',6]]){
   await bake.bake({key:weatherStyle,seed:17,shapeSize:32,weatherWidth:64,weatherHeight:32,weatherStyle});
   assert.deepEqual(calls.uniform,[32,64,32,0,17,mode,0,0]);
-  assert.equal(calls.compile,3,'all gas atmospheres reuse the same pipeline');
+  assert.equal(calls.compile,mode<4?3:4,'each family reuses its lazy bake pipeline');
  }
+ const saved=bake.resources.get('hail_mary'),count=allocations.length,compileCount=calls.compile,dispatchCount=calls.groups.length;
+ assert.equal(bake.regenerateWeather('hail_mary',.125),true);
+ assert.equal(bake.resources.get('hail_mary'),saved);
+ assert.equal(allocations.length,count);assert.equal(calls.compile,compileCount);
+ assert.equal(calls.groups.length,dispatchCount+1);
+ assert.deepEqual(calls.groups.at(-1),[8,4,1]);
+ assert.deepEqual(calls.uniform,[.125]);assert.equal(saved.weatherPhase,.125);
+ assert.equal(bake.regenerateWeather('hail_mary',NaN),false);
+ assert.equal(bake.regenerateWeather('missing',1),false);
  bake.destroy();assert.ok(allocations.every(r=>r.destroyed));assert.equal(bake.resources.size,0);
 });
 
 async function styleHarness(){
  const source=await readFile(new URL('../planetClouds.js',import.meta.url),'utf8');
  const code=source.slice(source.indexOf('export async function setPlanetCloudStyle'),source.indexOf('async function createPlanetCloudRendererImplementation')).replace('export async','async');
- const records={bakes:[],mcBakes:[],released:[],configured:0,warmups:0};let fail=false;
+ const records={bakes:[],mcBakes:[],bakedOptions:[],released:[],configured:0,warmups:0};let fail=false;
  const clone=x=>structuredClone(x),merge=(a,b)=>({...a,...b});
  const noise={destroyTexturePair:k=>records.released.push(k),destroyVolume:k=>records.released.push(k)};
  const target={radius:50,seed:123,options:{resourceNonce:'old'},resourceKeys:{weather:'w',shape:'s',detail:'d',blue:'b'},textures:{old:true},noiseBuilder:noise,
   queue:{async onSubmittedWorkDone(){}},cloudBuilder:{setInputMaps(x){records.restored=x},async ensureComputePipelineReadyAsync(){records.warmups++}}};
- const apply=new Function('planetCloudStyleOptions','clonePlain','mergePlain','cloudResourceKey','PLANET_VOLUME_MIPS','PLANET_STYLE_NOISE','bakePlanetCloudResources','configurePlanetCloudBuilder','destroyCloudHistory','setPlanetCloudSurfaceStyle',code+';return setPlanetCloudStyle;')(
-  planetCloudStyleOptions,clone,merge,(o,k)=>o.resourceNonce+'-'+k,new WeakMap(),new WeakMap(),
-  async(t,{options})=>{records.bakes.push(options.cloudStyle);if(fail)throw Error('bake failed');t.resourceKeys=Object.fromEntries(['weather','shape','detail','blue'].map(k=>[k,options.resourceNonce+'-'+k]));t.textures={new:true};},
-  ()=>records.configured++,()=>{},async(t,style)=>{records.mcBakes.push(style);t.options={...t.options,...planetCloudStyleOptions(style,t.radius),cloudRenderMode:'mc33-shell'};return t.options});
+ const surfaceSource=await readFile(new URL('../planetCloudSurface.js',import.meta.url),'utf8');
+ const surfaceCode=surfaceSource.slice(surfaceSource.indexOf('export async function setPlanetCloudSurfaceStyle'),surfaceSource.indexOf('export async function updatePlanetCloudSurfaceLayer')).replace('export async','async');
+ const applySurface=new Function('planetCloudStyleOptions','resolvePlanetCloudStyleOptions','bakeSurfaceTextures','createBindGroups','updatePlanetCloudSurfaceOptions',surfaceCode+';return setPlanetCloudSurfaceStyle;')(
+  planetCloudStyleOptions,resolvePlanetCloudStyleOptions,async(t)=>{records.mcBakes.push(t.options.cloudStyle);records.bakedOptions.push({mode:'mc33-shell',options:clone(t.options)});},()=>{},()=>{});
+ const apply=new Function('planetCloudStyleOptions','resolvePlanetCloudStyleOptions','clonePlain','mergePlain','cloudResourceKey','PLANET_VOLUME_MIPS','PLANET_STYLE_NOISE','bakePlanetCloudResources','configurePlanetCloudBuilder','destroyCloudHistory','setPlanetCloudSurfaceStyle',code+';return setPlanetCloudStyle;')(
+  planetCloudStyleOptions,resolvePlanetCloudStyleOptions,clone,merge,(o,k)=>o.resourceNonce+'-'+k,new WeakMap(),new WeakMap(),
+  async(t,{options})=>{records.bakes.push(options.cloudStyle);records.bakedOptions.push({mode:'raymarch',options:clone(options)});if(fail)throw Error('bake failed');t.resourceKeys=Object.fromEntries(['weather','shape','detail','blue'].map(k=>[k,options.resourceNonce+'-'+k]));t.textures={new:true};},
+  ()=>records.configured++,()=>{},applySurface);
  return {target,records,apply,setFail:x=>fail=x};
 }
 
@@ -136,4 +150,25 @@ test('a layer initialized in a new style can restore the unstyled custom baselin
  assert.equal(h.target.options.cloudTop,3);
  const source=await readFile(new URL('../planetClouds.js',import.meta.url),'utf8');
  assert.match(source,/_styleBaseOptions: customBaseOptions/);
+});
+
+test('Hail Mary to custom clears the gas form in both cached renderers before baking',async()=>{
+ const h=await styleHarness();
+ const custom={cloudStyle:'legacy',resourceNonce:'custom',tuning:{formType:0},transforms:{shapeScale:.2},cloudTop:3};
+ h.target.options=structuredClone(custom);
+ const mesh={kind:'mc33-shell',radius:50,options:structuredClone(custom)};
+ const layer={kind:'planet-cloud-render-toggle',activeMode:'mc33-shell',activeLayer:mesh,
+  options:mesh.options,renderers:new Map([['raymarch',h.target],['mc33-shell',mesh]])};
+ await h.apply(layer,'hail_mary');
+ assert.equal(mesh.options.tuning.formType,7);
+ const restored={...planetCloudSimStylePatch('legacy'),cloudTop:4,transforms:{shapeScale:.31}};
+ await h.apply(layer,'legacy',restored);
+ for(const {mode,options} of h.records.bakedOptions.slice(-2)){
+  assert.equal(options.cloudStyle,'legacy');assert.equal(options.tuning.formType,0);
+  assert.equal(options.cloudTop,4);assert.equal(options.transforms.shapeScale,.31);
+  assert.equal(options.cloudRenderMode,mode);
+ }
+ assert.equal(layer.activeMode,'mc33-shell');
+ await h.apply(layer,'hail_mary');
+ for(const {options} of h.records.bakedOptions.slice(-2))assert.equal(options.tuning.formType,7);
 });

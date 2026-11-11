@@ -16,6 +16,8 @@ import {
   disposePlanetCloudLayer,
 } from '../clouds/planetClouds.js';
 import {stylePlanetPanel,planetDisclosure} from '../clouds/planetPanelUi.js';
+import {adoptField,createRailHead,createStudioCard,watchStatus} from '../clouds/cloudLabUi.js';
+import {randomizePlanetCloudConfig,randomizePlanetSceneConfig} from '../clouds/planetCloudRandomize.js';
 import {PLANET_CLOUD_STYLES,planetCloudSimStylePatch} from '../clouds/planetCloudSimStyles.js';
 import {REFERENCE_LOOK_PRESETS,SCULPTED_LOOK_IDS} from '../clouds/cloudLookPresets.js';
 import {cloudColorStrength,cloudColorHex,cloudColorFromHex,scaleCloudColor} from '../clouds/planetCloudColors.js';
@@ -231,17 +233,17 @@ export const VORO_MODE_REFERENCE = Object.freeze({
 
 export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
   0: {
-    sky: [0.56, 0.72, 1.02],
+    sky: [0.54,0.71,1.04],
     sunBloom: 0.18,
-    sunTint: [1.00, 0.99, 0.97],
-    transmissiveLightTint: [0.96, 0.98, 1.06],
-    frontLightTint: [1.22, 1.20, 1.16],
-    volumeShadowTint: [0.72, 0.80, 0.94],
+    sunTint: [1.04,1.01,0.95],
+    transmissiveLightTint: [0.99,1.02,1.13],
+    frontLightTint: [1.27,1.2,1.1],
+    volumeShadowTint: [0.66,0.77,0.97],
     directLightBlend: 0.84,
     directLightBoost: 0.64,
-    cloudLitTint: [1.08, 1.08, 1.09],
-    cloudShadowTint: [0.80, 0.88, 0.98],
-    edgeTint: [1.06, 1.05, 1.03],
+    cloudLitTint: [1.13,1.09,1.03],
+    cloudShadowTint: [0.74,0.85,1.02],
+    edgeTint: [1.12,1.08,0.97],
     styleShadowStrength: 2.30,
     styleShadowEdge: 0.44,
     styleShadowDarkness: 0.10,
@@ -254,17 +256,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.62,
   },
   1: {
-    sky: [0.44, 0.24, 0.56],
+    sky: [0.43,0.26,0.61],
     sunBloom: 0.70,
-    sunTint: [1.34, 1.04, 0.52],
-    transmissiveLightTint: [1.12, 0.70, 0.46],
-    frontLightTint: [1.68, 1.34, 0.82],
-    volumeShadowTint: [0.18, 0.10, 0.24],
+    sunTint: [1.34,1.08,0.64],
+    transmissiveLightTint: [1.2,0.78,0.76],
+    frontLightTint: [1.7,1.36,0.92],
+    volumeShadowTint: [0.22,0.13,0.35],
     directLightBlend: 0.84,
     directLightBoost: 0.94,
-    cloudLitTint: [1.62, 1.12, 0.62],
-    cloudShadowTint: [0.24, 0.12, 0.30],
-    edgeTint: [1.42, 1.02, 0.52],
+    cloudLitTint: [1.61,1.2,0.78],
+    cloudShadowTint: [0.3,0.18,0.44],
+    edgeTint: [1.52,1.15,0.65],
     styleShadowStrength: 2.10,
     styleShadowEdge: 0.56,
     styleShadowDarkness: 0.16,
@@ -277,17 +279,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.18,
   },
   2: {
-    sky: [0.46, 0.40, 0.74],
+    sky: [0.45,0.41,0.78],
     sunBloom: 0.54,
-    sunTint: [1.02, 0.92, 1.06],
-    transmissiveLightTint: [0.88, 0.80, 1.10],
-    frontLightTint: [1.36, 1.14, 1.40],
-    volumeShadowTint: [0.30, 0.26, 0.56],
+    sunTint: [1.13,0.96,1.02],
+    transmissiveLightTint: [0.91,0.82,1.24],
+    frontLightTint: [1.45,1.12,1.37],
+    volumeShadowTint: [0.31,0.29,0.64],
     directLightBlend: 0.82,
     directLightBoost: 0.84,
-    cloudLitTint: [1.20, 0.98, 1.18],
-    cloudShadowTint: [0.34, 0.28, 0.66],
-    edgeTint: [1.14, 0.96, 1.18],
+    cloudLitTint: [1.31,1.01,1.19],
+    cloudShadowTint: [0.38,0.33,0.73],
+    edgeTint: [1.24,1.04,1.1],
     styleShadowStrength: 1.70,
     styleShadowEdge: 0.18,
     styleShadowDarkness: 0.0,
@@ -300,17 +302,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.42,
   },
   3: {
-    sky: [0.46, 0.56, 0.82],
+    sky: [0.45,0.55,0.84],
     sunBloom: 0.34,
-    sunTint: [0.96, 1.00, 1.04],
-    transmissiveLightTint: [0.96, 1.04, 1.30],
-    frontLightTint: [1.44, 1.42, 1.38],
-    volumeShadowTint: [0.28, 0.36, 0.52],
+    sunTint: [1.02,1.02,0.96],
+    transmissiveLightTint: [0.93,1.09,1.35],
+    frontLightTint: [1.49,1.39,1.29],
+    volumeShadowTint: [0.3,0.36,0.61],
     directLightBlend: 0.92,
     directLightBoost: 1.02,
-    cloudLitTint: [1.42, 1.34, 1.28],
-    cloudShadowTint: [0.72, 0.84, 1.08],
-    edgeTint: [1.22, 1.22, 1.18],
+    cloudLitTint: [1.45,1.35,1.22],
+    cloudShadowTint: [0.73,0.8,1.14],
+    edgeTint: [1.35,1.29,1.1],
     styleShadowStrength: 2.56,
     styleShadowEdge: 0.48,
     styleShadowDarkness: 0.12,
@@ -323,17 +325,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.86,
   },
   4: {
-    sky: [0.42, 0.30, 0.42],
+    sky: [0.43,0.31,0.49],
     sunBloom: 0.58,
-    sunTint: [1.12, 0.82, 0.62],
-    transmissiveLightTint: [0.98, 0.54, 0.32],
-    frontLightTint: [1.58, 1.04, 0.62],
-    volumeShadowTint: [0.18, 0.08, 0.10],
+    sunTint: [1.17,0.89,0.67],
+    transmissiveLightTint: [1.18,0.65,0.62],
+    frontLightTint: [1.61,1.1,0.72],
+    volumeShadowTint: [0.22,0.1,0.2],
     directLightBlend: 0.88,
     directLightBoost: 1.00,
-    cloudLitTint: [1.34, 0.80, 0.42],
-    cloudShadowTint: [0.16, 0.08, 0.10],
-    edgeTint: [1.34, 0.92, 0.56],
+    cloudLitTint: [1.39,0.91,0.55],
+    cloudShadowTint: [0.23,0.12,0.21],
+    edgeTint: [1.48,1.07,0.62],
     styleShadowStrength: 2.12,
     styleShadowEdge: 0.34,
     styleShadowDarkness: 0.28,
@@ -346,17 +348,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.36,
   },
   5: {
-    sky: [0.50, 0.34, 0.64],
+    sky: [0.49,0.36,0.69],
     sunBloom: 0.58,
-    sunTint: [1.10, 0.84, 0.86],
-    transmissiveLightTint: [0.96, 0.70, 0.98],
-    frontLightTint: [1.42, 1.00, 1.20],
-    volumeShadowTint: [0.28, 0.18, 0.52],
+    sunTint: [1.18,0.9,0.86],
+    transmissiveLightTint: [1.04,0.74,1.17],
+    frontLightTint: [1.49,1.04,1.15],
+    volumeShadowTint: [0.3,0.22,0.61],
     directLightBlend: 0.82,
     directLightBoost: 0.86,
-    cloudLitTint: [1.26, 0.88, 1.02],
-    cloudShadowTint: [0.34, 0.24, 0.60],
-    edgeTint: [1.20, 0.86, 1.00],
+    cloudLitTint: [1.34,0.96,1.05],
+    cloudShadowTint: [0.38,0.28,0.69],
+    edgeTint: [1.35,1.02,0.93],
     styleShadowStrength: 1.24,
     styleShadowEdge: 0.12,
     styleShadowDarkness: 0.0,
@@ -369,17 +371,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.34,
   },
   6: {
-    sky: [0.52, 0.42, 0.30],
+    sky: [0.52,0.41,0.35],
     sunBloom: 0.62,
-    sunTint: [1.24, 0.96, 0.62],
-    transmissiveLightTint: [1.04, 0.82, 0.44],
-    frontLightTint: [1.54, 1.14, 0.64],
-    volumeShadowTint: [0.20, 0.12, 0.08],
+    sunTint: [1.25,1.01,0.72],
+    transmissiveLightTint: [1.21,0.87,0.67],
+    frontLightTint: [1.58,1.21,0.76],
+    volumeShadowTint: [0.23,0.14,0.19],
     directLightBlend: 0.84,
     directLightBoost: 0.90,
-    cloudLitTint: [1.36, 1.00, 0.56],
-    cloudShadowTint: [0.20, 0.14, 0.10],
-    edgeTint: [1.38, 1.06, 0.64],
+    cloudLitTint: [1.42,1.1,0.69],
+    cloudShadowTint: [0.26,0.18,0.25],
+    edgeTint: [1.51,1.19,0.72],
     styleShadowStrength: 1.42,
     styleShadowEdge: 0.26,
     styleShadowDarkness: 0.0,
@@ -392,17 +394,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.26,
   },
   7: {
-    sky: [0.22, 0.34, 0.54],
+    sky: [0.23,0.34,0.59],
     sunBloom: 0.42,
-    sunTint: [0.76, 1.06, 1.22],
-    transmissiveLightTint: [0.62, 0.98, 1.18],
-    frontLightTint: [0.98, 1.40, 1.56],
-    volumeShadowTint: [0.08, 0.16, 0.28],
+    sunTint: [0.88,1.11,1.22],
+    transmissiveLightTint: [0.59,1.1,1.24],
+    frontLightTint: [1.1,1.44,1.51],
+    volumeShadowTint: [0.12,0.16,0.36],
     directLightBlend: 0.82,
     directLightBoost: 0.82,
-    cloudLitTint: [0.90, 1.22, 1.42],
-    cloudShadowTint: [0.10, 0.18, 0.30],
-    edgeTint: [0.84, 1.38, 1.58],
+    cloudLitTint: [1.03,1.3,1.42],
+    cloudShadowTint: [0.15,0.19,0.38],
+    edgeTint: [1.02,1.49,1.6],
     styleShadowStrength: 1.48,
     styleShadowEdge: 0.30,
     styleShadowDarkness: 0.0,
@@ -415,17 +417,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.66,
   },
   8: {
-    sky: [0.22, 0.54, 0.50],
+    sky: [0.23,0.52,0.55],
     sunBloom: 0.52,
-    sunTint: [0.88, 1.14, 0.98],
-    transmissiveLightTint: [0.58, 1.06, 0.92],
-    frontLightTint: [1.02, 1.46, 1.16],
-    volumeShadowTint: [0.08, 0.24, 0.22],
+    sunTint: [1,1.16,0.98],
+    transmissiveLightTint: [0.62,1.16,1.13],
+    frontLightTint: [1.15,1.48,1.12],
+    volumeShadowTint: [0.12,0.23,0.32],
     directLightBlend: 0.84,
     directLightBoost: 0.88,
-    cloudLitTint: [0.92, 1.34, 1.08],
-    cloudShadowTint: [0.12, 0.26, 0.24],
-    edgeTint: [0.78, 1.52, 1.16],
+    cloudLitTint: [1.07,1.37,1.03],
+    cloudShadowTint: [0.17,0.27,0.35],
+    edgeTint: [1.02,1.59,1.16],
     styleShadowStrength: 1.22,
     styleShadowEdge: 0.20,
     styleShadowDarkness: 0.0,
@@ -438,17 +440,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.44,
   },
   9: {
-    sky: [0.58, 0.50, 0.36],
+    sky: [0.58,0.48,0.4],
     sunBloom: 0.46,
-    sunTint: [1.18, 1.08, 0.74],
-    transmissiveLightTint: [0.98, 0.88, 0.50],
-    frontLightTint: [1.44, 1.28, 0.84],
-    volumeShadowTint: [0.22, 0.18, 0.12],
+    sunTint: [1.21,1.11,0.82],
+    transmissiveLightTint: [1.18,0.96,0.75],
+    frontLightTint: [1.49,1.31,0.94],
+    volumeShadowTint: [0.24,0.19,0.24],
     directLightBlend: 0.80,
     directLightBoost: 0.76,
-    cloudLitTint: [1.28, 1.10, 0.72],
-    cloudShadowTint: [0.26, 0.22, 0.16],
-    edgeTint: [1.34, 1.14, 0.78],
+    cloudLitTint: [1.36,1.17,0.83],
+    cloudShadowTint: [0.31,0.25,0.31],
+    edgeTint: [1.47,1.27,0.87],
     styleShadowStrength: 1.54,
     styleShadowEdge: 0.40,
     styleShadowDarkness: 0.0,
@@ -461,17 +463,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.96,
   },
   10: {
-    sky: [0.44, 0.28, 0.38],
+    sky: [0.44,0.3,0.44],
     sunBloom: 0.68,
-    sunTint: [1.16, 0.82, 0.88],
-    transmissiveLightTint: [0.96, 0.60, 0.88],
-    frontLightTint: [1.46, 1.04, 1.18],
-    volumeShadowTint: [0.18, 0.10, 0.22],
+    sunTint: [1.21,0.91,0.87],
+    transmissiveLightTint: [1.13,0.7,1.04],
+    frontLightTint: [1.51,1.07,1.13],
+    volumeShadowTint: [0.22,0.13,0.32],
     directLightBlend: 0.84,
     directLightBoost: 0.80,
-    cloudLitTint: [1.32, 0.90, 0.98],
-    cloudShadowTint: [0.22, 0.12, 0.26],
-    edgeTint: [1.40, 0.96, 1.10],
+    cloudLitTint: [1.39,0.98,0.98],
+    cloudShadowTint: [0.29,0.17,0.37],
+    edgeTint: [1.5,1.12,1.01],
     styleShadowStrength: 1.34,
     styleShadowEdge: 0.26,
     styleShadowDarkness: 0.0,
@@ -484,17 +486,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.34,
   },
   11: {
-    sky: [0.14, 0.22, 0.42],
+    sky: [0.15,0.22,0.46],
     sunBloom: 0.38,
-    sunTint: [0.62, 0.86, 1.30],
-    transmissiveLightTint: [0.42, 0.74, 1.18],
-    frontLightTint: [0.86, 1.16, 1.56],
-    volumeShadowTint: [0.02, 0.06, 0.18],
+    sunTint: [0.74,0.98,1.29],
+    transmissiveLightTint: [0.43,0.93,1.26],
+    frontLightTint: [0.99,1.29,1.52],
+    volumeShadowTint: [0.045,0.06,0.23],
     directLightBlend: 0.82,
     directLightBoost: 0.80,
-    cloudLitTint: [0.78, 1.00, 1.42],
-    cloudShadowTint: [0.04, 0.08, 0.20],
-    edgeTint: [0.74, 1.02, 1.60],
+    cloudLitTint: [0.92,1.18,1.41],
+    cloudShadowTint: [0.075,0.09,0.29],
+    edgeTint: [0.87,1.24,1.6],
     styleShadowStrength: 1.70,
     styleShadowEdge: 0.48,
     styleShadowDarkness: 0.0,
@@ -507,17 +509,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 2.14,
   },
   12: {
-    sky: [0.36, 0.66, 1.24],
+    sky: [0.36,0.66,1.24],
     sunBloom: 0.26,
-    sunTint: [1.16, 1.04, 0.88],
-    transmissiveLightTint: [1.16, 1.07, 0.96],
-    frontLightTint: [1.42, 1.28, 1.10],
-    volumeShadowTint: [0.96, 0.86, 0.74],
+    sunTint: [1.16,1.05,0.91],
+    transmissiveLightTint: [1.12,1.08,1.03],
+    frontLightTint: [1.45,1.3,1.16],
+    volumeShadowTint: [0.74,0.82,0.97],
     directLightBlend: 0.86,
     directLightBoost: 0.92,
-    cloudLitTint: [1.30, 1.18, 1.02],
-    cloudShadowTint: [1.02, 0.92, 0.80],
-    edgeTint: [1.34, 1.20, 1.02],
+    cloudLitTint: [1.32,1.21,1.09],
+    cloudShadowTint: [0.83,0.9,1.05],
+    edgeTint: [1.4,1.27,1.09],
     styleShadowStrength: 1.12,
     styleShadowEdge: 0.14,
     styleShadowDarkness: 0.0,
@@ -530,17 +532,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.62,
   },
   13: {
-    sky: [0.30, 0.62, 1.28],
+    sky: [0.3,0.62,1.28],
     sunBloom: 0.30,
-    sunTint: [1.18, 1.05, 0.90],
-    transmissiveLightTint: [1.18, 1.08, 0.98],
-    frontLightTint: [1.48, 1.32, 1.14],
-    volumeShadowTint: [0.98, 0.88, 0.78],
+    sunTint: [1.15,1.06,0.94],
+    transmissiveLightTint: [1.08,1.11,1.15],
+    frontLightTint: [1.48,1.35,1.21],
+    volumeShadowTint: [0.78,0.86,1.02],
     directLightBlend: 0.90,
     directLightBoost: 1.02,
-    cloudLitTint: [1.34, 1.22, 1.06],
-    cloudShadowTint: [1.04, 0.94, 0.84],
-    edgeTint: [1.38, 1.24, 1.06],
+    cloudLitTint: [1.35,1.26,1.15],
+    cloudShadowTint: [0.88,0.96,1.12],
+    edgeTint: [1.42,1.33,1.16],
     styleShadowStrength: 1.04,
     styleShadowEdge: 0.12,
     styleShadowDarkness: 0.0,
@@ -553,17 +555,17 @@ export const CLOUD_LIGHTING_COLOR_PRESETS = Object.freeze({
     godRayFalloff: 1.48,
   },
   14: {
-    sky: [0.70, 0.76, 0.94],
+    sky: [0.68,0.75,0.96],
     sunBloom: 0.18,
-    sunTint: [0.98, 0.98, 0.98],
-    transmissiveLightTint: [0.94, 0.98, 1.08],
-    frontLightTint: [1.14, 1.14, 1.14],
-    volumeShadowTint: [0.54, 0.60, 0.74],
+    sunTint: [1.02,1.01,0.97],
+    transmissiveLightTint: [0.95,1.02,1.14],
+    frontLightTint: [1.19,1.17,1.12],
+    volumeShadowTint: [0.52,0.6,0.8],
     directLightBlend: 0.80,
     directLightBoost: 0.54,
-    cloudLitTint: [1.06, 1.06, 1.06],
-    cloudShadowTint: [0.68, 0.74, 0.86],
-    edgeTint: [1.04, 1.04, 1.04],
+    cloudLitTint: [1.11,1.1,1.06],
+    cloudShadowTint: [0.66,0.72,0.91],
+    edgeTint: [1.12,1.11,1.03],
     styleShadowStrength: 1.92,
     styleShadowEdge: 0.32,
     styleShadowDarkness: 0.10,
@@ -677,6 +679,10 @@ export const NOISE_PLANET_TEST_CLOUDS = {
   motion: {
     animate: true,
     spinSpeed: 0.001,
+    warpAmount: 1,
+    warpSpeed: 1,
+    textureMotion: 'warp',
+    textureScrollSpeed: 1,
     meridionalDrift: 0.0,
     shapeSpinFactor: 0.82,
     detailSpinFactor: 0.93,
@@ -1504,7 +1510,7 @@ function makeFullControlReferenceOptions() {
     cloudComputeBuilder: {
       shell: ['cloudBottom', 'cloudTop'],
       textures: ['weatherWidth', 'weatherHeight', 'shapeSize', 'detailSize', 'blueWidth', 'blueHeight', 'renderScaleDivider', 'updateEvery', 'outputFormat'],
-      motion: ['animate', 'spinSpeed', 'meridionalDrift', 'shapeSpinFactor', 'detailSpinFactor', 'offsets.weatherOffsetWorld', 'offsets.shapeOffsetWorld', 'offsets.detailOffsetWorld', 'velocities.weather', 'velocities.shape', 'velocities.detail'],
+      motion: ['animate', 'spinSpeed', 'warpAmount', 'warpSpeed', 'textureMotion', 'textureScrollSpeed', 'meridionalDrift', 'shapeSpinFactor', 'detailSpinFactor', 'offsets.weatherOffsetWorld', 'offsets.shapeOffsetWorld', 'offsets.detailOffsetWorld', 'velocities.weather', 'velocities.shape', 'velocities.detail'],
       transformsAcceptedBySetNoiseTransforms: ['shapeOffsetWorld', 'detailOffsetWorld', 'weatherOffsetWorld', 'shapeScale', 'detailScale', 'weatherScale', 'shapeAxisScale', 'detailAxisScale', 'weatherAxisScale', 'shapeBias', 'detailBias', 'weatherBias'],
       paramsAcceptedBySetParams: Object.keys(PLANET_CLOUD_FLAT_LAB_PRESET.params),
       tuningAcceptedBySetTuning: Object.keys(PLANET_CLOUD_FLAT_LAB_PRESET.tuning),
@@ -1953,16 +1959,7 @@ function makeNoiseLayerFromMode(mode, overrides = {}) {
 function createTweakPanel(options = {}) {
   const panel = document.createElement('section');
   panel.id = 'noise-planet-tweak-panel';
-  panel.style.cssText = [
-    'display:block',
-    'gap:4px',
-    'margin-top:5px',
-    'padding-top:5px',
-    'border-top:1px solid rgba(255,255,255,0.14)',
-    'color:#e8eefc',
-    'box-sizing:border-box',
-    'min-height:0',
-  ].join(';');
+  panel.style.cssText = 'display:block;min-height:0';
 
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
@@ -1984,12 +1981,9 @@ function createTweakPanel(options = {}) {
   ].join(';');
 
   const tabRow = document.createElement('div');
-  tabRow.style.cssText = [
-    'display:flex',
-    'gap:4px',
-    'flex-wrap:wrap',
-    'padding:1px 0 3px',
-  ].join(';');
+  tabRow.className = 'cl-tabs';
+  tabRow.setAttribute('role', 'tablist');
+  tabRow.setAttribute('aria-label', 'Planet sections');
 
   const sectionHost = document.createElement('div');
   sectionHost.style.cssText = [
@@ -2221,7 +2215,8 @@ function createTweakPanel(options = {}) {
 
   function setPendingEdits() {
     pendingEdits = true;
-    rebakeButton.textContent = 'Apply edits •';
+    rebakeButton.textContent = 'Apply edits ·';
+    rebakeButton.parentElement?.setAttribute('data-dirty', 'true');
     status.textContent = 'Manual changes pending. Choose Apply edits to update the render.';
   }
 
@@ -2230,6 +2225,7 @@ function createTweakPanel(options = {}) {
     pendingEdits = false;
     pendingCloudTextures = false;
     rebakeButton.textContent = 'Apply edits';
+    rebakeButton.parentElement?.removeAttribute('data-dirty');
   }
 
   function scheduleCloudLiveApply(label, path = '', meta = {}) {
@@ -3558,7 +3554,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
 
   const cloudTransformPanel = makeCompactControlPanel(
     'Cloud transform/motion controls',
-    'Texture scale, bias, axis scale, offsets, and channel motion.',
+    'Enable Animate clouds to run motion. Regeneration updates the existing weather texture every frame. Scroll speed: 0 still, 1 gentle, 50 fast. Apply numeric edits below.',
   );
 
   function addCloudTransformControl(path, label, type = 'number', step = 'any', opts = {}) {
@@ -3596,6 +3592,15 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     }
   }
 
+  addCloudTransformControl('motion.animate', 'Animate clouds', 'checkbox', 'any', {fallback:true}).wrap.style.gridColumn='1 / -1';
+  const textureMotionControl=addCloudTransformControl('motion.textureMotion', 'Cloud motion preset', 'select', 'any', {fallback:'warp',options:[{value:'off',label:'Off (warp + texture regeneration)'},{value:'warp',label:'Warp texture'},{value:'warp_regenerate',label:'Warp + texture regeneration'}]});
+  textureMotionControl.input.id='planet-texture-motion';
+  textureMotionControl.wrap.style.gridColumn='1 / -1';
+  addCloudTransformControl('motion.warpAmount', 'Warp amount', 'number', '0.1', {fallback:1,min:0,max:2}).input.id='planet-warp-amount';
+  addCloudTransformControl('motion.warpSpeed', 'Warp speed', 'number', '0.5', {fallback:1,min:0,max:50}).input.id='planet-warp-speed';
+  const textureScrollControl=addCloudTransformControl('motion.textureScrollSpeed', 'Texture scroll speed', 'number', '0.5', {fallback:1,min:0,max:50});
+  textureScrollControl.input.id='planet-texture-scroll-speed';
+  textureScrollControl.wrap.style.gridColumn='1 / -1';
   addCloudTransformControl('transforms.weatherScale', 'weatherScale', 'number', '0.01');
   addCloudTransformControl('transforms.shapeScale', 'shapeScale', 'number', '0.01');
   addCloudTransformControl('transforms.detailScale', 'detailScale', 'number', '0.01');
@@ -3622,18 +3627,50 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     onChange:(style)=>{
       updateEditorValue(clouds,'Planet cloud style',(cfg)=>{
         const radius=Number(readOptions().radius) || DEFAULT_RADIUS;
+        const keptMotion={animate:cfg.motion?.animate,warpAmount:cfg.motion?.warpAmount,warpSpeed:cfg.motion?.warpSpeed,textureMotion:cfg.motion?.textureMotion,textureScrollSpeed:cfg.motion?.textureScrollSpeed};
         const {aurora,textures,...presetConfig}=cloudConfigForStyle(style,radius);
+        if(['gas_giant','neptune','hail_mary','satellite','cyclonic','trade_winds'].includes(style)){
+          cfg.textures={...cfg.textures,weatherWidth:2048,weatherHeight:1024};
+        }
         Object.assign(cfg,mergePlain(cfg,presetConfig));
+        Object.assign(cfg.motion,keptMotion);
       },{path:'cloudStyle',forceCloudLiveApply:true});
       syncEditorPathInputs(clouds);
     },
   });
-  const presetPanel = document.createElement('div');
+  const randomCloudButton = document.createElement('button');
+  randomCloudButton.type = 'button';
+  randomCloudButton.id = 'planet-randomize-clouds';
+  randomCloudButton.textContent = 'Randomize planet';
+  randomCloudButton.title = 'New terrain, planet colors, atmosphere and cloud variation. Keeps cloud shape, lighting and motion; manual edits stay pending.';
+  // Studio: the artist path. Presets preview immediately; a look is the full
+  // editor snapshot, so it round-trips everything the advanced tabs can set.
+  const rendererSlot = document.createElement('div');
+  rendererSlot.id = 'planet-render-mode-slot';
+  const studio = createStudioCard({
+    presetFields: [
+      adoptField(planetCloudStyleSelect.wrap, { text: 'Cloud shape' }),
+      adoptField(quickColorPreset.wrap, { text: 'Lighting' }),
+    ],
+    actions: [{ button: randomCloudButton, label: 'Randomize planet' }],
+    extra: [rendererSlot],
+    look: {
+      name: () => `planet-${clouds.value?.cloudStyle || 'clouds'}`,
+      saveImage: async () => {
+        if (typeof options.captureImage !== 'function') throw new Error('The planet is still loading.');
+        return options.captureImage();
+      },
+      getLook: () => ({ app: 'cloud-lab', demo: 'planet', ...readSnapshot() }),
+      applyLook: async (data) => {
+        if (data?.demo && data.demo !== 'planet') throw new Error('That look is for the flat clouds demo.');
+        applySnapshot(data);
+        rebakeButton.click();
+      },
+    },
+  });
+  const presetPanel = studio.element;
   presetPanel.id = 'planet-presets';
-  const presetHint = document.createElement('span');
-  presetHint.textContent = 'Choose a preset to preview it immediately.';
-  presetHint.style.cssText = 'font-size:11px;color:#a6c4df';
-  presetPanel.append(planetCloudStyleSelect.wrap, quickColorPreset.wrap, presetHint);
+  planetCloudStyleSelect.input.closest('.cl-select')?.classList.add('cl-select--lg');
   planetCloudStyleSelect.input.id = 'planet-shape-preset';
   quickColorPreset.input.id = 'planet-lighting-preset';
   registerEditorPathInput(clouds,'cloudStyle',planetCloudStyleSelect,'select');
@@ -3724,7 +3761,6 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   );
 
   const sections = [
-    { key: 'overview', label: 'Overview', node: overview },
     { key: 'render', label: 'Render', node: renderSection },
     { key: 'planetNoise', label: 'Terrain', node: noiseSection },
     { key: 'mixer', label: 'Mixer', node: remixSection },
@@ -3740,15 +3776,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = section.label;
-    button.style.cssText = [
-      'border:1px solid rgba(255,255,255,0.16)',
-      'border-radius:8px',
-      'background:rgba(255,255,255,0.06)',
-      'color:#e8eefc',
-      'padding:3px 5px',
-      'font:9px system-ui,sans-serif',
-      'cursor:pointer',
-    ].join(';');
+    button.setAttribute('role', 'tab');
     button.addEventListener('click', () => setActiveSection(section.key));
     tabButtons[section.key] = button;
     tabRow.appendChild(button);
@@ -3760,8 +3788,8 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
       section.node.style.display = active ? 'block' : 'none';
       const button = tabButtons[section.key];
       if (button) {
-        button.style.background = active ? 'rgba(132,184,255,0.24)' : 'rgba(255,255,255,0.06)';
-        button.style.borderColor = active ? 'rgba(132,184,255,0.62)' : 'rgba(255,255,255,0.16)';
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+        button.classList.toggle('active', active);
       }
     }
     sectionHost.scrollTop = 0;
@@ -3821,9 +3849,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   deleteLocalButton.type = 'button';
   deleteLocalButton.textContent = 'Delete local';
 
-  for (const button of [rebakeButton, randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton]) {
-    button.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:6px;background:rgba(255,255,255,0.08);color:#e8eefc;padding:4px 5px;font:10px system-ui,sans-serif;cursor:pointer;min-width:0';
-  }
+  rebakeButton.className = 'cl-btn cl-btn--primary cl-btn--sm';
 
   const localRow = document.createElement('div');
   localRow.style.cssText = [
@@ -3848,14 +3874,20 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
   status.id = 'planet-edit-status';
   status.setAttribute('role','status');
   status.textContent = 'Ready. Presets preview automatically; manual edits wait for Apply.';
-  status.style.cssText = 'font-size:10px;color:rgba(226,238,255,0.68);white-space:pre-wrap';
+  status.className = 'cl-applybar__status';
 
   actionRow.append(randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton);
   const editActions = document.createElement('div');
   editActions.id = 'planet-edit-actions';
-  editActions.append(rebakeButton, status);
-  body.append(presetPanel, tabRow, sectionHost,
-    planetDisclosure('Save, import & rebuild tools', actionRow, localRow), editActions);
+  editActions.className = 'cl-applybar cl-keep';
+  editActions.append(status, rebakeButton);
+  const advancedHead = document.createElement('div');
+  advancedHead.className = 'cl-advanced-head cl-keep';
+  advancedHead.innerHTML = '<h2 class="cl-section">Advanced</h2><span class="cl-hint">Edits wait for Apply</span>';
+  sectionHost.classList.add('cl-legacy');
+  const toolsDisclosure = planetDisclosure('Save, import & rebuild tools', actionRow, localRow);
+  toolsDisclosure.classList.add('cl-legacy');
+  body.append(presetPanel, advancedHead, tabRow, sectionHost, toolsDisclosure, editActions);
   for (const editor of [planetRender, planetNoise, planetStack, clouds]) {
     editor.textarea.addEventListener('input', () => {
       if (editor === clouds) pendingCloudTextures = true;
@@ -3863,7 +3895,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     });
   }
   header.append(title, collapse);
-  panel.append(header, body);
+  panel.append(body);
   setActiveSection('clouds');
 
   let collapsed = false;
@@ -3977,7 +4009,7 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     syncCloudLookInputs();
     syncAuroraLookInputs();
     syncCloudChannelInputs();
-    setActiveSection('overview');
+    setActiveSection('clouds');
   }
 
   const LOCAL_SNAPSHOT_KEY = 'noisePlanetTest:tweakSnapshots:v1';
@@ -4168,15 +4200,49 @@ addAuroraVec3Control('aurora.style.auroraShadowColor', 'dark color');
     syncCloudLookInputs();
     syncAuroraLookInputs();
     syncCloudChannelInputs();
-    setActiveSection('overview');
+    setActiveSection('clouds');
   }
 
   return {
     element: panel,
     editors: { planetRender, planetNoise, planetStack, clouds, reference },
-    buttons: { rebakeButton, randomButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton },
+    buttons: { rebakeButton, randomButton, randomCloudButton, rebakeCloudButton, currentStackButton, resetButton, validateButton, exportButton, importButton, saveLocalButton, loadLocalButton, deleteLocalButton },
     markApplied,
     hasPendingCloudTextures: () => pendingCloudTextures,
+    async randomizeClouds(seed, apply) {
+      window.clearTimeout(liveCloudApplyTimer);
+      liveCloudApplyChain = liveCloudApplyChain.catch(() => {}).then(async () => {
+        const next = randomizePlanetCloudConfig(liveCloudValue, seed);
+        // Stage only new seeds before the bake. A newer selector change can
+        // then build on this variation without being overwritten on completion.
+        clouds.setValue(randomizePlanetCloudConfig(clouds.value, seed));
+        liveCloudValue = next;
+        syncEditorPathInputs(clouds);
+        try { await apply(clonePlain(next)); }
+        catch (error) { pendingCloudTextures = true; setPendingEdits(); throw error; }
+      });
+      await liveCloudApplyChain;
+      return pendingEdits;
+    },
+    syncRandomizedPlanet(nextOptions) {
+      const draft = randomizePlanetSceneConfig({
+        ...planetRender.value, noiseConfigs: planetStack.value,
+      }, nextOptions.seed, PLANET_GRADIENTS.length);
+      // Only variation fields change in the draft. Unapplied height, atmosphere
+      // strength and noise-parameter edits remain staged.
+      const {noiseConfigs, ...renderDraft} = draft;
+      renderDraft.gradientIndex = nextOptions.gradientIndex;
+      renderDraft.gradient = nextOptions.gradient;
+      planetRender.setValue(renderDraft);
+      planetStack.setValue(noiseConfigs || []);
+      if (Object.hasOwn(planetNoise.value, 'seed')) {
+        planetNoise.setValue({...planetNoise.value, seed: nextOptions.seed});
+      }
+      syncEditorPathInputs(planetRender);
+      syncEditorPathInputs(planetNoise);
+      refreshStackSelect();
+      syncSelectedStackInputs();
+    },
     async flushPresetPreview() {
       // Flush a selection made just before Apply, then wait for all bakes.
       window.clearTimeout(liveCloudApplyTimer);
@@ -4241,27 +4307,8 @@ function createContainer(options = {}) {
   ].join(';');
 
   const hud = document.createElement('aside');
-  hud.style.cssText = [
-    'position:fixed',
-    'left:8px',
-    'top:8px',
-    'bottom:8px',
-    'z-index:5',
-    'width:clamp(340px, 32vw, 430px)',
-    'min-width:340px',
-    'max-width:430px',
-    'padding:6px',
-    'border:1px solid rgba(255,255,255,0.18)',
-    'border-radius:9px',
-    'background:rgba(4,8,18,0.80)',
-    'backdrop-filter:blur(10px)',
-    'box-shadow:0 12px 34px rgba(0,0,0,0.35)',
-    'display:block',
-    'min-height:0',
-    'overflow-y:auto',
-    'overflow-x:hidden',
-    'box-sizing:border-box',
-  ].join(';');
+  hud.className = 'cl-rail cl-root';
+  hud.setAttribute('aria-label', 'Planet controls');
 
   const title = document.createElement('div');
   title.textContent = 'Planet clouds';
@@ -4312,7 +4359,19 @@ function createContainer(options = {}) {
   const tweakPanel = createTweakPanel(options);
 
   actions.append(rerenderButton, disposeButton);
-  hud.append(title, status, tweakPanel.element, planetDisclosure('Scene diagnostics', info, actions));
+  const diagnostics = planetDisclosure('Scene diagnostics', info, actions);
+  diagnostics.classList.add('cl-legacy');
+  const head = createRailHead({
+    title: 'Planet clouds',
+    statusEl: status,
+    switcher: document.getElementById('cloud-demo-navigation'),
+    onToggle: () => hud.classList.toggle('is-collapsed'),
+  });
+  head.querySelector('.cl-rail__title').dataset.panelTitle = '';
+  watchStatus(status);
+  hud.append(head, tweakPanel.element);
+  const applyBar = tweakPanel.element.querySelector('#planet-edit-actions');
+  if (applyBar) applyBar.before(diagnostics); else hud.append(diagnostics);
   stylePlanetPanel(hud);
   container.append(canvas, hud);
   parent.appendChild(container);
@@ -4666,9 +4725,10 @@ function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
 
   const cloudOptions = {
     ...config.surface,
-    seed,
+    seed: config.seed ?? seed,
     cloudStyle:config.cloudStyle,
     cloudRenderMode:runtime.planetClouds?.activeMode || runtime.cloudRenderMode || config.cloudRenderMode || 'raymarch',
+    renderModeToggleTargetId:'planet-render-mode-slot',
     showCloudStyleControl:false,
     progressiveStartup:false,
     bootstrapFrames:0,
@@ -4690,6 +4750,10 @@ function buildPlanetCloudConfig(runtime, result, seed, options = {}) {
     outputFormat: config.textures?.outputFormat,
     animate: config.motion?.animate,
     spinSpeed: config.motion?.spinSpeed,
+    warpAmount: config.motion?.warpAmount,
+    warpSpeed: config.motion?.warpSpeed,
+    textureMotion: config.motion?.textureMotion,
+    textureScrollSpeed: config.motion?.textureScrollSpeed,
     meridionalDrift: config.motion?.meridionalDrift,
     shapeSpinFactor: config.motion?.shapeSpinFactor,
     detailSpinFactor: config.motion?.detailSpinFactor,
@@ -4993,6 +5057,11 @@ export async function noisePlanetTest(options = {}) {
     async () => new NoiseComputeBuilder(device, queue),
   );
   const { scene, camera, sun, sunSource, depthRenderer } = createScene(engine, ui.canvas, radius, mergedOptions);
+  // Studio "Save image": a full-resolution PNG of the current view, without the UI.
+  mergedOptions.captureImage = async () => {
+    const dataUrl = await BABYLON.Tools.CreateScreenshotAsync(engine, camera, { precision: 1 });
+    return (await fetch(dataUrl)).blob();
+  };
   const stars = addStars(scene, radius);
 
   const runtime = {
@@ -5172,6 +5241,7 @@ export async function noisePlanetTest(options = {}) {
     window.noisePlanetTestCloudConfig = runtime.planetCloudSettings;
     window.noisePlanetTestAuroraConfig = runtime.planetAuroraSettings;
 
+    runtime.lastRenderOptions = clonePlain({...mergedOptions, ...renderOptions, noiseConfigs: configSet.noiseConfigs});
     const elapsedMs = performance.now() - started;
     ui.status.textContent = `Rendered in ${(elapsedMs / 1000).toFixed(2)}s`;
     ui.info.textContent = formatInfo({ ...result, seed }, configSet, elapsedMs);
@@ -5221,6 +5291,25 @@ export async function noisePlanetTest(options = {}) {
 
   ui.tweakPanel.buttons.randomButton.addEventListener('click', () => {
     rebakeFromTweakPanel({ newSeed: true });
+  });
+
+  ui.tweakPanel.buttons.randomCloudButton.addEventListener('click', async () => {
+    const panel = ui.tweakPanel, button = panel.buttons.randomCloudButton;
+    button.disabled = true;
+    try {
+      panel.setStatus('Randomizing planet, atmosphere and clouds; keeping the cloud preset...');
+      const pending = await panel.randomizeClouds(Date.now(), async cloudConfig => {
+        const nextOptions = randomizePlanetSceneConfig({
+          ...(runtime.lastRenderOptions || mergedOptions), clouds: cloudConfig,
+        }, cloudConfig.seed, PLANET_GRADIENTS.length);
+        panel.syncRandomizedPlanet(nextOptions);
+        await renderPlanet({...nextOptions, _preserveCloudTextures: false});
+      });
+      panel.setStatus('Planet, atmosphere and clouds randomized; cloud shape and lighting kept.' + (pending ? ' Manual edits still pending.' : ''));
+    } catch (error) {
+      console.error(error);
+      panel.setStatus('Planet randomize failed: ' + (error?.message || error));
+    } finally { button.disabled = false; }
   });
 
   ui.tweakPanel.buttons.rebakeCloudButton.addEventListener('click', async () => {

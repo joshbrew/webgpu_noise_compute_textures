@@ -98,7 +98,11 @@ fn resolveCloudColor(pixI: vec2<i32>, newCol: vec4<f32>, rayFarHistoryF: f32, te
 @compute @workgroup_size(8, 8, 1)
 fn resolveCloudFlat(@builtin(global_invocation_id) gid: vec3<u32>) {
   var pixI = vec2<i32>(gid.xy) + vec2<i32>(frame.originX, frame.originY);
-  if (reproj.compactInterleave != 0u && temporalCellRateNormalized() > 1u && reproj.frameIndex > 0u) {
+  let compactInterleave = reproj.compactInterleave != 0u && temporalCellRateNormalized() > 1u && reproj.frameIndex > 0u;
+  if (!compactInterleave &&
+      (gid.x >= select(frame.fullWidth, frame.tileWidth, frame.tileWidth > 0u) ||
+       gid.y >= select(frame.fullHeight, frame.tileHeight, frame.tileHeight > 0u))) { return; }
+  if (compactInterleave) {
     let mapped = compactTemporalPixel(gid.xy, temporalCellRateNormalized());
     if (mapped.z == 0u) { return; }
     pixI = vec2<i32>(mapped.xy);

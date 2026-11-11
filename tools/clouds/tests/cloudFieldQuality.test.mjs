@@ -67,3 +67,33 @@ test('field quality reaches the worker and reseeds temporal history in manual an
  assert.match(ui,/preview.fieldQuality = normalizeCloudFieldQuality/);
  assert.match(ui,/"v-field-quality"\)\?\.dispatchEvent/);
 });
+
+test('surroundings switches preserve a finite storm box and the camera-relative volume',async()=>{
+ const ui=await readFile(new URL('../cloudTestThreaded.js',import.meta.url),'utf8');
+ const start=ui.indexOf("$('quick-terrain')?.addEventListener('change'"),end=ui.indexOf('  $("quick-rebake-button")',start);
+ let handler,frames=0;
+ const controls=new Map(Object.entries({'quick-terrain':{value:'basin',addEventListener:(_,fn)=>handler=fn},
+  'quick-sky-span':{value:52},'v-box-hx':{value:26},'v-box-hy':{value:10},'v-box-hz':{value:26},
+  'v-box-cy':{value:9.7},'v-cy':{value:4},render:{click:()=>frames++}}));
+ const preview={terrainEnabled:false};
+ new Function('$','setFieldValue','preview',ui.slice(start,end))(id=>controls.get(id),(id,v)=>controls.get(id).value=v,preview);
+ handler();assert.equal(preview.terrainEnabled,true);assert.equal(controls.get('v-cy').value,10);
+ for(const [key,value] of [['quick-sky-span',52],['v-box-hx',26],['v-box-hy',10],['v-box-hz',26]])assert.equal(controls.get(key).value,value);
+ assert.ok(Math.abs(controls.get('v-box-cy').value-controls.get('v-cy').value-5.7)<1e-9);
+ controls.get('quick-terrain').value='off';handler();
+ assert.equal(preview.terrainEnabled,false);assert.equal(controls.get('v-cy').value,4);
+ assert.ok(Math.abs(controls.get('v-box-cy').value-9.7)<1e-9);assert.equal(frames,2);
+});
+
+test('quick sun height edits relight through the existing control and sync from presets',async()=>{
+ const ui=await readFile(new URL('../cloudTestThreaded.js',import.meta.url),'utf8');
+ const start=ui.indexOf("$('quick-sun-height')?.addEventListener('input'"),end=ui.indexOf("  $('quick-terrain')?.addEventListener",start);
+ let handler;const events=[],controls=new Map(Object.entries({'quick-sun-height':{value:'34.5',addEventListener:(_,fn)=>handler=fn},'c-el':{value:21},'quick-sun-height-label':{textContent:''}}));
+ const get=id=>controls.get(id),set=(id,v)=>controls.get(id).value=v;
+ new Function('$','setFieldValue','dispatchInput',ui.slice(start,end))(get,set,id=>events.push(id));
+ handler();assert.equal(get('c-el').value,34.5);assert.equal(get('quick-sun-height-label').textContent,'Sun height 34.5°');assert.deepEqual(events,['c-el']);
+ get('c-el').value=12;
+ const syncStart=ui.indexOf("  const sunHeight=Number($('c-el')"),syncEnd=ui.indexOf('  const cloudScale=',syncStart);
+ new Function('$','setFieldValue','preview',ui.slice(syncStart,syncEnd))(get,set,{sun:{elDeg:21}});
+ assert.equal(get('quick-sun-height').value,12);assert.equal(get('quick-sun-height-label').textContent,'Sun height 12.0°');
+});

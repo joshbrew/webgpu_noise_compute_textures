@@ -60,6 +60,9 @@ struct Params {
   voxelHistoryWeight: f32,
   formType: f32,
   worldScale: f32,
+  warpAmount: f32,
+  warpPhase: f32,
+  _warpPad: vec2<f32>,
 }
 
 struct CubeVals {
@@ -201,17 +204,19 @@ fn scalar_field_world(pos:vec3<f32>)->f32 {
   let h=max(params.cloudTop-params.cloudBottom,0.001);
   let ph=(length(pos)-params.planetRadius-params.cloudBottom)/h;
   var weatherDir=normalize(rotate_domain(pos,params.weatherTime));
-  if(params.formType>=4.5){weatherDir=gasWeatherDirection(normalize(pos),params.weatherTime,params.formType);}
+  if(params.formType>=.5){weatherDir=planetWarpDirection(normalize(pos),params.weatherTime,params.formType,params.warpAmount,params.warpPhase);}
   let uv=vec2<f32>(fract(atan2(weatherDir.z,weatherDir.x)/(2.0*PI)),acos(clamp(weatherDir.y,-1.0,1.0))/PI);
   let wm=sample_weather(uv);
-  let s=surface_shape(planetEvolvingDomain(rotate_domain(pos,params.shapeTime)*params.worldScale,params.detailTime));
+  let s=surface_shape(planetEvolvingDomain(planetWarpPosition(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase)*params.worldScale,params.detailTime));
   let cute=saturate(params.formType-1.0);
   let gas=params.formType>=4.5;
   let scattered=params.formType>=3.5 && !gas;
   let hemisphere=select(1.0,wm.a,params.formType>=2.5 && params.formType<3.5);
   let coverage=saturate(params.coverageThreshold*mix(0.72,1.0,max(wm.r,wm.g*0.65)));
   let threshold=select(mix(0.82,0.46,coverage),0.63,scattered)-select(0.0,0.030,cute>0.5 && !gas);
-  let mass=select(s.r*0.72+s.g*0.20+s.b*0.08,0.58+wm.a*0.18+(s.g-0.5)*0.12,gas);
+  var mass=select(s.r*0.72+s.g*0.20+s.b*0.08,0.58+wm.a*0.18+(s.g-0.5)*0.12,gas);
+  // Satellite coverage is a connected weather field, with 3D billows at its rim.
+  if(params.formType>1.2 && params.formType<1.5){mass=0.29+wm.r*0.45+(s.r-0.5)*0.12+(s.g-0.5)*0.04;}
   let lower=smoothstep(0.025,mix(0.16,0.22,cute),ph);
   let summit=clamp(0.78+(s.a-0.5)*mix(0.24,0.42,cute),0.48,0.97);
   let upper=1.0-smoothstep(summit-0.28,summit,ph);

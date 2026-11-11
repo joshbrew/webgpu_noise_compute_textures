@@ -22,8 +22,9 @@ struct RenderParams {
   evolutionPhase: f32,
   formType: f32,
   weatherTime: f32,
+  warpAmount: f32,
+  warpPhase: f32,
   _padding: f32,
-  _padding2: vec2<f32>,
 }
 
 struct VertexOut {
@@ -107,7 +108,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
   let baseNormal = normalize(mix(radial, surfaceNormal, 0.90));
   let angle=params.detailTime;
   let p=input.worldPosition;
-  let rawDomain=vec3<f32>(p.x*cos(angle)-p.z*sin(angle),p.y,p.x*sin(angle)+p.z*cos(angle))*params.detailScale;
+  let rawDomain=planetWarpPosition(p,angle,params.formType,params.warpAmount,params.warpPhase)*params.detailScale;
   let phase=params.evolutionPhase;
   let warp=vec3<f32>(sin(rawDomain.y*5.7+phase),sin(rawDomain.z*6.3-phase*.71),sin(rawDomain.x*5.1+phase*.47));
   let domain=rawDomain+vec3<f32>(.018,.011,-.014)*phase+warp*.055;
@@ -155,7 +156,7 @@ fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
   body += mix(coolShadow, warmLight, 0.34) * backTransmission * 0.035;
   body += coolShadow * params.ambient * 0.14;
   if(params.formType>=4.5){
-    let d=gasWeatherDirection(radial,params.weatherTime,params.formType);
+    let d=planetWarpDirection(radial,params.weatherTime,params.formType,params.warpAmount,params.warpPhase);
     let inset=.5/f32(textureDimensions(weatherTex).y);
     let uv=vec2<f32>(fract(atan2(d.z,d.x)/(2.0*PI)),clamp(acos(clamp(d.y,-1.0,1.0))/PI,inset,1.0-inset));
     let weather=textureSampleLevel(weatherTex,linearSampler,uv,0,0.0);

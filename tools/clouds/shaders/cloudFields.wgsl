@@ -6,6 +6,9 @@ struct CloudFieldParams {
   dimensions: vec4<u32>,
   volume: vec4<f32>, // mask kind, rotation, major radius, tube radius / box wisp weight
   morphology: vec4<f32>, // cirrus, Kelvin-Helmholtz/fluctus, asperitas, ray-only turbulence
+  pattern: vec4<f32>, // axis (0 volume, 1 X, 2 Y, 3 Z), first, last, stride
+  patternMotion: vec4<f32>, // material-space scroll, enabled
+  patternStyle: vec4<f32>, // repeat scale, slice thickness in cells
 };
 @group(2) @binding(1) var cloudDensityField: texture_3d<f32>;
 @group(2) @binding(2) var cloudLightField: texture_3d<f32>;
@@ -16,7 +19,7 @@ struct CloudFieldParams {
 
 fn cloudFieldUV(p: vec3<f32>) -> vec3<f32> {
   let uv=(p - FIELD.gridMin.xyz) / max(FIELD.gridSize.xyz, vec3<f32>(EPS));
-  return select(uv,vec3<f32>(fract(uv.x),uv.y,fract(uv.z)),FIELD.dimensions.w>0u);
+  return select(uv,vec3<f32>(fract(uv.x),uv.y,fract(uv.z)),FIELD.dimensions.w>0u || (CLOUD_FROZEN_PATTERN!=0u && FIELD.patternMotion.w>0.5));
 }
 fn fieldPeriodicScale(scale:vec3<f32>)->vec3<f32> {
   if(FIELD.dimensions.w==0u){return scale;}
@@ -301,9 +304,8 @@ fn featureWeatherBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>, weights
     signed = max(signed, form - (1.0 - weights.x) * 0.35);
   }
   if (weights.y > 0.0) {
-    // Curled wave crests above a thin bank, not sine-wave hills. A clipped
-    // annular cross-section leaves the hook open on its downwind underside;
-    // its leaning root remains attached to the parent layer.
+    // A breaking wave has a broad sloping back and a steep forward face.
+    // The curl is only its crest; the rising wedge below supplies its mass.
     let width = max(TUNE.puffScale, 3.6);
     let phase = u + sin(v * 0.21) * 0.65 + (shape.g - 0.5) * 0.45;
     let waveId = floor(phase / width);
@@ -313,8 +315,8 @@ fn featureWeatherBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>, weights
     let seed = cloudCellRandom(vec2<f32>(waveId, 0.0), 419.7);
     let lean = cloudCellRandom(vec2<f32>(waveId, 0.0), 431.3);
     let x = (fract(phase / width) - 0.5 + (lean - 0.5) * 0.22) * width;
-    let radius = width * (mix_f(0.12, 0.245, seed) + shape.g * 0.018 + 0.015 * sin(v * 0.27));
-    let floorY = base + height * 0.44 + sin(v * 0.34) * 0.20 + sin(u * 0.22 + v * 0.16) * 0.28;
+    let radius = width * (mix_f(0.20, 0.26, seed) + shape.g * 0.018 + 0.015 * sin(v * 0.27));
+    let floorY = base + height * 0.20 + sin(v * 0.34) * 0.12 + sin(u * 0.22 + v * 0.16) * 0.16;
     let roughQ = vec2<f32>(x + (shape.g - 0.5) * width * 0.13, p.y - floorY - radius + (shape.b - 0.5) * width * 0.10);
     let turn = (lean - 0.5) * 0.90;
     let q = vec2<f32>(cos(turn)*roughQ.x+sin(turn)*roughQ.y,-sin(turn)*roughQ.x+cos(turn)*roughQ.y);
@@ -322,13 +324,17 @@ fn featureWeatherBody(p: vec3<f32>, shape: vec4<f32>, detail: vec3<f32>, weights
     let curlRadius = radius * (1.0 + sin(atan2(q.y,q.x)*2.0 + seed*6.283185) * 0.16);
     let ring = (thickness - abs(length(q) - curlRadius)) / thickness;
     let openHook = min(ring, max(-q.x - radius * mix_f(0.02,0.28,seed), q.y + radius * mix_f(0.10,0.42,lean)) / thickness);
-    let root = min(1.0 - abs(x + radius - clamp(p.y - floorY, 0.0, radius) * 0.15) / thickness,
-      min((p.y - floorY + thickness) / thickness, (floorY + radius - p.y) / thickness));
+    let rise = clamp((p.y-floorY)/max(radius*1.65,0.01),0.0,1.0);
+    let back = mix_f(-width*0.46,-radius*0.42,rise);
+    let face = mix_f(radius*0.42,-radius*0.30,rise);
+    let wedge = min(min((x-back)/thickness,(face-x)/thickness),
+      min((p.y-floorY+thickness)/thickness,(floorY+radius*1.65-p.y)/thickness));
+    let crest = min(openHook,(p.y-floorY-radius*0.72)/thickness);
     let bank = (1.0 - abs(p.y - floorY - (shape.g-0.5)*0.65) / max(thickness * 0.85, spacingY * 1.6))
       - smoothstep(0.36,0.67,shape.b)*0.60;
     let row = smoothstep(0.22, 0.72, 0.5 + sin(v * 0.38 + shape.b * 1.45) * 0.5);
-    let form = min(max(max(openHook, root), bank * 0.42), row * 1.1 - mix_f(0.90, 0.20, coverage));
-    let eroded = form + (shape.r - 0.5) * 0.42 - (grain - 0.35) * 0.26 - (shape.a - 0.5) * 0.16;
+    let form = min(max(cloudSoftUnion(wedge,crest), bank * 0.42), row * 1.1 - mix_f(0.90, 0.20, coverage));
+    let eroded = form + (shape.r - 0.5) * 0.78 - (grain - 0.35) * 0.38 - (shape.a - 0.5) * 0.24;
     density += weights.y * smoothstep(-0.055, 0.30, eroded) * 0.60;
     macroDensity += weights.y * smoothstep(-0.055, 0.30, form) * 0.60;
     signed = max(signed, eroded - (1.0 - weights.y) * 0.35);
@@ -427,6 +433,256 @@ fn layeredWeatherBody(p:vec3<f32>, shape:vec4<f32>, detail:vec3<f32>, weights:ve
 // Example arbitrary domain: rotate an analytic torus in place while its cloud
 // material keeps advecting independently through it. Bounds are only an
 // allocation/ray intersection box; no mesh or marching cubes are involved.
+// Quantized cell periods match both value and slope across a repeated field.
+// Offsets remain continuous, so animated noise travels through the join.
+fn fieldNoise2D(p:vec2<f32>, frequency:vec2<f32>, offset:vec2<f32>)->f32 {
+  let tiled=FIELD.dimensions.w>0u;
+  let cells=max(round(frequency*FIELD.gridSize.xz),vec2<f32>(1.0));
+  let rate=select(frequency,cells/FIELD.gridSize.xz,tiled);
+  let q=p*rate+offset; let cell=floor(q); let f=fract(q);
+  var a=cell; var b=cell+vec2<f32>(1.0,0.0);
+  var c=cell+vec2<f32>(0.0,1.0); var d=cell+vec2<f32>(1.0);
+  if(tiled){a-=floor(a/cells)*cells;b-=floor(b/cells)*cells;
+    c-=floor(c/cells)*cells;d-=floor(d/cells)*cells;}
+  let u=f*f*(3.0-2.0*f);
+  return mix_f(mix_f(hash13_i(vec3<i32>(vec2<i32>(a),0)),hash13_i(vec3<i32>(vec2<i32>(b),0)),u.x),
+    mix_f(hash13_i(vec3<i32>(vec2<i32>(c),0)),hash13_i(vec3<i32>(vec2<i32>(d),0)),u.x),u.y);
+}
+
+// A morning sky has two distinct scales: a broad low front and a broken,
+// ruffled upper deck. Both are volumetric density, not camera-facing cards or
+// repeated cumulus balls. Reuse the bake's filtered material bands.
+fn morningRuffleBody(p:vec3<f32>, shape:vec4<f32>, detail:vec3<f32>, spacingY:f32)->vec3<f32> {
+  let material = p + NTransform.shapeOffsetWorld;
+  let height = FIELD.gridSize.y; let base = FIELD.gridMin.y;
+  // Independent wind domains evolve the deck instead of translating a frozen
+  // pattern. Existing animation offsets supply time, so Pause really freezes
+  // the field and moving the camera cannot change the cloud anatomy.
+  let evolution = NTransform.detailOffsetWorld.xz - NTransform.shapeOffsetWorld.xz;
+  let weatherDrift = NTransform.weatherOffsetWorld.xz - NTransform.shapeOffsetWorld.xz;
+  let broad = fieldNoise2D(material.xz,vec2<f32>(0.10),vec2<f32>(7.3,19.1));
+  let broadOther = fieldNoise2D(material.xz+weatherDrift,vec2<f32>(0.17),vec2<f32>(23.7,4.6));
+  let coverage = saturate(C.globalCoverage);
+  let presence = smoothstep(0.0, 0.12, C.globalCoverage);
+  let curl = vec2<f32>(fieldNoise2D(material.xz,vec2<f32>(0.25),evolution*0.45+vec2<f32>(1.7,8.3)),
+    fieldNoise2D(material.xz,vec2<f32>(0.25),evolution*0.45+vec2<f32>(19.1,2.7))) - 0.5;
+  let ruffleRate=vec2<f32>(1.0,1.65)/max(TUNE.puffScale,0.30);
+  let ruffleWarp=vec2<f32>(broadOther-0.5,broad-0.5)*2.8+curl*1.2;
+  let ruffleCoarse=fieldNoise2D(material.xz,ruffleRate,ruffleWarp+vec2<f32>(13.7,2.1));
+  let ruffleFine=fieldNoise2D(material.xz,ruffleRate*2.1,ruffleWarp*2.1-evolution*0.8+vec2<f32>(3.1,21.7));
+  let ripple = ridge01(ruffleCoarse * 0.72 + ruffleFine * 0.28);
+  let upperCenter = base + height * (0.74 + (broad - 0.5) * 0.11)
+    + (ruffleCoarse - 0.5) * height * 0.035 + (shape.b - 0.5) * 0.12;
+  let upperHalf = max(spacingY * 2.2, height * (0.018 + ripple * 0.024));
+  let upperBand = 1.0 - abs(p.y - upperCenter) / upperHalf;
+  let upperOpening = broad * 0.63 + broadOther * 0.24 + shape.r * 0.13
+    - mix_f(0.72, 0.36, coverage);
+  let upperForm = min(upperBand, min(upperOpening * 2.8,
+    (ruffleCoarse * 0.65 + ruffleFine * 0.35 - 0.46) * 3.4));
+  let upperFine = upperForm - (detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2) * 0.055;
+  // An irregular wind front occupies one region of the sky. Its underside is
+  // lower and denser than the cloudlets, giving a slate bank near the horizon.
+  let frontEdge = material.z + sin(material.x * 0.13) * 3.2 + (broad - 0.5) * 4.0;
+  let periodicFront=sin(material.z*6.283185/FIELD.gridSize.z)
+    +sin(material.x*6.283185/FIELD.gridSize.x)*0.35+(broad-0.5)*0.4;
+  let front = select(1.0-smoothstep(-7.0,-2.0,frontEdge),
+    1.0-smoothstep(-0.35,0.15,periodicFront),FIELD.dimensions.w>0u);
+  let lowerCenter = base + height * (0.18 + (broadOther - 0.5) * 0.06)
+    + (shape.g - 0.5) * height * 0.035;
+  let lowerBand = 1.0 - abs(p.y - lowerCenter) / max(spacingY * 2.5,
+    height * (0.075 + (shape.r * 0.6 + ruffleCoarse * 0.4) * 0.035));
+  let lowerForm = min(lowerBand, front * 1.25 - 0.22 + (shape.g - 0.5) * 0.12);
+  let fine = smoothstep(-0.035, 0.22, upperFine) * 0.72
+    + smoothstep(-0.035, 0.24, lowerForm - detail.g * 0.035) * 1.20;
+  let macroDensity = smoothstep(-0.035, 0.22, upperForm) * 0.72
+    + smoothstep(-0.035, 0.24, lowerForm) * 1.20;
+  return vec3<f32>(fine * presence, macroDensity * presence, max(upperFine, lowerForm));
+}
+
+// Thick connected folds on the cached volume path. All horizontal variation
+// comes from periodic material textures, so wide skies keep their voxel detail
+// and join at tile boundaries without camera-dependent procedural slices.
+fn cachedInkFoldBody(p:vec3<f32>, shape:vec4<f32>, detail:vec3<f32>)->vec3<f32> {
+  let ph = (p.y - FIELD.gridMin.y) / FIELD.gridSize.y;
+  let roll = sin(shape.g * 6.283185 + shape.b * 2.4);
+  let center = 0.49 + (shape.g - shape.b) * 0.48 + roll * 0.12;
+  let thickness = 0.19 + shape.r * 0.16 + shape.a * 0.08;
+  let mainBand = 1.0 - abs(ph - center) / thickness;
+  // A second rolling shoulder grows out of the main mass, rather than a
+  // disconnected planar deck. Each noise channel shifts its height and width.
+  let shoulderCenter=center+0.16+(shape.b-0.5)*0.22;
+  let shoulder=1.0-abs(ph-shoulderCenter)/(thickness*0.62);
+  let band=max(mainBand,shoulder*(0.45+shape.g*0.45));
+  let fbm=dot(shape.gba,vec3<f32>(0.625,0.25,0.125));
+  let remapped=saturate((contrast01(shape.r,1.8)-fbm*0.90)/max(1.0-fbm*0.90,0.08));
+  let closure = remapped - mix_f(0.76,0.22,saturate(C.globalCoverage));
+  let form = min(band, closure * 3.2);
+  let grain = dot(detail, vec3<f32>(0.42,0.34,0.24));
+  let crease = pow(1.0 - ridge01(detail.g * 0.55 + shape.b * 0.45), 2.0);
+  let erosion = (grain * 0.07 + crease * 0.10) * (1.0 - smoothstep(0.04,0.35,form) * 0.65);
+  let signedForm = form - erosion;
+  let presence = smoothstep(0.0,0.12,C.globalCoverage);
+  return vec3<f32>(smoothstep(-0.035,0.20,signedForm) * presence,
+    smoothstep(-0.035,0.20,form-erosion*0.4) * presence,signedForm);
+}
+
+// Analytic organization reuses the bake's filtered cloud-noise bands.
+fn cloudSeaBody(p:vec3<f32>,shape:vec4<f32>,detail:vec3<f32>)->vec3<f32> {
+  // Integer wave vectors close exactly over the cached tile. Independent
+  // phase speeds make the sea slosh, instead of translating a frozen surface.
+  let k=6.283185/FIELD.gridSize.xz;
+  let pos=p.xz+NTransform.shapeOffsetWorld.xz;
+  // The broad swell clock is independent of the slower fine-detail drift.
+  let phase=NTransform.shapeOffsetWorld.x*0.65+NTransform.shapeOffsetWorld.z*0.30;
+  let q=pos*k;
+  // Tile-wide weather regions bend the swells and vary their energy. Warp
+  // with periodic functions, rather than rotating/scaling tile coordinates:
+  // both the heights and their slopes still agree at opposite tile edges.
+  let region=0.5+0.5*sin(q.x+sin(q.y)*0.65)*cos(q.y-0.4);
+  let warped=q+vec2<f32>(sin(q.y+sin(q.x)*0.4),sin(q.x-q.y+0.7))*0.48;
+  let a=dot(warped,vec2<f32>(3.0,2.0))+phase;
+  let b=dot(warped,vec2<f32>(-2.0,5.0))-phase*0.73;
+  let c=dot(warped,vec2<f32>(7.0,9.0))+phase*1.21;
+  let energy=0.30+region*0.90;
+  let primary=sin(a+sin(b)*0.35);
+  let crest=primary+0.30*(primary*primary-0.5);
+  let swell=(crest*0.066+sin(b)*0.034+sin(c)*0.016)*energy
+    +sin(q.x-q.y+0.4)*0.028;
+  let height=FIELD.gridSize.y;
+  // Filtered volume bands break up the smooth swell into cloud-sized billows.
+  // Move the surface itself, retaining a solid sea underneath the rough skin.
+  // More relief comes from the filtered, irregular bands than from the smooth
+  // carrier waves. Short crossing ripples fray the crests without punching
+  // holes through the filled volume; integer harmonics retain exact tiling.
+  let ripples=sin(dot(warped,vec2<f32>(13.0,-7.0))+phase*1.6)*0.014
+    +sin(dot(warped,vec2<f32>(9.0,15.0))-phase*1.3)*0.010;
+  let scallop=abs(shape.g-shape.b)-0.25;
+  let billows=((shape.r-0.5)*0.18+(shape.g-0.5)*0.09
+    +(shape.b-0.5)*0.055+(detail.g-0.5)*0.04+scallop*0.065)*(0.70+region*0.30)+ripples;
+  let surface=FIELD.gridMin.y+height*(0.53+swell+billows);
+  let band=min((surface-p.y)/(height*0.065),(p.y-FIELD.gridMin.y-height*0.04)/(height*0.08));
+  let skin=1.0-smoothstep(0.1,0.8,band);
+  let form=band-(dot(detail,vec3<f32>(0.12,0.09,0.07))+abs(detail.r-detail.b)*0.28)*skin;
+  let presence=smoothstep(0.0,0.12,C.globalCoverage);
+  return vec3<f32>(smoothstep(-0.06,0.28,form)*presence,
+    smoothstep(-0.06,0.28,band)*presence,form);
+}
+
+// Stretching texture alone cannot organize independent puffs into cloud streets.
+fn parallelCloudBandBody(p:vec3<f32>,shape:vec4<f32>,detail:vec3<f32>)->vec3<f32> {
+  let material=p+NTransform.shapeOffsetWorld;
+  let width=max(TUNE.puffScale,1.0)*2.0;
+  let along=material.z*6.283185/FIELD.gridSize.z;
+  let bend=sin(along*2.0)*width*0.045+(shape.g-0.5)*width*0.045;
+  let stripe=cos((material.x+bend)*6.283185/width);
+  let center=FIELD.gridMin.y+FIELD.gridSize.y*(0.38+(shape.b-0.5)*0.24);
+  let halfHeight=FIELD.gridSize.y*(0.14+shape.g*0.15);
+  let band=1.0-abs(p.y-center)/max(halfHeight,0.1);
+  let cross= (stripe-mix_f(0.82,0.05,saturate(C.globalCoverage)))*1.8;
+  let billows=(shape.r-0.5)*0.90+(shape.a-0.5)*0.45+(shape.b-0.5)*0.25;
+  let form=min(band,cross)+billows;
+  let eroded=form-dot(detail,vec3<f32>(0.09,0.06,0.04))-abs(detail.r-detail.g)*0.20;
+  let presence=smoothstep(0.0,0.12,C.globalCoverage);
+  return vec3<f32>(smoothstep(-0.06,0.24,eroded)*presence,
+    smoothstep(-0.06,0.24,form)*presence,eroded);
+}
+
+fn stormSpin()->f32 {
+  // Existing material clocks freeze with Pause/capture; camera motion cannot
+  // rotate the anatomy. No independent wall clock or extra texture is needed.
+  return NTransform.shapeOffsetWorld.x*0.78;
+}
+fn stormMaterialPosition(p:vec3<f32>)->vec3<f32> {
+  let center=FIELD.gridMin.xyz+FIELD.gridSize.xyz*0.5;
+  let q=p-center;
+  // Fine material rotates far more slowly than the analytic storm anatomy.
+  // Sharing the full spin swept high-frequency bands across Balanced voxels.
+  let fineSpin=stormSpin()*select(0.10,0.05,TUNE.formType>11.5);
+  let turn=fineSpin+q.y/FIELD.gridSize.y*0.9;
+  return center+vec3<f32>(cos(turn)*q.x+sin(turn)*q.z,q.y,-sin(turn)*q.x+cos(turn)*q.z);
+}
+
+fn hurricaneWallRadius(angle:f32,y:f32)->f32 {
+  // Shallow, closely spaced helical riffles over a continuous widening wall.
+  // The former large radial terraces made the eye read as folded sheets.
+  return 0.25+y*0.22+sin(angle*5.0-y*30.0)*0.016
+    +sin(angle*13.0-y*62.0+sin(angle*5.0-y*30.0)*0.25)*0.007;
+}
+
+// Finite storm scaffolds. The same cached 3D bands give them volumetric
+// billows, so these are neither stacked cards nor a camera-dependent shell.
+fn rotatingStormBody(p:vec3<f32>,shape:vec4<f32>,detail:vec3<f32>)->vec3<f32> {
+  let center=FIELD.gridMin.xyz+FIELD.gridSize.xyz*0.5;
+  let extent=min(FIELD.gridSize.x,FIELD.gridSize.z)*0.5;
+  let q=(p-center)/vec3<f32>(extent,FIELD.gridSize.y,extent);
+  let r=length(q.xz);
+  let y=q.y+0.5;
+  let angle=atan2(q.z,q.x)+stormSpin();
+  let hurricane=TUNE.formType>11.5;
+  let grain=dot(detail,vec3<f32>(0.42,0.34,0.24));
+  let billow=(shape.r-0.5)*1.45+(shape.g-0.5)*0.90+(shape.b-0.5)*0.60;
+  var form=-1.0;
+  var rain=0.0;
+  if(TUNE.formType<11.5) {
+    // A broad layered mesocyclone, sloped shoulders and a lowered wall cloud.
+    let terraces=sin(y*36.0+angle*2.0-r*9.0)*0.035;
+    let outer=0.22+y*0.65+terraces+sin(angle*3.0-y*9.0)*0.025+(shape.g-0.5)*0.035;
+    let shelf=min((outer-r)*5.0,min((y-0.36)*9.0,(0.83-y)*9.0));
+    let wall=1.0-length(vec3<f32>(q.x/0.26,(y-0.36)/0.15,q.z/0.26));
+    let anvil=(1.0-length(vec3<f32>(q.x/0.77,(y-0.79)/0.15,q.z/0.77)))*2.5;
+    form=cloudSoftUnion(cloudSoftUnion(shelf,wall),anvil);
+    // One broad translucent precipitation sector descends from the flank.
+    // Coherent vertical streaks stay thicker than the balanced field voxels.
+    let sector=smoothstep(-0.25,0.45,cos(angle-0.65));
+    let curtainR=0.46+sin(angle*2.0-y*4.0)*0.055+y*0.08;
+    let curtain=min((0.12-abs(r-curtainR))*7.0,min((y-0.02)*8.0,(0.46-y)*8.0));
+    let streak=0.58+0.42*sin(angle*19.0+r*23.0+stormSpin()*0.6);
+    rain=smoothstep(-0.06,0.18,curtain)*sector*streak*0.18;
+  } else {
+    // A solid radial body supports the riffles: no density modulation through
+    // its interior and no large displacement that separates it into folds.
+    let inner=hurricaneWallRadius(angle,y)+(shape.b-0.5)*0.008;
+    let outer=0.79+sin(angle*5.0-y*30.0)*0.012+(shape.g-0.5)*0.012;
+    let wall=min((r-inner)*7.0,(outer-r)*6.0);
+    let heightBand=min((y-0.05)*8.0,(0.96-y)*10.0);
+    form=min(wall,heightBand);
+    // Wispy rain on the inner wall leaves the center entirely empty.
+    rain=smoothstep(-0.04,0.10,min((r-inner+0.045)*8.0,(inner+0.07-r)*8.0))
+      *smoothstep(0.03,0.18,y)*(1.0-smoothstep(0.50,0.76,y))*0.04;
+  }
+  // A broad outflow deck wraps around the upper storm. Spiral ridges vary its
+  // thickness and outer edge, instead of reading as a smooth ellipsoid. The
+  // hurricane retains its open eye through this deck as well as through the wall.
+  let spiral=angle*3.0-r*18.0-y*3.0;
+  let arm=sin(spiral+sin(angle*2.0-r*7.0)*0.35);
+  let upperCenter=0.79+arm*select(0.055,0.018,hurricane)+(r-0.6)*0.06
+    +(shape.g-0.5)*select(0.060,0.014,hurricane);
+  let upperHalf=0.070+smoothstep(-0.65,0.85,arm)*0.055;
+  let upperOuter=0.94+arm*0.025+(shape.b-0.5)*0.035;
+  let upperInner=select(0.30,hurricaneWallRadius(angle,y),hurricane);
+  let upper=min(min((r-upperInner)*8.0,(upperOuter-r)*10.0),
+    (upperHalf-abs(y-upperCenter))*12.0);
+  form=cloudSoftUnion(form,upper);
+  // Both decks taper to zero before the finite cache boundary.
+  form=min(form,(0.985-r)*12.0);
+  // Roughen only a bounded skin. Dense interiors and the empty eye remain
+  // intact, rather than carving the whole volume into detached wisps.
+  let skin=(1.0-smoothstep(0.45,1.2,max(form,0.0)))
+    *(1.0-smoothstep(0.10,0.65,max(-form,0.0)));
+  let looseRoughness=clamp(billow,-0.80,0.70)-(grain-0.35)*0.34-abs(detail.r-detail.b)*0.24;
+  let tightRoughness=clamp((shape.r-0.5)*0.32+(shape.g-0.5)*0.20+(shape.b-0.5)*0.12,-0.16,0.14)
+    -(grain-0.35)*0.06-abs(detail.r-detail.b)*0.05;
+  let roughOffset=select(looseRoughness,tightRoughness,hurricane);
+  // Positive noise cannot seed a second population in empty space outside the
+  // storm. Keep the breakup attached to the scaffold's existing surface.
+  let attachedOffset=min(roughOffset,max(form+0.04,0.0)*1.2);
+  let eroded=min(form+attachedOffset*skin,
+    (0.98-r)*12.0);
+  let presence=smoothstep(0.0,0.15,C.globalCoverage)*(1.0-smoothstep(0.94,0.985,r));
+  return vec3<f32>((smoothstep(-0.05,0.27,eroded)*0.75+rain)*presence,
+    (smoothstep(-0.05,0.27,form)*0.75+rain)*presence,eroded);
+}
+
 fn cloudTorusDistance(p: vec3<f32>) -> f32 {
   let v = p - (FIELD.gridMin.xyz + FIELD.gridSize.xyz * 0.5);
   let c = cos(FIELD.volume.y);
@@ -486,6 +742,8 @@ fn buildCloudDensityField(@builtin(global_invocation_id) gid: vec3<u32>, @builti
   if (any(gid >= FIELD.dimensions.xyz)) { return; }
   let uv = (vec3<f32>(gid) + 0.5) / vec3<f32>(FIELD.dimensions.xyz);
   let p = FIELD.gridMin.xyz + uv * FIELD.gridSize.xyz;
+  var materialP=p;
+  if(TUNE.formType>10.5 && TUNE.formType<12.5){materialP=stormMaterialPosition(p);}
   let ph = uv.y;
   // These forms already have a vertical scaffold and an anvil. Applying the
   // thin-layer's anvil warp/vertical retiling again aliases that texture into
@@ -499,21 +757,32 @@ fn buildCloudDensityField(@builtin(global_invocation_id) gid: vec3<u32>, @builti
   let detailAxis = vec3<f32>(detailAxisInput.x, sign(detailAxisInput.y) * sqrt(abs(detailAxisInput.y)), detailAxisInput.z);
   // Thin-layer noise repeated too rapidly across tall bodies, breaking every
   // shoulder into vapor. Separate the broad rolling mass from detail erosion.
-  let shapeScale = wg_scaleS * select(NTransform.shapeScale, 1.0, NTransform.shapeScale == 0.0) * 0.35;
+  let shapeScale = wg_scaleS * select(NTransform.shapeScale, 1.0, NTransform.shapeScale == 0.0)
+    * select(0.35,0.85,TUNE.formType>8.5);
+  let featureShapeScale=shapeScale*select(select(select(1.0,2.2,TUNE.formType>9.5),3.2,TUNE.formType>12.5),
+    select(4.0,5.2,TUNE.formType>11.5),TUNE.formType>10.5 && TUNE.formType<12.5);
   // Thin-layer detail repeats several times per world unit. At field resolution
   // that selects the final 1x1 mip and erases every valley. Map those same bands
   // to resolvable billow-sized features; still use the actual voxel footprint.
-  let detailScale = wg_scaleD * select(NTransform.detailScale, 1.0, NTransform.detailScale == 0.0) * 0.04;
+  let detailScale = wg_scaleD * select(NTransform.detailScale, 1.0, NTransform.detailScale == 0.0)
+    * select(0.04,0.065,TUNE.formType>11.5 && TUNE.formType<12.5);
   let spacing = FIELD.gridSize.xyz / vec3<f32>(FIELD.dimensions.xyz);
-  let shapeFootprint = spacing * abs(shapeAxis * shapeScale) * wg_shapeDim;
-  let detailFootprint = spacing * abs(detailAxis * detailScale) * wg_detailDim;
+  // Include the sheared storm material mapping in its filter footprint. This
+  // keeps fine bands below the voxel limit without raising cache resolution.
+  let stormFilter=select(1.0,1.6,TUNE.formType>10.5 && TUNE.formType<12.5);
+  let shapeFootprint = spacing * abs(shapeAxis * featureShapeScale) * wg_shapeDim * stormFilter;
+  let detailFootprint = spacing * abs(detailAxis * detailScale) * wg_detailDim * stormFilter;
   let shapeLOD = clamp(log2(max(max(shapeFootprint.x, shapeFootprint.y), max(shapeFootprint.z, 1.0))), 0.0, wg_maxMipS);
   let detailLOD = clamp(log2(max(max(detailFootprint.x, detailFootprint.y), max(detailFootprint.z, 1.0))), 0.0, wg_maxMipD);
-  let detail = wrap3D_detail(detail3D, sampDetail, (p + NTransform.detailOffsetWorld) * fieldPeriodicScale(detailAxis * detailScale), detailLOD).rgb;
+  let detailAdvection=NTransform.detailOffsetWorld*select(1.0,0.15,TUNE.formType>10.5 && TUNE.formType<12.5);
+  let detail = wrap3D_detail(detail3D, sampDetail, (materialP + detailAdvection) * fieldPeriodicScale(detailAxis * detailScale), detailLOD).rgb;
   // The independently moving detail domain bends shoulders as well as eroding
   // them. This is continuous volumetric billowing, not a time-varying Y scale.
   let detailWarp = (detail - 0.5) * max(TUNE.puffScale, 0.75) * vec3<f32>(0.16, 0.12, 0.16);
-  let shape = wrap3D_shape(shape3D, sampShape, (p + detailWarp + NTransform.shapeOffsetWorld) * fieldPeriodicScale(shapeAxis * shapeScale), shapeLOD);
+  // Tight surface billows drift more slowly than the organizing storm/sea
+  // scaffold, retaining its rotation and swells without rapid small features.
+  let shapeAdvection=NTransform.shapeOffsetWorld*select(select(1.0,0.35,TUNE.formType>10.5),0.025,TUNE.formType>10.5 && TUNE.formType<12.5);
+  let shape = wrap3D_shape(shape3D, sampShape, (materialP + detailWarp + shapeAdvection) * fieldPeriodicScale(shapeAxis * featureShapeScale), shapeLOD);
   // All four prefiltered shape bands contribute: broad domain distortion hides
   // the scaffold; the Rain Shelf closure gives the whole volume broken density.
   // No additional texture fetches or per-ray procedural noise are required.
@@ -525,8 +794,21 @@ fn buildCloudDensityField(@builtin(global_invocation_id) gid: vec3<u32>, @builti
     var distance = cloudTorusDistance(p);
     if(FIELD.volume.x > 1.5) { distance=cloudGalleryDistance(p); }
     let feather = max(max(spacing.x, spacing.y), spacing.z) * 1.2;
-    let mask = 1.0 - smoothstep(-feather, feather, distance);
-    body = vec3<f32>(body.xy * mask, min(body.z, -distance / max(feather * 4.0, EPS)));
+    let irregularDistance=distance+(shape.g-0.5)*max(feather*2.0,TUNE.puffScale*0.16)+(detail.g-0.5)*feather*0.5;
+    let mask = 1.0 - smoothstep(-feather, feather, irregularDistance);
+    body = vec3<f32>(body.xy * mask, min(body.z, -irregularDistance / max(feather * 4.0, EPS)));
+  } else if (TUNE.formType > 12.5) {
+    body=cloudSeaBody(p,shape,detail);
+  } else if (TUNE.formType > 10.5) {
+    body=rotatingStormBody(p,shape,detail);
+  } else if (TUNE.formType > 9.5) {
+    body=parallelCloudBandBody(p,shape,detail);
+  } else if (TUNE.formType > 8.5) {
+    body = cachedInkFoldBody(p, shape, detail);
+    baseFade = smoothstep(0.02, 0.08, ph) * (1.0 - smoothstep(0.92, 0.98, ph));
+  } else if (TUNE.formType > 7.5) {
+    body = morningRuffleBody(p, shape, detail, spacing.y);
+    baseFade = smoothstep(0.02, 0.08, ph) * (1.0 - smoothstep(0.96, 1.0, ph));
   } else {
     let weights=clamp(vec3<f32>(FIELD.gridMin.w,FIELD.gridSize.w,FIELD.volume.w),vec3<f32>(0.0),vec3<f32>(1.0));
     var featureWeights = clamp(FIELD.morphology.xyz, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -608,7 +890,8 @@ fn buildCloudLightField(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Midpoint quadrature, with two samples per crossed density cell. The cap
   // bounds cached-field work; no secondary march is added to screen-space rays.
   let sunVoxelStep = 1.0 / max(max(abs(sunDir.x) / spacing.x, abs(sunDir.y) / spacing.y), abs(sunDir.z) / spacing.z);
-  let shadowSteps = u32(clamp(ceil(reach / sunVoxelStep * 2.0), 16.0, 48.0));
+  let shadowSteps = u32(clamp(ceil(reach / sunVoxelStep * 2.0), 16.0,
+    select(48.0,24.0,TUNE.formType>8.5)));
   let step = reach / f32(shadowSteps);
   var opticalDepth = 0.0;
   for (var i = 0u; i < shadowSteps; i++) {

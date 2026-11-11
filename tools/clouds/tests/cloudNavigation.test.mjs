@@ -6,13 +6,13 @@ const cam={x:4,y:.8,z:32,yawDeg:187,pitchDeg:12,fovYDeg:60};
 test('chase camera preserves entry pose then follows a separate turning aircraft',()=>{
   const ship=flightAircraft(cam);
   const separation=Math.hypot(ship.x-cam.x,ship.y-cam.y,ship.z-cam.z);
-  assert.ok(separation>2&&separation<3,'close chase camera stays outside the small hull');
+  assert.ok(separation>.37&&separation<.40,'close chase camera stays outside the small hull');
   const initial=chaseFlight(cam,ship,.016);
   for(const key of ['x','y','z','yawDeg','pitchDeg'])near(initial[key],cam[key]);
   ship.yawDeg+=30;ship.x+=2;
   const followed=chaseFlight(cam,ship,.016);
   assert.ok(followed.yawDeg>cam.yawDeg&&followed.yawDeg<ship.yawDeg);
-  assert.ok(Math.hypot(ship.x-followed.x,ship.y-followed.y,ship.z-followed.z)>2);
+  assert.ok(Math.hypot(ship.x-followed.x,ship.y-followed.y,ship.z-followed.z)>.32);
 });
 
 test('orbit initializes from any camera pose without snapping to a different view',()=>{

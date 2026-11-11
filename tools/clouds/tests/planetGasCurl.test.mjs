@@ -18,12 +18,12 @@ test('gas curls bake in a lazy separate entry and use seam-free tangent gradient
 test('gas renderers share bounded spherical flow while Neptune keeps its zonal shear',async()=>{
  const files=await Promise.all(['shaders/cloudPlanet.wgsl','shaders/planetCloudSurfaceMC33.wgsl','shaders/planetCloudSurfaceRender.wgsl'].map(x=>readFile(new URL('../'+x,import.meta.url),'utf8')));
  const helper=await readFile(new URL('../shaders/planetGasFlow.wgsl',import.meta.url),'utf8');
- for(const shader of files)assert.match(shader,/gasWeatherDirection\(/);
+ for(const shader of files)assert.match(shader,/planetWarpDirection\(/);
  assert.match(helper,/wind\+sin\(wind\*\.7\)\*sin\(latitude\*14\.0\)\*\.12/);
- assert.match(helper,/form>=6\.5 \|\| \(form>=4\.5 && form<5\.5\)/);
+ assert.match(helper,/ordinary \|\| form>=6\.5 \|\| \(form>=4\.5 && form<5\.5\)/);
  assert.doesNotMatch(helper,/textureSample|textureLoad|for\s*\(/);
  assert.match(files[2],/binding\(5\) var weatherTex/);
- assert.match(files[2],/gasWeatherDirection\(radial,params.weatherTime,params.formType\)/);
+ assert.match(files[2],/planetWarpDirection\(radial,params.weatherTime,params.formType,params.warpAmount,params.warpPhase\)/);
  assert.match(files[2],/if\(params.formType>=4\.5\)/);
  for(const y of [-1,-.8,-.4,0,.4,.8,1]){
   const p=[Math.sqrt(1-y*y),y,0],angle=1.3+Math.sin(1.3*.7)*Math.sin(y*14)*.12;
@@ -38,4 +38,20 @@ test('gas renderers share bounded spherical flow while Neptune keeps its zonal s
    assert.ok(Math.abs(angle-wind)<=.12000001,'band shear cannot stretch baked curls indefinitely');
   }
  }
+});
+
+test('ordinary planet billows, erosion and coverage share flow in raymarch and mesh modes',async()=>{
+ const [helper,ray,mc,render]=await Promise.all(['shaders/planetGasFlow.wgsl','shaders/cloudPlanet.wgsl','shaders/planetCloudSurfaceMC33.wgsl','shaders/planetCloudSurfaceRender.wgsl'].map(x=>readFile(new URL('../'+x,import.meta.url),'utf8')));
+ assert.match(helper,/ordinary=form>=\.5 && form<4\.5/);
+ assert.match(helper,/select\(wind\+\(gasZonalAngle\(direction.y,phase\)-phase\)\*amount,wind,ordinary\)/);
+ assert.match(helper,/,\.38,ordinary/);
+ assert.match(ray,/if\(TUNE.formType>=\.5\)/);
+ assert.match(ray,/moved=planetWarpPosition\(p-B.center,NTransform.shapeOffsetWorld.x\*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase\)/);
+ assert.match(ray,/detailPos=planetWarpPosition\(p-B.center,NTransform.detailOffsetWorld.x\*6.283185307,TUNE.formType,NTransform.planetWarpAmount,NTransform.planetWarpPhase\)/);
+ assert.match(ray,/vec3<f32>\(0,wind.y,wind.z\)/,'ordinary flow keeps manual meridional drift');
+ assert.match(ray,/vec3<f32>\(0,NTransform.detailOffsetWorld.y,NTransform.detailOffsetWorld.z\)/);
+ assert.match(mc,/if\(params.formType>=\.5\).*planetWarpDirection/);
+ assert.match(mc,/planetWarpPosition\(pos,params.shapeTime,params.formType,params.warpAmount,params.warpPhase\)/);
+ assert.match(render,/planetWarpPosition\(p,angle,params.formType,params.warpAmount,params.warpPhase\)/);
+ assert.doesNotMatch(helper,/textureSample|textureLoad|for\s*\(/);
 });

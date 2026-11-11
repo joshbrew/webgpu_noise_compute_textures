@@ -1,6 +1,7 @@
 const radians = Math.PI / 180;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-const chaseDistance = 2.4, chaseHeight = .55;
+export const FLIGHT_CHASE_DISTANCE = .38, FLIGHT_CHASE_HEIGHT = .055;
+const chaseDistance = FLIGHT_CHASE_DISTANCE, chaseHeight = FLIGHT_CHASE_HEIGHT;
 export function cameraBasis(cam) {
   const yaw = cam.yawDeg * radians, pitch = cam.pitchDeg * radians;
   const forward = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)];

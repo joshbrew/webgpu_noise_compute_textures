@@ -2,6 +2,7 @@
 // distance; the primary cloud march ends there and its remaining transmission
 // lights the hull. No screen overlay, extra textures or secondary cloud march.
 struct AircraftHit { distance:f32, color:vec3<f32> };
+const AIRCRAFT_MODEL_SCALE:f32 = 0.08;
 fn aircraftTriangle(ro:vec3<f32>,rd:vec3<f32>,a:vec3<f32>,b:vec3<f32>,c:vec3<f32>)->f32 {
   let e1=b-a; let e2=c-a; let p=cross(rd,e2); let det=dot(e1,p);
   if(abs(det)<0.000001){return 1000000.0;}
@@ -21,7 +22,7 @@ fn sceneAircraft(ro:vec3<f32>,rd:vec3<f32>,center:vec3<f32>,right:vec3<f32>,up:v
   let localRo=vec3<f32>(dot(rel,rx),dot(rel,ry),dot(rel,rz));
   let localRd=vec3<f32>(dot(rd,rx),dot(rd,ry),dot(rd,rz));
   let closest=localRo+localRd*max(0.0,-dot(localRo,localRd));
-  if(dot(closest,closest)>1.55*0.09){return result;}
+  if(dot(closest,closest)>1.55*AIRCRAFT_MODEL_SCALE*AIRCRAFT_MODEL_SCALE){return result;}
   let vertices=array<vec3<f32>,24>(
     vec3<f32>(0.0,0.02,1.05), vec3<f32>(-0.14,0.02,-0.65),vec3<f32>(0.14,0.02,-0.65),
     vec3<f32>(0.0,0.20,-0.12),vec3<f32>(0.0,-0.12,-0.35),
@@ -39,7 +40,7 @@ fn sceneAircraft(ro:vec3<f32>,rd:vec3<f32>,center:vec3<f32>,right:vec3<f32>,up:v
     vec3<u32>(14,18,15),vec3<u32>(14,16,18),vec3<u32>(15,18,17),vec3<u32>(16,17,18),
     vec3<u32>(19,23,20),vec3<u32>(19,21,23),vec3<u32>(20,23,22),vec3<u32>(21,22,23));
   for(var i=0u;i<26u;i++){
-    let ids=triangles[i];let a=vertices[ids.x]*0.3;let b=vertices[ids.y]*0.3;let c=vertices[ids.z]*0.3;
+    let ids=triangles[i];let a=vertices[ids.x]*AIRCRAFT_MODEL_SCALE;let b=vertices[ids.y]*AIRCRAFT_MODEL_SCALE;let c=vertices[ids.z]*AIRCRAFT_MODEL_SCALE;
     let t=aircraftTriangle(localRo,localRd,a,b,c);
     if(t<result.distance){
       let n=normalize(cross(b-a,c-a));let normal=rx*n.x+ry*n.y+rz*n.z;

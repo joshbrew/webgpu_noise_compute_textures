@@ -1,8 +1,8 @@
 import { MC33_ALL_TABLES } from './mc33Tables.js';
 import { CloudTimingReport } from './cloudTiming.js';
 import { PlanetCloudNoise } from './planetCloudNoise.js';
-import { planetCloudStyleOptions } from './planetCloudStyles.js';
-import { advancePlanetCloudTime } from './planetCloudMotion.js';
+import { planetCloudStyleOptions, resolvePlanetCloudStyleOptions } from './planetCloudStyles.js';
+import { advancePlanetCloudTime, planetCloudWarp, regeneratePlanetCloudWeather } from './planetCloudMotion.js';
 import planetCloudSurfaceMC33WGSL from './shaders/planetCloudSurfaceMC33.wgsl';
 import planetCloudSurfaceRenderWGSL from './shaders/planetCloudSurfaceRender.wgsl';
 import gasAppearanceWGSL from './shaders/planetGasAppearance.wgsl';
@@ -355,7 +355,7 @@ function createGpuResources(layer) {
   }));
   layer.computeParamsBuffer = device.createBuffer({
     label: 'Planet cloud MC33 compute params',
-    size: 256,
+    size: 272,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   layer.renderParamsBuffer = device.createBuffer({
@@ -409,7 +409,7 @@ function writeComputeParams(layer, camera, elapsedSeconds, fieldBlend) {
   const cameraForward = normalize3(normalizeVectorInput(camera.fwd, [0, 0, -1]), [0, 0, -1]);
   const fovY = clamp(finiteNumber(camera.fovYDeg, 60), 1, 175) * Math.PI / 180;
   const aspect = Math.max(0.05, finiteNumber(camera.aspect, layer.canvas.width / Math.max(layer.canvas.height, 1)));
-  const buffer = new ArrayBuffer(256);
+  const buffer = new ArrayBuffer(272);
   const view = new DataView(buffer);
   view.setUint32(0, layer.angularCells, true);
   view.setUint32(4, layer.radialCells, true);
@@ -470,6 +470,9 @@ function writeComputeParams(layer, camera, elapsedSeconds, fieldBlend) {
   view.setFloat32(244, clamp(finiteNumber(options.surfaceVoxelHistoryWeight, 0.82), 0, 0.98), true);
   view.setFloat32(248, finiteNumber(options.tuning?.formType, 2), true);
   view.setFloat32(252, finiteNumber(options.worldToUV, 2.4/layer.radius) * finiteNumber(options.transforms?.shapeScale, 0.44), true);
+  const warp=planetCloudWarp(options,elapsedSeconds);
+  view.setFloat32(256,warp.warpAmount,true);
+  view.setFloat32(260,warp.warpPhase,true);
   layer.queue.writeBuffer(layer.computeParamsBuffer, 0, buffer);
   return { cameraPosition, cameraRight, cameraUp, cameraForward, fovY, aspect };
 }
@@ -506,6 +509,9 @@ function writeRenderParams(layer, cameraValues, sunDirection, elapsedSeconds) {
   view.setFloat32(136, elapsedSeconds*Math.max(0,finiteNumber(options.evolutionSpeed,0.03)), true);
   view.setFloat32(140, finiteNumber(options.tuning?.formType, 2), true);
   view.setFloat32(144, elapsedSeconds*finiteNumber(options.surfaceWeatherSpeed,finiteNumber(options.spinSpeed,0.00065)*2*Math.PI), true);
+  const warp=planetCloudWarp(options,elapsedSeconds);
+  view.setFloat32(148,warp.warpAmount,true);
+  view.setFloat32(152,warp.warpPhase,true);
   layer.queue.writeBuffer(layer.renderParamsBuffer, 0, buffer);
 }
 
@@ -1105,14 +1111,15 @@ export function updatePlanetCloudSurfaceOptions(layer, options = {}) {
   return layer.options;
 }
 
-export async function setPlanetCloudSurfaceStyle(layer, style) {
+export async function setPlanetCloudSurfaceStyle(layer, style, overrides = {}) {
   const previousOptions=layer.options, previousTextures=layer.textures, previousKeys=layer.resourceKeys;
-  const overrides=planetCloudStyleOptions(style,layer.radius);
+  planetCloudStyleOptions(style,layer.radius);
+  layer._styleBaseOptions ||= resolvePlanetCloudStyleOptions(layer.options,'legacy',layer.radius);
   layer.styleChanging=true;
   try {
     layer.styleRevision=(layer.styleRevision || 0)+1;
-    layer.options={...layer.options,...overrides,cloudStyle:style,cloudRenderMode:'mc33-shell',
-      resourceNonce:`mc33-style-${layer.styleRevision}`};
+    layer.options=resolvePlanetCloudStyleOptions(layer._styleBaseOptions,style,layer.radius,{...overrides,cloudRenderMode:'mc33-shell',
+      resourceNonce:`mc33-style-${layer.styleRevision}`});
     await bakeSurfaceTextures(layer,{waitForGpu:true});
     if(layer.disposed)return null;
     createBindGroups(layer);
@@ -1140,6 +1147,7 @@ export async function updatePlanetCloudSurfaceLayer(layer, { forceExtract = fals
   const now = performance.now();
   const encodeStarted = now;
   const elapsedSeconds = advancePlanetCloudTime(layer, now * 0.001);
+  regeneratePlanetCloudWeather(layer, layer.surfaceNoise, layer.resourceKeys?.noise, elapsedSeconds);
   const camera = layer.getCameraState?.() || {};
   const cameraPositionForMask = normalizeVectorInput(camera.camPos, [0, 0, layer.radius * 4]);
   const requestedFaceMask = computeVisibleFaceMask(cameraPositionForMask, layer.options);

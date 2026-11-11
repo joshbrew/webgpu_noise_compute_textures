@@ -1,8 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {advancePlanetCloudTime,planetCloudMotion} from '../planetCloudMotion.js';
+import {advancePlanetCloudTime,planetCloudMotion,planetCloudWarp,regeneratePlanetCloudWeather} from '../planetCloudMotion.js';
 import {planetCloudStyleOptions,PLANET_CLOUD_STYLES} from '../planetCloudStyles.js';
+
+test('warp controls are independent of wind, bounded and share the paused clock',()=>{
+ const baseline=planetCloudWarp({},60);
+ assert.equal(baseline.warpAmount,1);
+ assert.equal(planetCloudWarp({warpAmount:0,warpSpeed:0},60).warpPhase,0);
+ assert.equal(planetCloudWarp({warpAmount:0},60).warpAmount,0);
+ assert.equal(planetCloudWarp({warpSpeed:2},60).warpPhase,baseline.warpPhase*2);
+ assert.equal(planetCloudWarp({warpSpeed:50},60).warpPhase,baseline.warpPhase*50);
+ assert.equal(planetCloudWarp({warpSpeed:99},60).warpPhase,baseline.warpPhase*50);
+ assert.equal(planetCloudMotion({spinSpeed:0},60).warpPhase,baseline.warpPhase);
+ assert.deepEqual(planetCloudWarp({warpAmount:Infinity,warpSpeed:NaN},60),baseline);
+ assert.equal(planetCloudWarp({warpAmount:99,warpSpeed:-2},60).warpAmount,2);
+ const layer={options:{animate:false}};
+ advancePlanetCloudTime(layer,10);
+ assert.equal(planetCloudWarp({},advancePlanetCloudTime(layer,11)).warpPhase,0);
+});
 
 test('cloud clock starts locally, pauses both wind and evolution, and ignores hidden-tab jumps',()=>{
  const layer={options:{}};
@@ -50,4 +66,32 @@ test('clamped parallel allocations initialize every drawn vertex at capacity ove
   assert.equal(written.size,Math.min(counter,capacity));
   for(let i=0;i<Math.min(counter,capacity);i++)assert.ok(written.has(i));
  }
+});
+
+
+test('regeneration runs each frame in place, freezes on pause and changes speed without a phase jump',()=>{
+ const calls=[],noise={resources:new Map([['map',{}]]),regenerateWeather:(key,phase)=>{calls.push({key,phase});return true;}};
+ const layer={options:{textureMotion:'warp_regenerate',textureScrollSpeed:1}};
+ const tick=now=>regeneratePlanetCloudWeather(layer,noise,'map',advancePlanetCloudTime(layer,now));
+ tick(10);tick(10.01);tick(10.02);
+ assert.equal(calls.length,3);
+ assert.ok(Math.abs(calls[2].phase-.00024)<1e-12);
+ layer.options.textureScrollSpeed=2;tick(10.03);
+ assert.ok(Math.abs(calls[3].phase-.00048)<1e-12);
+ layer.options.animate=false;tick(100);assert.equal(calls.length,4);
+ layer.options.animate=true;tick(100.01);assert.ok(Math.abs(calls[4].phase-.00072)<1e-12);
+ layer.options.textureMotion='warp';tick(100.02);assert.equal(calls.length,5);
+ layer.options.textureMotion='warp_regenerate';tick(100.03);assert.ok(Math.abs(calls[5].phase-.00096)<1e-12);
+ layer.options.textureScrollSpeed=0;tick(100.04);assert.equal(calls.length,6);
+ layer.options.textureScrollSpeed=Infinity;tick(100.05);assert.equal(calls.length,6);
+ assert.equal(regeneratePlanetCloudWeather(layer,noise,'missing',100.06),false);
+});
+
+
+test('Off disables warp and regeneration while preserving independently configured drift',()=>{
+ const options={textureMotion:'off',warpAmount:2,warpSpeed:50,spinSpeed:.01};
+ assert.deepEqual(planetCloudWarp(options,50),{warpAmount:0,warpPhase:0});
+ assert.equal(planetCloudMotion(options,50).weatherOffsetWorld[0],.5);
+ const layer={options,animationClock:{time:1,last:1}};
+ assert.equal(regeneratePlanetCloudWeather(layer,{resources:new Map()},'map',1),false);
 });
