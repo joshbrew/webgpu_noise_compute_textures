@@ -13,7 +13,9 @@ export function randomizePlanetCloudConfig(config, seed) {
 // and non-color atmosphere settings. A fixed explicit wavelength must not mask
 // the new seed's atmosphere color.
 export function randomizePlanetSceneConfig(config, seed, gradientCount) {
-  const next = structuredClone(config);
+  // Screenshot capture is a live UI callback, outside the serializable scene.
+  const { captureImage, ...scene } = config;
+  const next = structuredClone(scene);
   next.seed = Math.floor(seed) >>> 0;
   const count = Math.max(1, Math.floor(gradientCount) || 1);
   const previous = Math.max(0, Math.floor(Number(config.gradientIndex ?? config.gradient) || 0)) % count;

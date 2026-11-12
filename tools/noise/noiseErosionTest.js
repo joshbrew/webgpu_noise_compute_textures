@@ -1482,11 +1482,8 @@ async function saveFinalComposite(stageCanvas) {
 
 async function init() {
   insertAppHtml();
-  const nav = document.getElementById("cloud-demo-navigation");
-  if (nav) {
-    nav.classList.remove("cl-switch--floating");
-    $("erosion-navigation").appendChild(nav);
-  }
+  const nav = document.getElementById("noise-demo-navigation");
+  if (nav) $("erosion-navigation").appendChild(nav);
 
   if (!navigator.gpu) {
     setStatus("WebGPU not available", "");

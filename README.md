@@ -14,7 +14,8 @@ GPU driven noise toolkit for 2D and 3D generative texture tiling. Contains dozen
 This repo has two main parts:
 
 - A reusable compute helper: `NoiseComputeBuilder` in `noiseComputeBuilder.js`
-- A small test UI: `noiseComputeTest.js` + `noiseComponent.html` for interactive exploration
+- **Noise shaders** lets you stack noise layers, inspect 2D tiles and slice 3D volumes.
+- **Erosion terrain** lets you choose a terrain model and preview the erosion, drainage and final 3D terrain.
 
 The helper aims to:
 
@@ -29,7 +30,7 @@ Run `npm install` and `npm start` from the repository root, then open the addres
 e.g. mixed Billow noise
 ![2](https://github.com/user-attachments/assets/18958887-cd2b-4d54-affa-dd293c93b676)
 
-| Planets with volumetric clouds and aurora |  |  |
+| Related project screenshots from [WebGPU Realtime Clouds](https://github.com/joshbrew/webgpu_realtime_clouds) |  |  |
 |---|---|---|
 | <img width="1586" height="1168" alt="Screenshot 2026-06-13 233532" src="https://github.com/user-attachments/assets/8872720b-8710-4fa7-a28c-decf422edd21" /> | <img width="1338" height="1094" alt="Screenshot 2026-06-13 231303" src="https://github.com/user-attachments/assets/b4e74511-71bb-4db9-ab86-5d5d60ddcdd2" /> | <img width="1636" height="1252" alt="Screenshot 2026-06-13 124342" src="https://github.com/user-attachments/assets/155f60ce-0dd5-416a-9adc-f30a32d427c5" />
  |
