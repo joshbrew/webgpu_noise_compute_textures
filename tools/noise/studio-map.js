@@ -58,15 +58,14 @@ async function finishRunoff(values, side, settings) {
     oceanCoverage, lunar, craterDetail, cryoGlaciers);
 }
 
+const halfScales = Float32Array.from({ length: 31 }, (_, exponent) => 2 ** (Math.max(1, exponent) - 25));
+
 function floatFromHalf(word) {
   const exponent = (word >> 10) & 31;
-  const fraction = (word & 1023) / 1024;
+  const fraction = word & 1023;
   const sign = word & 32768 ? -1 : 1;
   if (exponent === 31) return fraction ? NaN : sign * Infinity;
-  return (
-    sign *
-    (exponent ? 2 ** (exponent - 15) * (1 + fraction) : 2 ** -14 * fraction)
-  );
+  return sign * halfScales[exponent] * (fraction + (exponent ? 1024 : 0));
 }
 
 export async function bakeStudioPlanetNoise(device, options) {
@@ -179,13 +178,26 @@ export async function bakeStudioMap(
     capture(0);
     await readback.mapAsync(GPUMapMode.READ);
     const source = new Uint16Array(readback.getMappedRange());
-    let values = new Float32Array(side * side);
+    const area = side * side;
+    const rowWords = bytesPerRow / 2;
+    const planeWords = planeBytes / 2;
+    let values = new Float32Array(area);
+    const guide = proceduralGuide ? new Float32Array(2 * area) : null;
     for (let y = 0; y < side; y++) {
+      const sourceRow = y * rowWords;
+      const targetRow = y * side;
       for (let x = 0; x < side; x++) {
-        const value = floatFromHalf(source[y * (bytesPerRow / 2) + x * 4]);
+        const value = floatFromHalf(source[sourceRow + x * 4]);
         if (!Number.isFinite(value))
           throw new Error("Planet Studio noise produced a nonfinite height.");
-        values[y * side + x] = value;
+        values[targetRow + x] = value;
+      }
+      if (guide) {
+        for (let x = 0; x < side; x++) {
+          const at = sourceRow + x * 4;
+          guide[targetRow + x] = floatFromHalf(source[planeWords + at]);
+          guide[area + targetRow + x] = floatFromHalf(source[2 * planeWords + at]);
+        }
       }
     }
     let regions;
@@ -194,7 +206,7 @@ export async function bakeStudioMap(
       const cells = new Uint32Array(regionSide ** 2);
       const step = segments / (regionSide - 1);
       for (let y = 0; y < regionSide; y++) {
-        const row = Math.round(y * step) * (bytesPerRow / 2);
+        const row = Math.round(y * step) * rowWords;
         for (let x = 0; x < regionSide; x++) {
           const at = row + Math.round(x * step) * 4;
           const canyon = Math.round(floatFromHalf(source[at + 1]) * 255);
@@ -206,15 +218,6 @@ export async function bakeStudioMap(
         }
       }
       regions = { side: regionSide, values: cells };
-    }
-    const guide = proceduralGuide ? new Float32Array(2 * side * side) : null;
-    if (guide) {
-      for (let plane = 0; plane < 2; plane++) {
-        const start = (plane + 1) * planeBytes / 2;
-        for (let y = 0; y < side; y++)
-          for (let x = 0; x < side; x++)
-            guide[plane * side * side + y * side + x] = floatFromHalf(source[start + y * bytesPerRow / 2 + x * 4]);
-      }
     }
     readback.destroy();
     readback = null;
@@ -256,7 +259,6 @@ export async function bakeStudioMap(
       throw new Error("Planet Studio noise produced a flat heightmap.");
     const map = { side, values, min, max, mean: sum / values.length, featureDensity };
     if (guide) {
-      const area = side * side;
       // Keep only the displacement that erosion and runoff added to the
       // relief. The mesh evaluates its own base terrain at every vertex.
       for (let i = 0; i < area; i++) guide[area + i] = values[i] - guide[area + i] * hostRelief;

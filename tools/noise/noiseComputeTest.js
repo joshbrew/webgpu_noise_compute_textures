@@ -1561,6 +1561,9 @@ async function initNoiseDemo() {
   requestActiveRender();
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  initNoiseDemo().catch((err) => console.error(err));
-});
+const start = () => initNoiseDemo().catch((err) => console.error(err));
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", start, { once: true });
+} else {
+  start();
+}

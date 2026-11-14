@@ -2,4 +2,4 @@ var url=new URL(location.href);var erosion=url.searchParams.get("demo")==="erosi
   #noise-demo-navigation { display: flex; gap: 6px; padding-bottom: 12px; font: 14px system-ui, sans-serif; }
   #noise-demo-navigation a { padding: 6px 9px; border: 1px solid #52657a; border-radius: 6px; color: #dce9f7; text-decoration: none; }
   #noise-demo-navigation a:hover, #noise-demo-navigation a[aria-current="page"] { background: #243951; }
-`;document.head.append(style);document.body.prepend(nav);if(erosion){await import("./chunks/noiseErosionTest-DJ5PYJ6Y.js")}else{await import("./chunks/noiseComputeTest-C26RRLNN.js");document.querySelector("#noise-app .sidebar-header").before(nav)}
+`;document.head.append(style);document.body.prepend(nav);if(erosion){await import("./chunks/noiseErosionTest-DJ5PYJ6Y.js")}else{await import("./chunks/noiseComputeTest-37TJ4CMJ.js");document.querySelector("#noise-app .sidebar-header").before(nav)}
